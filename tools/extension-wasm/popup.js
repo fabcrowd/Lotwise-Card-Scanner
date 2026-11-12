@@ -13,6 +13,8 @@ import { bestMatchPrice, isHighValue, priceTypicalOf, unconfirmedTotal } from ".
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { CONDITION_TIP, conditionName, lotExportLabels, lotExportRows, lotFileName, lotToCsv, lotToTsv } from "./lib/lot-export.js";
 import { getPptKey } from "./lib/ppt-key.js";
+import { loadOverlayShown, saveOverlayShown } from "./lib/overlay-toggle.js";
+import { stampFinishNote, stampedPrices } from "./lib/set-stamp.js";
 import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
 
 const btnScan      = document.getElementById("btn-scan");
@@ -49,6 +51,7 @@ const btnSetup     = document.getElementById("btn-setup");
 const setupStatus  = document.getElementById("setup-status");
 const setupBars    = document.getElementById("setup-bars");
 const eraSelect    = document.getElementById("era-select");
+const overlayShownToggle = document.getElementById("overlay-shown");
 const accessNotice  = document.getElementById("access-notice");
 const accessText    = document.getElementById("access-text");
 const accessOutcome = document.getElementById("access-outcome");
@@ -246,6 +249,15 @@ chrome.storage.local.get("scanEra", ({ scanEra }) => {
 eraSelect.addEventListener("change", () => {
   chrome.storage.local.set({ scanEra: eraSelect.value });
   if (_lastResult && !isScanning) scanPage();
+});
+
+/* ─── Show boxes on page ─── */
+
+// An overlay pushed before the stored choice is read would show boxes the user turned off.
+const overlayShownLoaded = loadOverlayShown(chrome.storage.local).then((shown) => { overlayShownToggle.checked = shown; });
+overlayShownToggle.addEventListener("change", () => {
+  saveOverlayShown(chrome.storage.local, overlayShownToggle.checked).catch(() => {});
+  chrome.runtime.sendMessage({ action: "setOverlayShown", shown: overlayShownToggle.checked }).catch(() => {});
 });
 
 btnClear.addEventListener("click", () => {
@@ -1514,12 +1526,11 @@ async function pickSet(idx, id, picked = null) {
     if (picked) showMessage(error, true);
     return;
   }
+  const { market_price, price_variant, price_grid } = resp;
   replaceCard(idx, {
     ...current,
     identity: resp.identity,
-    market_price: resp.market_price,
-    price_variant: resp.price_variant,
-    price_grid: resp.price_grid,
+    ...stampedPrices({ ...current, identity: resp.identity }, { market_price, price_variant, price_grid }),
     setConfirmed: true,
     userConfirmed: true,
     // A card the scanner gave up on is still a card the user named.
@@ -1543,7 +1554,10 @@ function renderVariantRow(card, idx) {
   const chosen = _variantChoice.get(idx) || "";
   const suggested = chosen ? "" : _variantSuggest.get(idx) || "";
   const chips = finishChips(grid, { chosen, suggested, conditions: enabledConditions() });
-  if (!chips.length) return "";
+  const stampOnly = stampFinishNote(card)
+    ? `<div class="variant-select-row strip-row"><span class="lbl">Variant</span><span class="variant-note">${escHtml(stampFinishNote(card))}</span></div>`
+    : "";
+  if (!chips.length) return stampOnly;
   const picked = chosen || suggested;
   const seen = picked && (picked === suggestedVariant(card));
   const stampNote = {
@@ -1552,9 +1566,9 @@ function renderVariantRow(card, idx) {
     league: "League stamp found",
     setstamp: "Set stamp found",
   }[card.variant?.stamp];
-  const note = seen
+  const note = stampFinishNote(card) || (seen
     ? (stampNote || editionNote(card) || (card.firstEdition ? "1st Edition stamp found" : card.shadow ? "Drop shadow seen" : "Variant seen on the card"))
-    : (editionNote(card) || printingNote(grid));
+    : (editionNote(card) || printingNote(grid)));
   const confirmMark = suggested ? `<button type="button" class="guess-mark" data-variant-confirm data-idx="${idx}" title="Suggested from the picture, which glare can fool. Press to confirm this printing." aria-label="Suggested printing ${escHtml(formatPrinting(suggested))}. Press to confirm it.">?</button>` : "";
   return `<div class="variant-select-row strip-row">
     <span class="lbl">Variant</span>
@@ -1598,13 +1612,17 @@ function pushOverlay() {
       ...overlayGuess(c),
     },
   }));
-  chrome.runtime.sendMessage({
+  const message = {
     action: "overlayWithGrid",
     cards,
     ...(_lastResult.fullSize ? { fullSize: { url: _lastResult.fullSize.url } } : {}),
     srcWidth: _lastResult.srcWidth,
     srcHeight: _lastResult.srcHeight,
-  }).catch(() => {});
+  };
+  overlayShownLoaded.then(() => chrome.runtime.sendMessage({
+    ...message,
+    shown: overlayShownToggle.checked,
+  })).catch(() => {});
 }
 
 // A Choose tag on the page names its best match with the unconfirmed price: 'name? ~$1.20'.
@@ -1635,7 +1653,7 @@ function computeDisplayForOverlay(card, idx) {
     condition: quote?.condition || null,
     price: quote ? quote.price : null,
     spreadRatio: card.price_grid?.spreadRatio || 1,
-    printingNote: quote ? null : chosenPrintingHasNoPrice(card, printing, enabledConditions()) ? "No price for this printing" : printingNote(card.price_grid),
+    printingNote: quote ? null : stampFinishNote(card) || (chosenPrintingHasNoPrice(card, printing, enabledConditions()) ? "No price for this printing" : printingNote(card.price_grid)),
     footer: sourceFooter(card.price_grid),
   };
 }

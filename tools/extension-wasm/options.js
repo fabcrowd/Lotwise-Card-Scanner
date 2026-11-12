@@ -359,6 +359,22 @@ lookalikeToggle.addEventListener("change", async () => {
   lookalikeNote.className = "test-result ok";
 });
 
+/* ─── Straighten cards ─── */
+
+const straightenToggle = document.getElementById("straighten-cards");
+const straightenNote   = document.getElementById("straighten-note");
+
+async function loadStraightenToggle() {
+  const { straightenCards } = await chrome.storage.local.get("straightenCards").catch(() => ({}));
+  straightenToggle.checked = straightenCards === true;
+}
+
+straightenToggle.addEventListener("change", async () => {
+  await chrome.storage.local.set({ straightenCards: straightenToggle.checked }).catch(() => {});
+  straightenNote.textContent = straightenToggle.checked ? "Scans will straighten each card before reading it." : "Scans read each card as boxed.";
+  straightenNote.className = "test-result ok";
+});
+
 // dev-only:start
 /* ─── Test photos ─── */
 
@@ -435,6 +451,7 @@ refreshCorrectionCount();
 refreshReferenceCount();
 loadReferencesToggle();
 loadLookalikeToggle();
+loadStraightenToggle();
 loadPrices();
 loadShareToggle();
 // dev-only:start

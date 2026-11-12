@@ -77,20 +77,26 @@ export function getBackendStatus() {
 export async function getConditionGrid(identity) {
   if (!identity?.name) return null;
 
-  // dev-only:start
-  // 1. Backend proxy (JustTCG)
-  if (await probeBackend()) {
-    const r = await fetchBackend(identity);
-    if (r) return r;
-  }
-  // dev-only:end
+  // Run independent sources in parallel, return first successful result.
+  // Backend proxy (JustTCG) - only if available
+  const backendPromise = (async () => {
+    // dev-only:start
+    if (!(await probeBackend())) return null;
+    // dev-only:end
+    return fetchBackend(identity);
+  })();
 
-  // 2. PokemonPriceTracker (user key required, needs tcgPlayerId)
-  const pptKey = await getPptKey();
-  if (pptKey && identity.tcgPlayerId) {
-    const r = await fetchPpt(identity, pptKey);
-    if (r) return r;
-  }
+  // PokemonPriceTracker (user key required, needs tcgPlayerId)
+  const pptPromise = (async () => {
+    const pptKey = await getPptKey();
+    if (!pptKey || !identity.tcgPlayerId) return null;
+    return fetchPpt(identity, pptKey);
+  })();
+
+  const [backendResult, pptResult] = await Promise.all([backendPromise, pptPromise]);
+
+  if (backendResult) return backendResult;
+  if (pptResult) return pptResult;
 
   return null;
 }

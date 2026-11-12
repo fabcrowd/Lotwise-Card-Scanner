@@ -165,6 +165,12 @@
     }
     .era-select:disabled { opacity: 0.5; cursor: wait; }
 
+    /* OVERLAY TOGGLE — "Show boxes on page" hides the page overlay, keeps the results */
+    .overlay-row { display: flex; align-items: center; padding: 0 16px 8px; background: #0b0c12; }
+    .overlay-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #8b92ab; cursor: pointer; }
+    .overlay-toggle input { width: 14px; height: 14px; margin: 0; accent-color: #6366f1; cursor: pointer; }
+    .overlay-toggle input:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+
     /* SITE ACCESS NOTICE — offered after a screenshot scan that lacked site access */
     .access-notice {
       display: flex;
@@ -345,6 +351,7 @@
       text-transform: uppercase;
       color: #8b92ab;
     }
+    .variant-select-row .variant-note { font-size: 11px; color: #fcd34d; }
     .photo-chip { display:inline-block; margin-left:6px; font-size:10px; color:#475569; background:#f1f5f9; border-radius:8px; padding:0 6px; }
     .variant-select-row .lbl.pick-printing {
       color: #1d4ed8;
@@ -652,6 +659,9 @@
       <option value="">Any era</option>
     </select>
     <div class="stat-block" id="stat-value" role="group"><div class="val green" id="s-value">—</div><div class="lbl">est. value <span class="cond-tag" id="s-cond" title="Prices are Near Mint market prices unless your price-service key provides other conditions" hidden>NM</span></div></div>
+  </div>
+  <div class="overlay-row">
+    <label class="overlay-toggle" title="Hides the boxes and tags on the page. Your results stay here."><input type="checkbox" id="overlay-shown" checked> Show boxes on page</label>
   </div>
 
   <div class="access-notice" id="restore-note" hidden>

@@ -8,6 +8,7 @@
 
 import { detectedVariant, isGridStale, quotedPrice, suggestedVariant } from "./card-display.js";
 import { chooseState } from "./choose-flow.js";
+import { stampedPrices } from "./set-stamp.js";
 
 export const HIGH_STAKES_MIN_USD = 50;
 
@@ -26,8 +27,9 @@ export function isHighValue(card, typicalPrice) {
  */
 export function bestMatchPrice(card, resp, enabledConditions = ["NM"]) {
   if (!resp || resp.error) return null;
+  const prices = stampedPrices({ ...card, identity: resp.identity }, resp);
   const probe = {
-    identity: resp.identity, setChoices: [], setConfirmed: true, price_grid: resp.price_grid, market_price: resp.market_price,
+    identity: resp.identity, setChoices: [], setConfirmed: true, price_grid: prices.price_grid, market_price: prices.market_price,
     variant: card?.variant, firstEdition: card?.firstEdition, shadow: card?.shadow, numberRead: card?.numberRead,
   };
   const stale = isGridStale(resp.price_grid);

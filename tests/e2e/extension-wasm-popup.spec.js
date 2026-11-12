@@ -577,7 +577,9 @@ test.describe('Consumer extension popup', () => {
         return real(msg);
       };
     }, { src: build.toString(), crop, arts, saveResp });
-    await page.evaluate(() => { document.getElementById('setup-overlay').style.display = 'none'; });
+    // The fresh profile has no models, so the popup's start-up check opens the setup wizard, a few ms after load or
+    // not at all; a stylesheet keeps it out of the way whenever that happens (an inline display:none raced it).
+    await page.addStyleTag({ content: '#setup-overlay { display: none !important; }' });
     if (autoScan) await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
     return page;
   }

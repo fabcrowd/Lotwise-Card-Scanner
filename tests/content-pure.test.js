@@ -276,11 +276,70 @@ test('an open label stays open while the pointer is on it, even past a small car
   assert.equal(pure.hoveredTarget([], hover, { x: 180, y: 40 }), null);
 });
 
-test('narrow boxes get a compact label and no label is wider than its box', () => {
-  assert.equal(pure.badgeLayout(100).compact, true);
-  assert.equal(pure.badgeLayout(139).compact, true);
-  assert.equal(pure.badgeLayout(140).compact, false);
-  for (const w of [60, 100, 140, 300]) assert.equal(pure.badgeLayout(w).maxWidth, w);
+test('hovering a card\'s tag opens its label, even where the tag sits outside the card', () => {
+  const targets = [{ rect: { x: 0, y: 0, w: 600, h: 400 } }, { rect: { x: 100, y: 100, w: 72, h: 100 }, tag: { x: 102, y: 74, w: 60, h: 24 } }];
+  assert.equal(pure.hoveredTarget(targets, null, { x: 120, y: 80 }), 1);
+  assert.equal(pure.hoveredTarget(targets, null, { x: 300, y: 300 }), 0);
+});
+
+// The hover label, laid out with a stub of 7.5 px per character (D3/D4 of the 2026-10-25 QA gate).
+const perChar = (t) => String(t).length * 7.5;
+const viewport = { x1: 0, y1: 0, x2: 1100, y2: 1200 };
+const labelOf = (box, card, clipRect = viewport) => plainJson(pure.labelLayout(box, card, clipRect, perChar));
+const plainJson = (value) => JSON.parse(JSON.stringify(value));
+const darkSlowbro = { identity: null, abstain: true, display: { state: 'choose', guess: { name: 'Dark Slowbro', price: 51.51 } } };
+
+test('D4: the hovered label of a small card shows its full name and its whole price or ask, wider than the box', () => {
+  const choose = labelOf([100, 100, 172, 200], darkSlowbro);
+  const texts = choose.lines.map((l) => l.text);
+  assert.ok(texts.includes('Dark Slowbro? ~$51.51'), JSON.stringify(texts));
+  assert.ok(texts.includes('Tap to pick it in the scanner'), JSON.stringify(texts));
+  assert.ok(choose.w > 72, 'the label may be wider than the 72 px box');
+
+  const drowzee = labelOf([300, 100, 428, 275], { identity: { name: 'Drowzee', number: '61' }, display: { state: 'identified', price: 0.07 } });
+  assert.deepEqual(drowzee.lines.map((l) => l.text), ['Drowzee', '$0.07']);
+
+  const entei = labelOf([500, 100, 639, 290], { identity: null, abstain: true, display: { state: 'choose', guess: { name: 'Entei', price: 3.1 } } });
+  assert.equal(entei.lines[0].text, 'Entei? ~$3.10');
+});
+
+test('D4: the expanded label stays inside the visible photo rect and the viewport', () => {
+  const photo = { x1: 400, y1: 300, x2: 640, y2: 700 };
+  const inside = (r, c) => r.x >= c.x1 && r.y >= c.y1 && r.x + r.w <= c.x2 && r.y + r.h <= c.y2;
+  for (const box of [[566, 320, 638, 420], [402, 640, 474, 740], [600, 250, 700, 350]]) {
+    const label = labelOf(box, darkSlowbro, photo);
+    assert.ok(inside(label, photo), `${JSON.stringify(box)} -> ${JSON.stringify(label)}`);
+  }
+  // A photo narrower than the text: the label fills the photo's width and the text is cut to it, never past it.
+  const narrow = { x1: 400, y1: 300, x2: 520, y2: 700 };
+  const cut = labelOf([410, 320, 482, 420], darkSlowbro, narrow);
+  assert.ok(inside(cut, narrow), JSON.stringify(cut));
+  assert.ok(cut.lines.every((l) => perChar(l.text) <= cut.w), JSON.stringify(cut.lines));
+  // At the right edge of the viewport.
+  const edge = labelOf([1040, 100, 1098, 200], darkSlowbro);
+  assert.ok(edge.x + edge.w <= 1100 && edge.x >= 0, JSON.stringify(edge));
+});
+
+test('D3: a small card\'s tag never shows a bare price: a name stub of 4 or more letters, else its row number', () => {
+  const rows = (card, index, max, measure = perChar) => plainJson(pure.tagRows(pure.tagText(card, index), false, max, measure));
+  // 72 px box: tagLayout gives 13 px text and a 68 px tag, so 50 px of text.
+  assert.equal(pure.tagLayout(72, 100).maxWidth - 4 - 7 * 2, 50);
+  const chooseRows = rows(darkSlowbro, 4, 50);
+  assert.equal(chooseRows.length, 1);
+  assert.match(chooseRows[0], /^Dark/);
+  assert.doesNotMatch(chooseRows[0], /\$/);
+  const slowbro = { identity: { name: 'Dark Slowbro' }, display: { state: 'identified', price: 51.51 } };
+  assert.deepEqual(rows(slowbro, 4, 50), ['Dark…']);
+  // Three letters are not a name: the tag shows the card's row in the scanner instead.
+  assert.deepEqual(rows(slowbro, 4, 30), ['5']);
+  assert.deepEqual(rows(darkSlowbro, 4, 30), ['5']);
+  // Letters wider than digits: the price would fit where no name does; the row number shows, never the price.
+  const wideLetters = (t) => [...String(t)].reduce((s, c) => s + (/[A-Za-z]/.test(c) ? 10 : 6), 0);
+  const drowzee = { identity: { name: 'Drowzee', number: '61' }, display: { state: 'identified', price: 0.07 } };
+  assert.deepEqual(rows(drowzee, 0, 35, wideLetters), ['1']);
+  // Two lines on a tall narrow card: the first row is never dropped while the price row shows.
+  const two = plainJson(pure.tagRows(pure.tagText(drowzee, 0), true, 35, wideLetters));
+  assert.equal(two[0], '1');
 });
 
 test('fitText ellipsizes to the width and leaves short text alone', () => {
@@ -339,7 +398,7 @@ function loadWithMessages() {
   const source = fs.readFileSync(new URL('../tools/extension-wasm/content.js', import.meta.url), 'utf8');
   const frames = [];
   const window = { addEventListener() {}, removeEventListener() {}, innerWidth: 1100, innerHeight: 800, scrollX: 0, scrollY: 0, requestAnimationFrame: (fn) => frames.push(fn) && frames.length, cancelAnimationFrame() {} };
-  const canvas = { style: {}, remove() {}, getContext: () => ({ clearRect() {}, setTransform() {} }) };
+  const canvas = { style: {}, remove() {}, getBoundingClientRect: () => ({ width: 1100, height: 800 }), getContext: () => ({ clearRect() {}, setTransform() {} }) };
   const document = { getElementById: () => null, createElement: () => canvas, documentElement: { appendChild() {} }, querySelectorAll: () => [] };
   let listener;
   const chrome = { runtime: { onMessage: { addListener: (fn) => { listener = fn; } }, sendMessage: () => Promise.resolve() } };
@@ -535,6 +594,7 @@ test('tag rows: Choose never reads "Tap to c...", a price is never cut mid-numbe
   assert.deepEqual(rows(range, false, 200), ['Charizard $1.43–$20.00']);
   assert.deepEqual(rows(range, false, 70), ['Charizard']);
   assert.deepEqual(rows(range, false, 24), []);
+  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagRows(pure.tagText(range, 2), false, 24, m))), ['3']);
   assert.equal(pure.fitPrice('$1.43–$20.00', 100, m), '$1.43–$20.00');
   assert.equal(pure.fitPrice('$1.43–$20.00', 80, m), 'from $1.43');
   assert.equal(pure.fitPrice('$1.43–$20.00', 50, m), '');

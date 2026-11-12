@@ -93,3 +93,44 @@ test('the snapshot is downloaded once a day, and a failure keeps the previous co
   assert.equal(await client.refreshPriceSnapshot(), (await client.currentSnapshot()));
   assert.equal(calls, 2);
 });
+
+test('a 404 (no snapshot published yet) is a warning, not an error, and keeps the previous copy', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const error = t.mock.method(console, 'error', () => {});
+  let now = 1_000;
+  let status = 200;
+  const client = createSnapshotClient({
+    storage: memory(),
+    now: () => now,
+    url: 'https://github.com/fabcrowd/card-scanner-data/releases/download/prices/prices.json',
+    fetchImpl: async () => ({ ok: status === 200, status, text: async () => FILE }),
+  });
+  status = 404;
+  assert.equal(await client.currentSnapshot(), null);
+  assert.equal(error.mock.callCount(), 0);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(String(warn.mock.calls[0].arguments.join(' ')), /404/);
+
+  // Published later: taken; then a 404 again keeps that copy, still only a warning.
+  now += 16 * 60 * 1000;
+  status = 200;
+  assert.equal((await client.currentSnapshot()).updatedAt, UPDATED);
+  now += 25 * 60 * 60 * 1000;
+  status = 404;
+  assert.equal((await client.currentSnapshot()).updatedAt, UPDATED);
+  assert.equal(error.mock.callCount(), 0);
+  assert.equal(warn.mock.callCount(), 2);
+});
+
+test('any other failure is still logged as an error', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const error = t.mock.method(console, 'error', () => {});
+  const client = createSnapshotClient({
+    storage: memory(),
+    url: 'https://github.com/fabcrowd/card-scanner-data/releases/download/prices/prices.json',
+    fetchImpl: async () => ({ ok: false, status: 500, text: async () => '' }),
+  });
+  assert.equal(await client.currentSnapshot(), null);
+  assert.equal(error.mock.callCount(), 1);
+  assert.match(String(error.mock.calls[0].arguments.join(' ')), /500/);
+});

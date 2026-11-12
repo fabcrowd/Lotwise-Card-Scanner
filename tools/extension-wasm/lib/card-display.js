@@ -9,6 +9,7 @@ const SOURCE_NAMES = {
   ppt: 'Price Tracker',
   pokemontcg: 'TCGPlayer',
   tcgdex: 'TCGPlayer',
+  snapshot: 'TCGPlayer',
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;

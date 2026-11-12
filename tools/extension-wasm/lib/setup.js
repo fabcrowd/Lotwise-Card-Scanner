@@ -68,6 +68,11 @@ export const OPTIONAL_ASSETS = [
     release: "v2.2",
     sha256: "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
   },
+  {
+    name: "card_corners.onnx",
+    release: "v2.2",
+    sha256: "d85aba2af7c30c868df9353ec6f5750973133dfffdb2dbc2c1f4784ca968d57e",
+  },
 ];
 
 export function assetUrl(name) {

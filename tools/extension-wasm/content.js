@@ -30,14 +30,19 @@
   let _scanAnchors = [];
   let _anchorIds   = new Map();
   let _scanScroll  = { x: 0, y: 0 };
+  // The viewport the scan measured the page in. Boxes arrive in its CSS px, so a box is placed with it even after the
+  // window was resized (the popup pushes the overlay again whenever a price or a pick changes).
+  let _scanView    = null;
 
   const MIN_ANCHOR_SHARE = 0.9;
 
-  function boxToRel(box, r) {
-    const w = r.right - r.left;
-    const h = r.bottom - r.top;
+  function boxToRel(box, r, paintedRect) {
+    // Use paintedRect for letterboxed images, otherwise fall back to full element rect
+    const useRect = paintedRect || r;
+    const w = useRect.right - useRect.left;
+    const h = useRect.bottom - useRect.top;
     if (!(w > 0) || !(h > 0)) return null;
-    return [(box[0] - r.left) / w, (box[1] - r.top) / h, (box[2] - r.left) / w, (box[3] - r.top) / h];
+    return [(box[0] - useRect.left) / w, (box[1] - useRect.top) / h, (box[2] - useRect.left) / w, (box[3] - useRect.top) / h];
   }
 
   function relToBox(rel, r) {
@@ -55,12 +60,13 @@
   }
 
   // The smallest element that holds (nearly all of) the box; -1 when the box came from no known element.
+  // Uses paintedRect when available (for letterboxed images), otherwise falls back to full element rect.
   function pickAnchor(box, anchors) {
     const area = Math.max(0, box[2] - box[0]) * Math.max(0, box[3] - box[1]);
     let best = -1;
     let bestArea = Infinity;
     anchors.forEach((a, i) => {
-      const r = a.rect;
+      const r = a.paintedRect || a.rect;
       const w = Math.min(box[2], r.right) - Math.max(box[0], r.left);
       const h = Math.min(box[3], r.bottom) - Math.max(box[1], r.top);
       if (!(area > 0) || w <= 0 || h <= 0 || (w * h) / area < MIN_ANCHOR_SHARE) return;
@@ -118,16 +124,84 @@
     _raf = 0;
   }
 
+  // Frames to keep redrawing after the layout changed: a site may size its photo from script a frame or more after
+  // the resize event, and a photo that only moves fires no ResizeObserver.
+  const SETTLE_FRAMES = 30;
+  let _settleFrames = 0;
+
   function scheduleDraw() {
     if (_raf) return;
     _raf = window.requestAnimationFrame(() => {
       _raf = 0;
       _drawOverlay();
+      if (_settleFrames > 0) {
+        _settleFrames--;
+        scheduleDraw();
+      }
     });
   }
 
+  function followLayout() {
+    _settleFrames = SETTLE_FRAMES;
+    scheduleDraw();
+  }
+
   function onResize() {
-    fitCanvas();
+    followLayout();
+  }
+
+  // ─── Anchored photos ──────────────────────────────────────────────────────
+  // A box is drawn on the photo it was found in, at that photo's current rect. A photo rescaled by the page
+  // (ResizeObserver), swapped by a carousel (src/srcset) or removed (childList) redraws the overlay at once.
+  let _sizeWatch = null;
+  let _anchorWatch = null;
+  let _watched = new Set();
+
+  // What picture an element shows: an <img>'s src and srcset attributes (a responsive pick of another size changes
+  // currentSrc, not these), or an element's background image.
+  function sourceOf(el) {
+    if (el.tagName === 'IMG') return `${el.getAttribute('src') || ''} ${el.getAttribute('srcset') || ''}`;
+    return getComputedStyle(el).backgroundImage || '';
+  }
+
+  // Only changes to an anchored photo or one of its ancestors count; the rest of a busy page mutates all the time.
+  function onPageMutation(records) {
+    for (const record of records) {
+      if (record.type === 'childList') {
+        const gone = [..._watched].filter((el) => !el.isConnected);
+        if (!gone.length) continue;
+        gone.forEach((el) => _watched.delete(el));
+        followLayout();
+        return;
+      }
+      if ([..._watched].some((el) => record.target === el || record.target?.contains?.(el))) {
+        followLayout();
+        return;
+      }
+    }
+  }
+
+  function watchAnchors() {
+    unwatchAnchors();
+    _watched = new Set(_placed.filter((p) => p.el && p.el.isConnected).map((p) => p.el));
+    if (!_watched.size) return;
+    const Sizes = window.ResizeObserver;
+    if (typeof Sizes === 'function') {
+      _sizeWatch = new Sizes(() => followLayout());
+      for (const el of _watched) _sizeWatch.observe(el);
+    }
+    _anchorWatch = new MutationObserver(onPageMutation);
+    _anchorWatch.observe(document.body || document.documentElement, {
+      subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'srcset', 'style', 'class'],
+    });
+  }
+
+  function unwatchAnchors() {
+    _sizeWatch?.disconnect();
+    _anchorWatch?.disconnect();
+    _sizeWatch = null;
+    _anchorWatch = null;
+    _watched = new Set();
   }
 
   function onMouseMove(e) {
@@ -147,8 +221,9 @@
   }
 
   /**
-   * Which card the pointer is on: the smallest frame under it (a card inside a larger photo box wins), or the open
-   * one while the pointer is still on its label, which may stick out past a small card. Null when on neither.
+   * Which card the pointer is on: the smallest frame or tag under it (a card inside a larger photo box wins, and so
+   * does a tag drawn just outside its card), or the open one while the pointer is still on its label, which may stick
+   * out past a small card. Null when on neither.
    */
   function hoveredTarget(targets, hover, point) {
     if (!point) return null;
@@ -156,31 +231,64 @@
     let best = null;
     let bestArea = Infinity;
     targets.forEach((t, i) => {
-      if (!inRect(t.rect, point)) return;
-      const area = t.rect.w * t.rect.h;
-      if (area < bestArea) { best = i; bestArea = area; }
+      for (const r of [t.rect, t.tag]) {
+        if (!inRect(r, point)) continue;
+        const area = r.w * r.h;
+        if (area < bestArea) { best = i; bestArea = area; }
+      }
     });
     return best;
   }
 
   // Drawing is in CSS pixels; the backing store is device pixels so text stays sharp on high-DPI screens.
-  function viewW() { return window.innerWidth; }
-  function viewH() { return window.innerHeight; }
+  // The canvas is 100vw wide, but with a page scrollbar the width it is laid out at is the layout viewport's
+  // (clientWidth), not window.innerWidth. The bitmap must match that CSS size or it is squeezed on screen.
+  let _cssW = 0;
+  let _cssH = 0;
+
+  function canvasBacking(cssW, cssH, dpr) {
+    return { width: Math.max(1, Math.round(cssW * dpr)), height: Math.max(1, Math.round(cssH * dpr)) };
+  }
+
+  // The CSS size the canvas is actually laid out at; the viewport size until it has been measured.
+  function measureCanvas() {
+    const r = canvas ? canvas.getBoundingClientRect() : null;
+    return {
+      w: r && r.width > 0 ? r.width : window.innerWidth,
+      h: r && r.height > 0 ? r.height : window.innerHeight,
+    };
+  }
+
+  function viewW() { return _cssW || window.innerWidth; }
+  function viewH() { return _cssH || window.innerHeight; }
+
+  // Resizing a canvas clears it, so only when the CSS size or the pixel ratio changed.
+  function sizeBacking() {
+    const dpr = window.devicePixelRatio || 1;
+    const css = measureCanvas();
+    const want = canvasBacking(css.w, css.h, dpr);
+    if (ctx && canvas.width === want.width && canvas.height === want.height && _cssW === css.w && _cssH === css.h) return false;
+    _cssW = css.w;
+    _cssH = css.h;
+    canvas.width  = want.width;
+    canvas.height = want.height;
+    ctx = canvas.getContext('2d');
+    // Exactly bitmap / CSS size, so rounding the bitmap never shifts a box.
+    ctx.setTransform(want.width / css.w, 0, 0, want.height / css.h, 0, 0);
+    return true;
+  }
 
   function fitCanvas() {
     if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width  = Math.round(viewW() * dpr);
-    canvas.height = Math.round(viewH() * dpr);
-    ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // Resizing a canvas clears it — repaint the last known overlay state.
+    sizeBacking();
     _drawOverlay();
   }
 
   function clearOverlay() {
     stopObserving();
     unfollowPage();
+    unwatchAnchors();
+    _settleFrames = 0;
     _placed = [];
     _highlight = null;
     _fullSize = null;
@@ -188,6 +296,8 @@
     canvas.remove();
     canvas = null;
     ctx    = null;
+    _cssW  = 0;
+    _cssH  = 0;
   }
 
   // ─── Lazy-load observer ────────────────────────────────────────────────────
@@ -197,10 +307,26 @@
 
   let _observer     = null;
   let _observerTimer = null;
+  // What every picture loaded at the last scan shows. A picture laid out again (a window resize, a copy of the photo
+  // drawn as a backdrop, one scrolled into view, a larger file from the same srcset) is not new; only an image added
+  // or loaded since is.
   let _baselineSrcs  = new Set();
 
+  function pictureKeys(img) {
+    return [img.currentSrc || img.src || '', `${img.getAttribute('src') || ''} ${img.getAttribute('srcset') || ''}`.trim()].filter(Boolean);
+  }
+
+  function _loadedPictureKeys() {
+    const keys = new Set();
+    for (const img of document.querySelectorAll('img')) {
+      if (!img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) continue;
+      for (const key of pictureKeys(img)) keys.add(key);
+    }
+    return keys;
+  }
+
   function startObserving() {
-    _baselineSrcs = _getCardSrcs(); // re-baseline on every scan completion
+    _baselineSrcs = _loadedPictureKeys(); // re-baseline on every scan completion
     if (_observer) return;          // only wire up the observer once
     _observer = new MutationObserver(() => {
       clearTimeout(_observerTimer);
@@ -222,8 +348,9 @@
     _baselineSrcs.clear();
   }
 
-  function _getCardSrcs() {
-    const srcs = new Set();
+  // Loaded, card-shaped pictures on screen now.
+  function _cardImagesOnScreen() {
+    const found = [];
     for (const img of document.querySelectorAll('img')) {
       if (!img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) continue;
       const r = img.getBoundingClientRect();
@@ -231,26 +358,22 @@
       if (r.right <= 0 || r.bottom <= 0 || r.left >= window.innerWidth || r.top >= window.innerHeight) continue;
       const ratio = r.height > 0 ? r.width / r.height : 0;
       if (ratio < CARD_RATIO_MIN || ratio > CARD_RATIO_MAX) continue;
-      const src = img.currentSrc || img.src || '';
-      if (src) srcs.add(src);
+      found.push(img);
     }
-    return srcs;
+    return found;
   }
 
   function _checkNewCardSrcs() {
-    const current = _getCardSrcs();
-    let hasNew = false;
-    for (const src of current) {
-      if (!_baselineSrcs.has(src)) { hasNew = true; break; }
-    }
-    if (!hasNew) return;
-    _baselineSrcs = current; // advance baseline so we don't re-fire for the same images
+    const fresh = _cardImagesOnScreen().filter((img) => !pictureKeys(img).some((key) => _baselineSrcs.has(key)));
+    if (!fresh.length) return;
+    // The pictures that asked join the baseline, so they never ask again.
+    for (const img of fresh) for (const key of pictureKeys(img)) _baselineSrcs.add(key);
     chrome.runtime.sendMessage({ action: 'newCardsDetected' }).catch(() => {});
   }
 
   // A screenshot taken with the badges drawn over the cards is read as badges, not cards, so the scan
-  // hides the overlay first. It stays hidden until the new overlay arrives, because the old boxes would be
-  // wrong by then; a scan that fails sends restoreOverlay instead.
+  // hides the overlay for its capture (lib/tab-messaging.js captureWithoutOverlay) and shows it again right after:
+  // the boxes follow their photos until the scan's result replaces them.
   function hideOverlay(done) {
     if (!canvas) { done(); return; }
     canvas.style.visibility = 'hidden';
@@ -287,15 +410,31 @@
     window.requestAnimationFrame(() => window.requestAnimationFrame(poll));
   }
 
+  // The popup's "Show boxes on page". Off hides the overlay but keeps its boxes, so turning it on brings them back.
+  let _shown = true;
+
+  function showCanvas() {
+    if (canvas) canvas.style.visibility = _shown ? 'visible' : 'hidden';
+  }
+
+  function setOverlayShown(shown) {
+    _shown = shown;
+    showCanvas();
+    _drawOverlay();
+  }
+
   function restoreOverlay() {
-    if (canvas) canvas.style.visibility = 'visible';
+    showCanvas();
   }
 
   function renderOverlay(cards, srcWidth, srcHeight) {
     ensureCanvas();
-    canvas.style.visibility = 'visible';
-    const scaleX = viewW() / srcWidth;
-    const scaleY = viewH() / srcHeight;
+    showCanvas();
+    // Boxes arrive in the viewport the screenshot was taken at (innerWidth x innerHeight then), whatever the canvas CSS
+    // size. The anchors were measured in that viewport too, so the window as it is now plays no part.
+    const view = _scanView || { w: window.innerWidth, h: window.innerHeight };
+    const scaleX = view.w / srcWidth;
+    const scaleY = view.h / srcHeight;
     _placed = [];
     for (const [index, card] of cards.entries()) {
       if (!card.box || card.box.length < 4) continue;
@@ -307,11 +446,13 @@
         ? card.docBox
         : boxToDoc([x1 * scaleX, y1 * scaleY, x2 * scaleX, y2 * scaleY], _scanScroll);
       const anchor = pickAnchor(doc, _scanAnchors);
-      const rel = anchor >= 0 ? boxToRel(doc, _scanAnchors[anchor].rect) : null;
+      const anchorData = anchor >= 0 ? _scanAnchors[anchor] : null;
+      const rel = anchorData ? boxToRel(doc, anchorData.rect, anchorData.paintedRect) : null;
       _placed.push(rel
-        ? { card, index, el: _scanAnchors[anchor].el, rel }
+        ? { card, index, el: anchorData.el, rel, source: anchorData.source }
         : { card, index, doc });
     }
+    watchAnchors();
     _drawOverlay();
   }
 
@@ -332,29 +473,173 @@
   }
 
   function _placedBox(p) {
-    if (!p.el) return docToBox(p.doc, { x: window.scrollX, y: window.scrollY });
-    if (!p.el.isConnected) return null;
-    return relToBox(p.rel, p.el.getBoundingClientRect());
+    return _placedView(p)?.box ?? null;
+  }
+
+  /**
+   * Where a placed card is now: its box on the photo's current rect, and the part of the screen it may be drawn in
+   * (the photo's visible rect; the viewport for a box pinned to the document). Null while its photo is gone or shows
+   * another picture.
+   */
+  function _placedView(p) {
+    const viewport = { x1: 0, y1: 0, x2: viewW(), y2: viewH() };
+    if (!p.el) return { box: docToBox(p.doc, { x: window.scrollX, y: window.scrollY }), clip: viewport };
+    if (!p.el.isConnected || (p.source !== undefined && sourceOf(p.el) !== p.source)) return null;
+    const r = p.el.getBoundingClientRect();
+    // For letterboxed images, use the painted rect for box positioning (matches how rel was computed at scan time)
+    let painted = null;
+    if (p.el.tagName === 'IMG') {
+      const style = getComputedStyle(p.el);
+      painted = paintedBox(r, p.el.naturalWidth, p.el.naturalHeight, style.objectFit || 'fill', style.objectPosition || '50% 50%');
+    }
+    const boxRect = painted || r;
+    return { box: relToBox(p.rel, boxRect), clip: visibleRect(p.el, r) };
+  }
+
+  // A fixed or sticky bar (a site header) painted over the photo hides the part of the photo under it.
+  const MAX_COVER_PROBES = 3;
+
+  function coveringBar(node, el) {
+    for (let p = node, depth = 0; p && depth < MAX_ANCESTORS; p = p.parentElement, depth++) {
+      if (p.contains?.(el)) return null;
+      const position = getComputedStyle(p).position;
+      if (position === 'fixed' || position === 'sticky') return p;
+    }
+    return null;
+  }
+
+  // The bar painted over `el` at this point, or null when `el` (or something inside it) is on top there.
+  function coverAt(el, x, y) {
+    if (typeof document.elementsFromPoint !== 'function') return null;
+    for (const top of document.elementsFromPoint(x, y)) {
+      if (top === canvas) continue;
+      if (top === el || el.contains?.(top)) return null;
+      const bar = coveringBar(top, el);
+      if (bar) return bar.getBoundingClientRect();
+    }
+    return null;
+  }
+
+  // A CSS position as fractions [x, y], read the way photo-detection.js reads it; null for one it cannot read.
+  function positionFractions(position = '50% 50%') {
+    const words = String(position).trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [0.5, 0.5];
+    if (words.length > 2) return null;
+    if (words.length === 1) {
+      if (words[0] === 'top' || words[0] === 'bottom') words.unshift('center');
+      else words.push('center');
+    }
+    const fraction = (token) => {
+      if (token === 'center') return 0.5;
+      if (token === 'left' || token === 'top') return 0;
+      if (token === 'right' || token === 'bottom') return 1;
+      const percent = token.match(/^(-?\d+(?:\.\d+)?)%$/);
+      return percent ? Number(percent[1]) / 100 : null;
+    };
+    let [x, y] = words;
+    if ((x === 'top' || x === 'bottom') && (y === 'left' || y === 'right')) [x, y] = [y, x];
+    const fx = fraction(x);
+    const fy = fraction(y);
+    return fx === null || fy === null ? null : [fx, fy];
+  }
+
+  /**
+   * Where an <img> paints its picture inside its box r (object-fit, object-position), placed exactly as
+   * imageToViewportTransform in photo-detection.js places it (tests/overlay-labels.test.js checks they agree).
+   * Null when the picture has no size or the position cannot be read.
+   */
+  function paintedBox(r, naturalW, naturalH, fit = 'fill', position = '50% 50%') {
+    if (!(naturalW > 0) || !(naturalH > 0)) return null;
+    const w = r.right - r.left;
+    const h = r.bottom - r.top;
+    const contain = Math.min(w / naturalW, h / naturalH);
+    const cover = Math.max(w / naturalW, h / naturalH);
+    let sx = w / naturalW;
+    let sy = h / naturalH;
+    if (fit === 'contain' || fit === 'cover' || fit === 'scale-down') {
+      sx = sy = fit === 'cover' ? cover : fit === 'scale-down' ? Math.min(1, contain) : contain;
+    } else if (fit === 'none') {
+      sx = sy = 1;
+    }
+    const at = positionFractions(position);
+    if (!at) return null;
+    const left = r.left + (w - naturalW * sx) * at[0];
+    const top = r.top + (h - naturalH * sy) * at[1];
+    return { left, top, right: left + naturalW * sx, bottom: top + naturalH * sy };
+  }
+
+  function paintedRectOf(el, r) {
+    if (el.tagName !== 'IMG') return null;
+    const style = getComputedStyle(el);
+    return paintedBox(r, el.naturalWidth, el.naturalHeight, style.objectFit || 'fill', style.objectPosition || '50% 50%');
+  }
+
+  /**
+   * The photo's visible rect: inside the viewport and its clipping ancestors, below/above any bar over it, and on
+   * the picture itself (an object-fit: contain photo's letterbox is not the photo).
+   */
+  function visibleRect(el, r) {
+    const v = visibleBox(el, r);
+    const painted = paintedRectOf(el, r);
+    const x1 = Math.max(v.vx, painted ? painted.left : -Infinity);
+    let y1 = Math.max(v.vy, painted ? painted.top : -Infinity);
+    const x2 = Math.min(v.vx + v.vw, painted ? painted.right : Infinity);
+    let y2 = Math.min(v.vy + v.vh, painted ? painted.bottom : Infinity);
+    if (x2 <= x1 || y2 <= y1) return { x1, y1, x2: x1, y2: y1 };
+    const x = (x1 + x2) / 2;
+    for (let i = 0; i < MAX_COVER_PROBES && y2 > y1; i++) {
+      const bar = coverAt(el, x, y1 + 0.5);
+      if (!bar || bar.bottom <= y1) break;
+      y1 = Math.min(y2, bar.bottom);
+    }
+    for (let i = 0; i < MAX_COVER_PROBES && y2 > y1; i++) {
+      const bar = coverAt(el, x, y2 - 0.5);
+      if (!bar || bar.top >= y2) break;
+      y2 = Math.max(y1, bar.top);
+    }
+    return { x1, y1, x2, y2 };
+  }
+
+  function clipTo(clip) {
+    ctx.beginPath();
+    ctx.rect(clip.x1, clip.y1, Math.max(0, clip.x2 - clip.x1), Math.max(0, clip.y2 - clip.y1));
+    ctx.clip();
   }
 
   function _drawOverlay() {
     if (!canvas) return;
+    // A scrollbar can appear or go without a resize event; follow the canvas's real CSS size on every pass.
+    sizeBacking();
     ctx.clearRect(0, 0, viewW(), viewH());
+    // Hidden by the user: nothing drawn, hovered or clicked.
+    if (!_shown) {
+      _targets = [];
+      _clickable = [];
+      _hover = null;
+      return;
+    }
 
     const previous = _hover;
+    // The hovered card's tag is not drawn while its label is open, so its last spot is kept for the hit test.
+    const lastTags = new Map(_targets.filter((t) => t.tag).map((t) => [t.index, t.tag]));
     _targets = [];
     for (const p of _placed) {
-      const box = _placedBox(p);
-      if (!box || !boxInView(box, viewW(), viewH())) continue;
+      const view = _placedView(p);
+      if (!view || !boxInView(view.box, viewW(), viewH())) continue;
+      const { box, clip } = view;
       const [sx1, sy1, sx2, sy2] = box;
+      // Only the part of the card on the visible photo is drawn, hovered or clicked.
+      const seen = { x1: Math.max(sx1, clip.x1), y1: Math.max(sy1, clip.y1), x2: Math.min(sx2, clip.x2), y2: Math.min(sy2, clip.y2) };
+      if (seen.x2 <= seen.x1 || seen.y2 <= seen.y1) continue;
       const card = p.card;
       const state = cardState(card);
       const color = STATE_COLORS[state];
-      if (p.index === _highlight) drawHighlight(sx1, sy1, sx2, sy2);
       ctx.save();
+      clipTo(clip);
+      if (p.index === _highlight) drawHighlight(sx1, sy1, sx2, sy2);
       drawFrame(sx1, sy1, sx2, sy2, color, state === 'none');
       ctx.restore();
-      _targets.push({ rect: { x: sx1, y: sy1, w: sx2 - sx1, h: sy2 - sy1 }, box, card, color, index: p.index });
+      _targets.push({ rect: { x: seen.x1, y: seen.y1, w: seen.x2 - seen.x1, h: seen.y2 - seen.y1 }, tag: lastTags.get(p.index), box, clip, card, color, index: p.index });
     }
 
     const kept = previous ? { target: _targets.findIndex((t) => t.index === previous.index), rect: previous.rect } : null;
@@ -370,8 +655,10 @@
     for (const [i, t] of _targets.entries()) {
       if (i === hit || t.index === _highlight) continue;
       ctx.save();
-      const rect = drawTag(t.box, t.card, taken, _targets.filter((u) => u !== t).map((u) => u.box));
+      clipTo(t.clip);
+      const rect = drawTag(t.box, t.card, taken, _targets.filter((u) => u !== t).map((u) => u.box), t.clip, t.index);
       ctx.restore();
+      t.tag = rect || undefined;
       if (rect) {
         taken.push(rect);
         if (cardState(t.card) !== 'identified') _clickable.push({ rect, index: t.index });
@@ -383,7 +670,9 @@
     for (const [i, t] of _targets.entries()) {
       if (i !== hit && t.index !== _highlight) continue;
       ctx.save();
-      const rect = drawLabel(t.box, t.card, t.color);
+      // The full label may be wider than a small card, but stays on the visible photo (never over a bar above it).
+      clipTo(t.clip);
+      const rect = drawLabel(t.box, t.card, t.color, t.clip);
       ctx.restore();
       if (rect && cardState(t.card) !== 'identified') _clickable.push({ rect, index: t.index });
       if (i === hit) _hover = { target: i, index: t.index, rect };
@@ -399,12 +688,14 @@
     const left = Math.min(...onPage.map((t) => t.box[0]));
     const top = Math.min(...onPage.map((t) => t.box[1]));
     const right = Math.max(...onPage.map((t) => t.box[2]));
+    // Never over a bar above the photos.
+    const floor = Math.max(4, Math.min(...onPage.map((t) => t.clip.y1)) + 4);
     ctx.save();
     ctx.font = `700 14px ${LABEL_FONT}`;
     const w = Math.ceil(ctx.measureText(PILL_TEXT).width) + 24;
     const h = 28;
     const x = Math.max(4, Math.min(left + (right - left - w) / 2, viewW() - w - 4));
-    const y = Math.max(4, Math.min(top - h - 6 < 4 ? top + 4 : top - h - 6, viewH() - h - 4));
+    const y = Math.max(floor, Math.min(top - h - 6 < floor ? top + 4 : top - h - 6, viewH() - h - 4));
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = 8;
     ctx.fillStyle = '#6366f1';
@@ -490,15 +781,25 @@
     return guess.stale ? `${guess.name}? old price` : `${guess.name}? ~${money(guess.price)}`;
   }
 
-  /** A tag's lines: the name with its number, then the price (a range while the printing is open) or what to do. */
-  function tagText(card) {
+  /**
+   * A tag's lines: the name with its number, then the price (a range while the printing is open) or what to do.
+   * `marker` is the card's row number in the scanner (scan index + 1), shown when not even a name stub fits.
+   */
+  function tagText(card, index) {
+    const marker = Number.isInteger(index) ? String(index + 1) : '';
+    return { ...tagLines(card), marker };
+  }
+
+  function tagLines(card) {
     const state = cardState(card);
     if (state === 'none') return { state, lines: ['Not recognised', 'Turn it over'], short: '?' };
     if (state === 'skipped') return { state, lines: ['Skipped'], short: 'Skipped' };
     if (state === 'choose') {
       const guess = guessLine(card.display?.guess);
       const ask = card.display?.highValue ? 'High value, double-check' : 'Tap to choose';
-      return guess ? { state, lines: [guess, ask], short: guess } : { state, lines: ['Choose', ask], short: 'Choose' };
+      return guess
+        ? { state, lines: [guess, ask], short: guess, guessName: card.display.guess.name }
+        : { state, lines: ['Choose', ask], short: 'Choose' };
     }
     const { name, price, caveat } = labelText(card);
     const number = card.display?.number || card.identity?.number || '';
@@ -520,21 +821,35 @@
     return from && measure(from) <= maxPx ? from : '';
   }
 
-  // A name is cut with an ellipsis, but only when at least three letters of it still show.
+  // A name shows whole, or cut with an ellipsis while at least four of its letters still show.
+  const MIN_STUB_LETTERS = 4;
   function fitName(name, maxPx, measure) {
-    const text = fitText(name || '', maxPx, measure);
-    return text.replace('…', '').length >= 3 ? text : '';
+    if (!name) return '';
+    if (measure(name) <= maxPx) return name;
+    const text = fitText(name, maxPx, measure);
+    return text.replace('…', '').replace(/\s/g, '').length >= MIN_STUB_LETTERS ? text : '';
+  }
+
+  // A tag always says which card it is: a name stub, or with no room for one, the card's row number; never a bare price.
+  function nameOrMarker(name, marker, maxPx, measure) {
+    return fitName(name, maxPx, measure) || (marker && measure(marker) <= maxPx ? marker : '');
   }
 
   /** The rows a tag prints: the Choose ask collapses to "Choose" when it does not fit; a small tag shows the name, then price. */
   function tagRows(tag, twoLines, textMax, measure) {
-    const { state, lines, short } = tag;
-    if (state === 'choose') return twoLines && measure(lines[1]) <= textMax ? lines : [fitText(short, textMax, measure)].filter(Boolean);
+    const { state, lines, short, marker } = tag;
+    if (state === 'choose') {
+      const first = measure(short) <= textMax ? short
+        : tag.guessName ? nameOrMarker(`${tag.guessName}?`, marker, textMax, measure)
+        : fitText(short, textMax, measure);
+      return (twoLines && first && measure(lines[1]) <= textMax ? [first, lines[1]] : [first]).filter(Boolean);
+    }
     if (state === 'skipped') return [fitText(short, textMax, measure)].filter(Boolean);
     if (state === 'none') return (twoLines ? lines : [short]).map((t) => fitText(t, textMax, measure)).filter(Boolean);
     const { name, title, price } = tag;
     if (twoLines) {
-      const first = fitText(title, textMax, measure);
+      const first = nameOrMarker(title, marker, textMax, measure);
+      if (!first) return [];
       const pickNote = state === 'printing' ? tag.note : '';
       const flagged = tag.highValue && price ? `${price} · High value, double-check` : '';
       const second = flagged && measure(flagged) <= textMax ? flagged
@@ -544,7 +859,7 @@
     }
     const both = price ? `${name} ${price}` : name;
     if (measure(both) <= textMax) return [both];
-    return [fitName(name, textMax, measure) || fitPrice(price, textMax, measure)].filter(Boolean);
+    return [nameOrMarker(name, marker, textMax, measure)].filter(Boolean);
   }
 
   // Tag size follows the card: 13 px text on a 60 px card up to 16 px; a short card gets one line.
@@ -573,10 +888,16 @@
    */
   function placeTag(box, w, h, taken, view, others = [], relaxed = false) {
     // relaxed: false = clear of every neighbour; true = clear of neighbours' top edges; null = neighbours ignored.
+    // view: the area a tag must stay in (the photo's visible rect), at view.x/view.y (0 when absent).
     const [x1, y1, , y2] = box;
-    const x = Math.max(2, Math.min(x1 + 2, view.w - w - 2));
-    for (const y of [y1 + 2, y2 - h - 2, y1 - h - 2, y2 + 2]) {
-      if (y < 2 || y + h > view.h - 2) continue;
+    const vx = view.x || 0;
+    const vy = view.y || 0;
+    const x = Math.max(vx + 2, Math.min(x1 + 2, vx + view.w - w - 2));
+    // Inside the top and bottom of the part of the box that shows: a box under a site header keeps its tag.
+    const top = Math.max(y1, vy) + 2;
+    const bottom = Math.min(y2, vy + view.h) - h - 2;
+    for (const y of [top, bottom, y1 - h - 2, y2 + 2]) {
+      if (y < vy + 2 || y + h > vy + view.h - 2) continue;
       const rect = { x, y, w, h };
       if (taken.some((other) => overlaps(other, rect))) continue;
       if (relaxed !== null && others.some((other) => onNeighbour(rect, other, relaxed))) continue;
@@ -600,10 +921,10 @@
     return null;
   }
 
-  function drawTag(box, card, taken, others = []) {
+  function drawTag(box, card, taken, others = [], clip = { x1: 0, y1: 0, x2: viewW(), y2: viewH() }, index) {
     const layout = tagLayout(box[2] - box[0], box[3] - box[1]);
     if (layout.maxWidth < TAG_MIN_W) return null;
-    const tag = tagText(card);
+    const tag = tagText(card, index);
     const { state } = tag;
     const PAD_X = 7;
     const PAD_Y = 4;
@@ -631,7 +952,7 @@
     if (!full) return null;
     const short = layout.lines === 2 ? build(false) : null;
     const variants = short && short.h < full.h ? [full, short] : [full];
-    const fit = placeTagLadder(box, variants, taken, { w: viewW(), h: viewH() }, others);
+    const fit = placeTagLadder(box, variants, taken, { x: clip.x1, y: clip.y1, w: clip.x2 - clip.x1, h: clip.y2 - clip.y1 }, others);
     if (!fit) return null;
     const { rows, w, h } = variants[fit.size];
     const rect = fit.rect;
@@ -696,44 +1017,51 @@
     return { name: card.identity.name, price: '—', muted: true };
   }
 
-  const LABEL_MAX_W = 260;
-  const COMPACT_BOX_W = 140;
   const LABEL_FONT  = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+  const LABEL_PAD_X = 10;
+  const LABEL_PAD_Y = 7;
+  const LABEL_ACCENT_W = 3;
+  const LABEL_GAP = 3;
+  const LABEL_MARGIN = 4;
 
-  function badgeLayout(boxWidth) {
-    return { compact: boxWidth < COMPACT_BOX_W, maxWidth: Math.max(0, boxWidth) };
-  }
-
-  /** Draws the name and price label at the top of a card's frame, kept inside the card; returns its rect. */
-  function drawLabel(box, card, accentColor) {
+  /**
+   * The label a hovered card opens: its whole name, then its whole price or what to do, at the top of its frame. It
+   * may be wider than the card, but stays inside `clip` (the photo's visible rect) and the viewport; text is cut only
+   * where that rect is narrower than it. measure(text, font) gives a width in CSS px.
+   */
+  function labelLayout(box, card, clip, measure) {
     const { name, price: rawPrice, caveat, muted } = labelText(card);
     const price = caveat && rawPrice ? `${caveat} · ${rawPrice}` : rawPrice;
-    const PAD_X = 10;
-    const PAD_Y = 7;
-    const ACCENT_W = 3;
     const NAME_PX = 15;
     const PRICE_PX = muted ? 12 : 17;
-    const GAP = 3;
-    const layout = badgeLayout(box[2] - box[0]);
-    const maxW = Math.min(layout.maxWidth, LABEL_MAX_W, viewW() - 12);
-    const textMax = Math.max(0, maxW - ACCENT_W - PAD_X * 2);
-    const priceLine = { text: price || '—', font: `700 ${PRICE_PX}px ${LABEL_FONT}`, px: PRICE_PX, color: muted ? '#a3a9bf' : '#34d399' };
-    const lines = layout.compact
-      ? [priceLine]
-      : [
-          { text: name, font: `600 ${NAME_PX}px ${LABEL_FONT}`, px: NAME_PX, color: '#f3f4f8' },
-          priceLine,
-        ];
+    const x1 = Math.max(clip.x1, 0);
+    const y1 = Math.max(clip.y1, 0);
+    const x2 = Math.min(clip.x2, viewW());
+    const y2 = Math.min(clip.y2, viewH());
+    const maxW = Math.max(0, x2 - x1 - LABEL_MARGIN * 2);
+    const textMax = Math.max(0, maxW - LABEL_ACCENT_W - LABEL_PAD_X * 2);
+    const lines = [
+      { text: name, font: `600 ${NAME_PX}px ${LABEL_FONT}`, px: NAME_PX, color: '#f3f4f8' },
+      { text: price || '—', font: `700 ${PRICE_PX}px ${LABEL_FONT}`, px: PRICE_PX, color: muted ? '#a3a9bf' : '#34d399' },
+    ];
     let widest = 0;
     for (const l of lines) {
-      ctx.font = l.font;
-      l.text = fitText(l.text, textMax, (t) => ctx.measureText(t).width);
-      widest = Math.max(widest, ctx.measureText(l.text).width);
+      l.text = fitText(l.text, textMax, (t) => measure(t, l.font));
+      widest = Math.max(widest, measure(l.text, l.font));
     }
-    const w = Math.min(Math.ceil(widest) + ACCENT_W + PAD_X * 2, maxW);
-    const h = PAD_Y * 2 + lines.reduce((sum, l) => sum + l.px, 0) + GAP * Math.max(0, lines.length - 1);
-    const x = Math.max(6, Math.min(box[0] + 4, viewW() - w - 6));
-    const y = Math.max(6, Math.min(box[1] + 4, viewH() - h - 6));
+    const w = Math.min(Math.ceil(widest) + LABEL_ACCENT_W + LABEL_PAD_X * 2, maxW);
+    const h = LABEL_PAD_Y * 2 + lines.reduce((sum, l) => sum + l.px, 0) + LABEL_GAP * (lines.length - 1);
+    const x = Math.max(x1 + LABEL_MARGIN, Math.min(box[0] + 4, x2 - w - LABEL_MARGIN));
+    const y = Math.max(y1 + LABEL_MARGIN, Math.min(box[1] + 4, y2 - h - LABEL_MARGIN));
+    return { lines, x, y, w, h };
+  }
+
+  /** Draws a hovered card's label (see labelLayout); returns its rect. */
+  function drawLabel(box, card, accentColor, clip) {
+    const { lines, x, y, w, h } = labelLayout(box, card, clip, (t, font) => {
+      ctx.font = font;
+      return ctx.measureText(t).width;
+    });
 
     ctx.shadowColor = 'rgba(0,0,0,0.55)';
     ctx.shadowBlur = 10;
@@ -745,16 +1073,16 @@
     ctx.shadowColor = 'transparent';
     ctx.fillStyle = accentColor;
     ctx.beginPath();
-    ctx.roundRect(x, y, ACCENT_W, h, [6, 0, 0, 6]);
+    ctx.roundRect(x, y, LABEL_ACCENT_W, h, [6, 0, 0, 6]);
     ctx.fill();
 
     ctx.textBaseline = 'top';
-    let cy = y + PAD_Y;
+    let cy = y + LABEL_PAD_Y;
     for (const l of lines) {
       ctx.font = l.font;
       ctx.fillStyle = l.color;
-      ctx.fillText(l.text, x + ACCENT_W + PAD_X, cy);
-      cy += l.px + GAP;
+      ctx.fillText(l.text, x + LABEL_ACCENT_W + LABEL_PAD_X, cy);
+      cy += l.px + LABEL_GAP;
     }
     return { x, y, w, h };
   }
@@ -763,7 +1091,7 @@
     if (measure(text) <= maxPx) return text;
     let end = text.length;
     while (end > 0 && measure(text.slice(0, end) + '…') > maxPx) end--;
-    return end > 0 ? text.slice(0, end) + '…' : '';
+    return end > 0 ? text.slice(0, end).trimEnd() + '…' : '';
   }
 
   // ─── DOM-based card finder ────────────────────────────────────────────────
@@ -956,7 +1284,24 @@
       const heading = headingBefore(el);
       if (heading) headings.push(heading);
     }
-    return { landmarks, headings, labels, sealedLabel: hasSealedProductContext(node), chain: chainOf(node), hscroll: scrollsHorizontally(node) };
+    return {
+      landmarks, headings, labels, sealedLabel: hasSealedProductContext(node), chain: chainOf(node), hscroll: scrollsHorizontally(node),
+      link: node.closest('a[href]')?.href || '',
+    };
+  }
+
+  // Where the page's pictures link to, on screen or not: tiles of other listings ("Today's picks") tell the
+  // background this page is one listing among others.
+  const MAX_IMAGE_LINKS = 200;
+  function imageLinks() {
+    const links = new Set();
+    let seen = 0;
+    for (const img of document.querySelectorAll('img')) {
+      if (seen++ >= MAX_IMAGE_ELEMENTS || links.size >= MAX_IMAGE_LINKS) break;
+      const href = img.closest('a[href]')?.href;
+      if (href && href.length <= 2000) links.add(href);
+    }
+    return [...links];
   }
 
   // Hostnames the page itself loaded pictures from. The background only fetches full-size renditions from these.
@@ -1028,7 +1373,55 @@
       ogImages,
       headings: collectHeadings(),
       imageHosts: collectImageHosts(),
+      imageLinks: imageLinks(),
     };
+  }
+
+  // A Facebook listing fetched without cookies names its cover photo's upload in og:image, which the logged-in page
+  // lacks. Only a scan asks (never on page load), for this page's own origin; the head's text goes back to the
+  // background, which keeps the image URLs and drops the rest. Anything unexpected answers '' (no upgrade).
+  const SHARE_FETCH_MS = 4000;
+  const SHARE_MAX_BYTES = 1.5 * 1024 * 1024;
+
+  async function sharePageHead(raw) {
+    let url;
+    try {
+      url = new URL(raw);
+      if (url.origin !== new URL(document.baseURI).origin) return '';
+    } catch {
+      return '';
+    }
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), SHARE_FETCH_MS);
+    try {
+      const res = await fetch(url.href, { credentials: 'omit', signal: abort.signal, headers: { Accept: 'text/html' } });
+      if (!res.ok || new URL(res.url || url.href).origin !== url.origin) return '';
+      if (!/text\/html/i.test(res.headers.get('content-type') || '')) return '';
+      if (Number(res.headers.get('content-length')) > SHARE_MAX_BYTES) return '';
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+      let bytes = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return text;
+        bytes += value.byteLength;
+        if (bytes > SHARE_MAX_BYTES) {
+          reader.cancel().catch(() => {});
+          return '';
+        }
+        text += decoder.decode(value, { stream: true });
+        const end = text.search(/<\/head>/i);
+        if (end >= 0) {
+          reader.cancel().catch(() => {});
+          return text.slice(0, end);
+        }
+      }
+    } catch {
+      return '';
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // The part of an image that is actually on screen: inside the viewport and inside the ancestors that
@@ -1065,16 +1458,95 @@
   }
 
   // The same element keeps its id across screens, so the background can tell a card seen twice.
+  // The picture it showed is kept too: a carousel that swaps it later must not carry this scan's boxes.
   function registerAnchor(el, r) {
     const rect = snapshotRect(r);
+    const source = sourceOf(el);
+    // Also compute and store the painted rect (in document coordinates) for letterboxed images
+    let paintedRect = null;
+    if (el.tagName === 'IMG') {
+      const style = getComputedStyle(el);
+      const painted = paintedBox(r, el.naturalWidth, el.naturalHeight, style.objectFit || 'fill', style.objectPosition || '50% 50%');
+      if (painted) {
+        paintedRect = snapshotRect(painted);
+      }
+    }
     const known = _anchorIds.get(el);
     if (known !== undefined) {
-      _scanAnchors[known].rect = rect;
+      Object.assign(_scanAnchors[known], { rect, source, paintedRect });
       return known;
     }
     _anchorIds.set(el, _scanAnchors.length);
-    _scanAnchors.push({ el, rect });
+    _scanAnchors.push({ el, rect, source, paintedRect });
     return _scanAnchors.length - 1;
+  }
+
+  // ─── Decorative copies of a photo ─────────────────────────────────────────
+  // Some sites paint the listing picture twice with the same src: the sharp <img> and a blurred, scaled-up copy
+  // behind it (Facebook Marketplace's backdrop is a blur(2px) copy under matrix(11,0,0,11,0,0), painted far larger
+  // than the picture). Only the sharp one is the photo: boxes found in it must be mapped through its own rect.
+  // An <img> is decorative when it or an ancestor is blurred, when an ancestor transform paints it much larger
+  // than its layout size, or when it lies fully behind another, non-decorative <img> of the same src.
+  const DECORATIVE_INFLATION = 1.5; // painted / layout size; a 45 degree tilt grows a box 1.41x, a hover zoom about 1.1-1.2x
+  const EDGE_SLACK = 1;             // px
+
+  // True when a CSS filter value contains a blur with a radius above zero.
+  function hasBlur(filter) {
+    const blur = /blur\(\s*([\d.]+)/i.exec(typeof filter === 'string' ? filter : '');
+    return blur !== null && parseFloat(blur[1]) > 0;
+  }
+
+  // Why this image is a decorative copy, or null. rect is the painted size (getBoundingClientRect), layoutW/H the
+  // size before any transform (offsetWidth/Height; 0 when unknown, which never counts as inflated).
+  function decorativeReason({ rect, layoutW, layoutH, blurred, behindDuplicate }) {
+    if (blurred) return 'blurred';
+    if ((layoutW > 0 && rect.w > layoutW * DECORATIVE_INFLATION) || (layoutH > 0 && rect.h > layoutH * DECORATIVE_INFLATION)) return 'inflated';
+    if (behindDuplicate) return 'behind-duplicate';
+    return null;
+  }
+
+  function isBlurred(el) {
+    for (let node = el; node && node.nodeType !== 9; node = node.parentElement) {
+      if (hasBlur(getComputedStyle(node).filter)) return true;
+    }
+    return false;
+  }
+
+  function sameSrcImages(img, src, imgs) {
+    return src ? Array.prototype.filter.call(imgs, (other) => other !== img && (other.currentSrc || other.src || '') === src) : [];
+  }
+
+  function rectInside(inner, outer) {
+    return inner.left >= outer.left - EDGE_SLACK && inner.top >= outer.top - EDGE_SLACK
+      && inner.right <= outer.right + EDGE_SLACK && inner.bottom <= outer.bottom + EDGE_SLACK;
+  }
+
+  // Another sharp copy of the same src lies inside this image's rect and is painted above it.
+  function hiddenBehindCopy(img, r, copies) {
+    if (!copies.length || typeof document.elementsFromPoint !== 'function') return false;
+    for (const other of copies) {
+      const o = other.getBoundingClientRect();
+      if (!(o.width > 0 && o.height > 0) || !rectInside(o, r)) continue;
+      if (decorativeReason({ rect: { w: o.width, h: o.height }, layoutW: other.offsetWidth, layoutH: other.offsetHeight, blurred: isBlurred(other) })) continue;
+      const stack = document.elementsFromPoint((o.left + o.right) / 2, (o.top + o.bottom) / 2);
+      const above = stack.indexOf(other);
+      const below = stack.indexOf(img);
+      if (above >= 0 && below >= 0 && above < below) return true;
+    }
+    return false;
+  }
+
+  // null for a photo worth scanning; otherwise why not. Called only for images already big enough and on screen.
+  function decorativeOf(img, r, imgs) {
+    const src = img.currentSrc || img.src || '';
+    const copies = sameSrcImages(img, src, imgs);
+    return decorativeReason({
+      rect: { w: r.width, h: r.height },
+      layoutW: img.offsetWidth || 0,
+      layoutH: img.offsetHeight || 0,
+      blurred: isBlurred(img),
+      behindDuplicate: hiddenBehindCopy(img, r, copies),
+    });
   }
 
   function findCardImages(opts = {}) {
@@ -1084,6 +1556,7 @@
       _anchorIds = new Map();
     }
     _scanScroll = { x: window.scrollX, y: window.scrollY };
+    _scanView = { w: window.innerWidth, h: window.innerHeight };
     const found = [];
     const photos = [];  // large non-card-aspect images for YOLO-inside-image treatment
     const rejected = []; // only populated when opts.diag === true
@@ -1095,7 +1568,6 @@
 
     for (const img of imgs) {
       const r = img.getBoundingClientRect();
-      const anchor = r.width >= CARD_MIN_W && r.height >= CARD_MIN_H ? registerAnchor(img, r) : undefined;
       const ratio = r.height ? r.width / r.height : 0;
       const src = img.currentSrc || img.src || '';
 
@@ -1108,16 +1580,20 @@
       if (!img.complete && cardShaped) pending += 1;
 
       let reason = null;
+      let decorative = null;
       if (!img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) reason = 'not-loaded';
       else if (r.width < CARD_MIN_W || r.height < CARD_MIN_H)                  reason = 'too-small';
       else if (r.right <= 0 || r.bottom <= 0 ||
                r.left >= window.innerWidth || r.top >= window.innerHeight)     reason = 'off-screen';
+      else if ((decorative = decorativeOf(img, r, imgs)) !== null)             reason = 'decorative';
       else if (ratio < CARD_RATIO_MIN || ratio > CARD_RATIO_MAX)               reason = 'wrong-ratio';
       else if (hasSealedProductContext(img))                                    reason = 'sealed-product';
 
       // Rect visible within the viewport and every overflow-clipping ancestor. Skipped for images
       // already rejected as unloaded, tiny or off-screen: they are never scanned.
-      const gone = reason === 'not-loaded' || reason === 'too-small' || reason === 'off-screen';
+      // A decorative copy is never pinned to by the overlay either: its rect is not where the picture is.
+      const anchor = r.width >= CARD_MIN_W && r.height >= CARD_MIN_H && reason !== 'decorative' ? registerAnchor(img, r) : undefined;
+      const gone = reason === 'not-loaded' || reason === 'too-small' || reason === 'off-screen' || reason === 'decorative';
       const { vx, vy, vw, vh, pvw, pvh } = gone ? { vx: 0, vy: 0, vw: 0, vh: 0, pvw: 0, pvh: 0 } : visibleBox(img, r);
       const visibleCoverage = r.width > 0 && r.height > 0
         ? (vw * vh) / (r.width * r.height)
@@ -1131,7 +1607,7 @@
         pvw >= PHOTO_MIN_SIDE && pvh >= PHOTO_MIN_SIDE;
 
       if (reason) {
-        if (opts.diag) rejected.push({ reason, src: src.slice(0, 160), w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)) });
+        if (opts.diag) rejected.push({ reason, ...(decorative ? { decorative } : {}), src: src.slice(0, 160), w: Math.round(r.width), h: Math.round(r.height), ratio: Number(ratio.toFixed(3)) });
         // A sealed product's box art is kept as a photo candidate too, so the background can see that
         // the listing's main picture is a product and not a card; it never scans it for cards.
         if ((reason === 'wrong-ratio' || reason === 'sealed-product') && isLargePhoto) {
@@ -1288,7 +1764,10 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.action === 'showOverlay') {
       _fullSize = msg.fullSize?.url && /^https?:/.test(msg.fullSize.url) ? { url: msg.fullSize.url } : null;
+      if (typeof msg.shown === 'boolean') _shown = msg.shown;
       renderOverlay(msg.cards, msg.srcWidth, msg.srcHeight);
+    } else if (msg.action === 'setOverlayShown') {
+      setOverlayShown(msg.shown !== false);
     } else if (msg.action === 'hideOverlay') {
       hideOverlay(() => sendResponse({ hidden: true }));
       return true;
@@ -1317,6 +1796,9 @@
         devicePixelRatio: window.devicePixelRatio || 1,
       });
       return false;
+    } else if (msg.action === 'sharePageHead') {
+      sharePageHead(msg.url).then((html) => sendResponse({ html }));
+      return true;
     } else if (msg.action === 'stopObserving') {
       stopObserving();
     } else if (msg.action === 'startObserving') {
@@ -1337,6 +1819,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { acceptClick, labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, badgeLayout, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { acceptClick, labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, labelLayout, paintedBox, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, hasBlur, decorativeReason, canvasBacking, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

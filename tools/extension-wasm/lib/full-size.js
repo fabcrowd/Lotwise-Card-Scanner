@@ -39,6 +39,48 @@ export function facebookOriginal(raw) {
   return url.href;
 }
 
+// A logged-in Marketplace item page has no og:image (2026-10-25); the same page fetched without cookies still names
+// the cover photo's upload in og:image/twitter:image. Only the cover: the other photos are named nowhere.
+const FACEBOOK_SITE = /^(?:[a-z0-9-]+\.)?facebook\.com$/i;
+const FACEBOOK_ITEM = /^\/marketplace\/item\/(\d{5,25})(?:\/|$)/;
+const SHARE_IMAGE_KEYS = new Set(["og:image", "og:image:secure_url", "twitter:image"]);
+
+/** The canonical URL of a Facebook Marketplace item page (no query, same host), or null for any other page. */
+export function facebookListingPage(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || !FACEBOOK_SITE.test(url.hostname)) return null;
+  const item = url.pathname.match(FACEBOOK_ITEM);
+  return item ? `https://${url.hostname.toLowerCase()}/marketplace/item/${item[1]}/` : null;
+}
+
+/** The share-page URL a scan should read: an item page whose own og:image names no Facebook upload. */
+export function needsShareImages(pageUrl, ogImages) {
+  const page = facebookListingPage(pageUrl);
+  if (!page) return null;
+  return (Array.isArray(ogImages) ? ogImages : []).some((og) => facebookOriginal(og)) ? null : page;
+}
+
+const decodeEntities = (text) => text.replace(/&(?:amp|#38|#x26);/gi, "&");
+
+/** The og:image, og:image:secure_url and twitter:image URLs of a page's HTML: decoded, https only, at most four. */
+export function shareImagesFromHtml(html) {
+  const out = [];
+  for (const [tag] of String(html || "").matchAll(/<meta\b[^>]*>/gi)) {
+    const key = tag.match(/\b(?:property|name)\s*=\s*(["'])(.*?)\1/i)?.[2]?.toLowerCase();
+    if (!SHARE_IMAGE_KEYS.has(key)) continue;
+    const content = tag.match(/\bcontent\s*=\s*(["'])(.*?)\1/i)?.[2];
+    const url = content ? publicHttpsUrl(decodeEntities(content)) : null;
+    if (url && !out.includes(url.href)) out.push(url.href);
+    if (out.length >= MAX_CANDIDATES) break;
+  }
+  return out;
+}
+
 function facebookSize(href) {
   const match = String(href).match(/[?&]cstp=mx(\d{2,5})x(\d{2,5})(?:&|$)/);
   return match ? Math.max(Number(match[1]), Number(match[2])) : ASSUMED.original;
