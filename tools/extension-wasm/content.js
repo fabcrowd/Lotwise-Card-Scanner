@@ -792,6 +792,7 @@
 
   function tagLines(card) {
     const state = cardState(card);
+    if (state === 'none' && card.tooSmall === true) return { state, lines: ['Too small'], short: '?' };
     if (state === 'none') return { state, lines: ['Not recognised', 'Turn it over'], short: '?' };
     if (state === 'skipped') return { state, lines: ['Skipped'], short: 'Skipped' };
     if (state === 'choose') {
@@ -998,6 +999,7 @@
       const ask = card.display?.highValue ? 'High value, double-check. Tap to pick it in the scanner' : 'Tap to pick it in the scanner';
       return { name: guess || 'Choose a card', price: ask, muted: true };
     }
+    if (card.tooSmall === true) return { name: 'Too small', price: 'Too small to read. Open the full-size photo.', muted: true };
     if (card.abstain || !card.identity?.name) return { name: 'Not recognised', price: 'Turn it over to identify it', muted: true };
     const disp = card.display || null;
     // A price older than 30 days is never shown (the popup sets `stale`): same rule as no price until trusted.

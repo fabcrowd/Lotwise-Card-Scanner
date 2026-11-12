@@ -1,5 +1,6 @@
 import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, chosenPrintingHasNoPrice, isIdentified, isStale, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
+import { TOO_SMALL_ROW_TEXT } from "./lib/tiny-card.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
@@ -870,6 +871,7 @@ function renderPrice(card, idx) {
   const cell = (text, title) => `<div class="card-price" title="${escHtml(title)}" aria-label="${escHtml(`${text}. ${title}`)}">${escHtml(text)}</div>`;
   if (card.pricing) return cell("…", "Getting price…");
   if (card.priceError) return cell("—", card.priceError);
+  if (card.tooSmall) return cell("—", TOO_SMALL_ROW_TEXT);
   if (card.cardBack) return cell("—", "Turn it over to identify it");
   // A card still to choose shows its best match's price, marked unconfirmed: it is quoted for real only once picked.
   if (!isIdentified(card)) return renderUnconfirmedPrice(card, cell);
@@ -903,7 +905,7 @@ function renderPrice(card, idx) {
 function renderUnrecognisedRow(card, idx) {
   const thumb = cropThumb(card);
   const inPhoto = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
-  const label = (card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`) + (inPhoto ? ` · ${inPhoto}` : "");
+  const label = (card.tooSmall ? `Card ${idx + 1}: ${TOO_SMALL_ROW_TEXT}` : card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`) + (inPhoto ? ` · ${inPhoto}` : "");
   const search = card.cardBack || _picker.get(idx)
     ? ""
     : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="Search for card ${idx + 1}">Search for this card</button>`;
@@ -1057,6 +1059,7 @@ function showSearchResults(idx) {
 // What each row shows now, after any fixes: the answers "All right" confirms.
 function shownAnswers(cards) {
   return cards.map((card, index) => {
+    if (card.tooSmall) return { index, unknown: true };
     if (card.cardBack) return { index, notACard: true };
     return card.identity?.id ? { index, cardId: card.identity.id } : { index, unknown: true };
   });

@@ -21,6 +21,7 @@ import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard, warpQuad }       from "./lib/rectify.js";
 import { CORNER_MIN_CONF, cornerModelReady, loadCornerModel, predictCorners, validQuad } from "./lib/corners.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
+import { isTooSmallBox, smallPhotoCounts, tooSmallCard, canFrameTooSmall, keepTooSmall } from "./lib/tiny-card.js";
 import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
@@ -928,25 +929,42 @@ async function handleScanPage(sendResponse, era) {
               const photoFirst = cards.length;
               for (const { box, score } of boxes) {
                 const [bx1, by1, bx2, by2] = box;
-                if ((bx2 - bx1) < 40 || (by2 - by1) < 60) continue;
+                const tooSmall = isTooSmallBox(box);
                 const cardBox = extendClippedBottom(photoPixels.data, photoPixels.width, photoPixels.height, box);
                 let viewportBox;
+                let mappedBox;
                 if (fromSource) {
                   // A card in a gallery thumbnail may lie outside its cropped view: the thumbnail stands for it.
-                  viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect)
+                  mappedBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
+                  viewportBox = mappedBox
                     || (gallery ? [ph.rect.x, ph.rect.y, ph.rect.x + ph.rect.w, ph.rect.y + ph.rect.h] : null);
                   if (!viewportBox) continue;
                 } else {
                   viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
+                  mappedBox = viewportBox;
                 }
+                // A too-small entry is never framed around the whole thumbnail; skip before it can claim a slot.
+                if (tooSmall && !canFrameTooSmall({ mappedBox, gallery })) continue;
                 const rectify = (rect) => fromSource
                   ? rectifyCard(photoBitmap, rect)
                   : rectifyCard(bitmap, [sx + rect[0], sy + rect[1], sx + rect[2], sy + rect[3]]);
-                const cardCanvas = await (fromSource
-                  ? cardCanvasFor(photoBitmap, box)
-                  : cardCanvasFor(bitmap, [sx + box[0], sy + box[1], sx + box[2], sy + box[3]]));
+                // A box too small to read is rectified plainly (no corner model) and never identified.
+                const cardCanvas = await (tooSmall
+                  ? rectify(box)
+                  : fromSource
+                    ? cardCanvasFor(photoBitmap, box)
+                    : cardCanvasFor(bitmap, [sx + box[0], sy + box[1], sx + box[2], sy + box[3]]));
                 // The hero fallback is never checked: it may be the listing's only card.
                 if (!hero && !(await boxLooksLikeCard(cardCanvas))) continue;
+                if (tooSmall) {
+                  const claimedSmall = claim(viewportBox, undefined, (viewportBox[2] - viewportBox[0]) * (viewportBox[3] - viewportBox[1]));
+                  if (!keepTooSmall({ claimed: claimedSmall, mappedBox, gallery })) continue;
+                  if (photoNo !== undefined) photoMeta[cards.length] = { photo: photoNo, height: by2 - by1, embedding: null };
+                  pushCard(tooSmallCard({ box: viewportBox, score, readHeight: Math.round(informationHeight(by2 - by1, naturalPerFed)), via: "yolo-in-photo", photoBoxes: boxes.length,
+                    ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }), cardCanvas,
+                    null, claimedSmall);
+                  continue;
+                }
                 // The number is read from the detector box. The stamp is scored on the
                 // box after a clipped yellow border is included, so the card is not stretched.
                 const stampCanvas = cardBox[3] === box[3] ? null : rectify(cardBox);
@@ -983,8 +1001,8 @@ async function handleScanPage(sendResponse, era) {
               cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
               {
                 // Small cards and a larger picture the scan could not read itself: the user can open that one.
-                const read = cards.slice(photoFirst).filter((c) => !c.cardBack);
-                const small = read.filter((c) => c.readHeight > 0 && c.readHeight < FULL_SIZE_SMALL_PX).length;
+                const read = cards.slice(photoFirst).filter((c) => !c.cardBack || c.tooSmall);
+                const small = smallPhotoCounts(read, FULL_SIZE_SMALL_PX).small;
                 if (read.length && small >= Math.max(2, read.length / 2)) {
                   if (upgrade) console.log("[BG]   cards small (" + small + "/" + read.length + " under " + FULL_SIZE_SMALL_PX + " px, median fed " + (read.map((c) => c.readHeight).sort((a, b) => a - b)[read.length >> 1] ?? 0) + " px) even in the full-size photo");
                   else {
