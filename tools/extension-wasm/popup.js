@@ -5,9 +5,10 @@ import { DRAW_HINT_TEXT, drawnIndices, isSamePage, placeDrawnCard } from "./lib/
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
-import { bulkPairs, bulkRememberedPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderSkipButton, renderSkippedGroup, renderSkippedRow, tickAllLabel } from "./lib/choose-flow.js";
+import { bulkPairs, bulkRememberedPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderRemoveButton, renderSkipButton, renderSkippedGroup, renderSkippedRow, tickAllLabel } from "./lib/choose-flow.js";
 import { clearLot, loadLot, saveLot } from "./lib/lot-session.js";
-import { putBackCard, skipCard, skippedCount } from "./lib/skip.js";
+import { leftOutLabel, putBackCard, removeCard, removedCount, skipCard, skippedCount } from "./lib/skip.js";
+import { acceptFromBackground, acceptRemove } from "./lib/overlay-remove.js";
 import { UNREAD_ROW_TEXT, hiddenCount, isNotCard, overlayCards, renderNotCardGroup, renderNotCardRow, shownMessage, showNotCard } from "./lib/not-card.js";
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
@@ -691,6 +692,7 @@ function renderLotTotals(cards, choiceFor) {
   const list = (cards || []).filter((card) => !card.cardBack);
   if (!list.length) { lotTotalsEl.hidden = true; return; }
   const skipped = skippedCount(cards);
+  const removed = removedCount(cards);
   const t = lotEstimate(cards, choiceFor, enabledConditions());
   const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
   const cond = enabledConditions()[0] || "NM";
@@ -706,7 +708,7 @@ function renderLotTotals(cards, choiceFor) {
   lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Confirmed value</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n"${note.title ? ` title="${escHtml(note.title)}"` : ""}>${escHtml(note.text)}</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(conditionName(cond))}</span></span>`
     + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`
     + (unconfirmed.count ? `<span class="lt-item lt-unconfirmed" title="Best-match prices of the cards still to confirm. A guess, not part of Confirmed value or the export."><span class="lt-lbl">Unconfirmed</span> <b>~${escHtml(formatUsd(unconfirmed.total))}</b> <span class="lt-n">(${unconfirmed.count} ${unconfirmed.count === 1 ? "card" : "cards"})</span></span>` : "")
-    + (skipped ? `<span class="lt-item lt-skipped" title="Cards you skipped. They are not priced or exported."><span class="lt-lbl">Skipped</span> <b>${skipped}</b></span>` : "")
+    + (skipped ? `<span class="lt-item lt-skipped" title="${escHtml(removed === skipped ? "Cards you removed from the scan. They are not counted, priced or exported." : removed ? "Cards you skipped or removed. They are not counted, priced or exported." : "Cards you skipped. They are not priced or exported.")}"><span class="lt-lbl">${escHtml(leftOutLabel(skipped, removed))}</span> <b>${skipped}</b></span>` : "")
     + actions;
   lotTotalsEl.hidden = false;
   // The strip is rewritten on every card change; a keyboard user on Copy or Download stays on it.
@@ -856,7 +858,7 @@ function renderResults() {
   resultsEl.innerHTML = renderChooseGroup(toChoose.map((idx) => renderChooseRow(cards[idx], idx)).join(""), toChoose.length, _showChoose, bulkPairs(cards).length)
     + confirmed.map((idx) => renderCardRow(cards[idx], idx)).join("")
     + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised)
-    + renderSkippedGroup(skipped.map((idx) => renderSkippedRow(idx, cropThumb(cards[idx]))).join(""), skipped.length, _showSkipped)
+    + renderSkippedGroup(skipped.map((idx) => renderSkippedRow(idx, cropThumb(cards[idx]), cards[idx].removed === true, cards[idx].removedFromSkipped === true)).join(""), skipped.length, _showSkipped, removedCount(cards))
     + renderNotCardGroup(notCard.map((idx) => renderNotCardRow(idx, cropThumb(cards[idx]), cards[idx].tooSmall === true, cards[idx].unread === true)).join(""), notCard.length, _showNotCard);
 }
 
@@ -898,6 +900,7 @@ function renderCardRow(card, idx) {
       ${renderPrice(card, idx)}
       <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
     </div>
+    ${renderRemoveButton(idx)}
     ${whyHtml(card, idx, _whyOpen.has(idx))}
     ${searchRow}
     ${setRow}
@@ -974,6 +977,7 @@ function renderUnrecognisedRow(card, idx) {
       ${search}
       ${card.unread && !card.tooSmall ? `<button type="button" class="link-btn" data-draw-box aria-label="${escHtml(`Draw a box around card ${idx + 1} to read it`)}">Draw a box</button>` : ""}
     </div>
+    ${renderRemoveButton(idx)}
     ${renderSearchPanel(idx)}
   </div>`;
 }
@@ -1006,6 +1010,7 @@ function renderChooseRow(card, idx) {
     ? ""
     : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="None of these? Search for card ${idx + 1}">None of these? Search</button>`;
   return `<div class="card-row choose-row asking" data-idx="${idx}">
+    ${renderRemoveButton(idx)}
     <div class="card-head">
       <div class="conf-stripe abstain"></div>
       <div class="card-meta">
@@ -1221,17 +1226,61 @@ function showHiddenAt(idx) {
   showMessage(shownMessage(next, toConfirmCount()));
 }
 
+// The X on a card, in the list or on the page: the card leaves the scan, the total and the export, and nothing is
+// taught (no skip memory). Put back returns it. Only the list's X moves focus; a click on the page leaves the window be.
+function removeAt(idx, { fromPage }) {
+  const card = _lastResult?.cards?.[idx];
+  if (!card || card.removed === true) return;
+  const buttons = fromPage ? [] : [...resultsEl.querySelectorAll("button[data-remove-card]")].filter((button) => button.offsetParent !== null);
+  const at = buttons.findIndex((button) => Number(button.dataset.idx) === idx);
+  const neighbour = at < 0 ? null : buttons[at + 1] || buttons[at - 1] || null;
+  _picker.delete(idx);
+  dropFromBulk(idx);
+  _userEdits = true; // else a rescan from newCardsDetected would replace the list and bring the card back
+  replaceCard(idx, removeCard(card));
+  if (_bulk) _bulk.scan = _lastResult;
+  if (!fromPage) (neighbour && resultsEl.querySelector(`button[data-remove-card][data-idx="${neighbour.dataset.idx}"]`) || btnScan).focus();
+  showMessage(`Removed card ${idx + 1}. It is left out of the total. Put it back from "Removed" at the bottom of the list.`);
+}
+
+// A card taken out of the scan can never be confirmed from the open review panel.
+function dropFromBulk(idx) {
+  if (!_bulk?.pairs.some((pair) => pair.idx === idx)) return;
+  _bulk.pairs = _bulk.pairs.filter((pair) => pair.idx !== idx);
+  _bulk.skipped.delete(idx);
+  _bulk.explicit.delete(idx);
+  if (!_bulk.pairs.length) { closeBulk(false); return; }
+  const hadFocus = bulkList.contains(document.activeElement);
+  bulkList.innerHTML = _bulk.pairs.map(bulkPairHtml).join("");
+  updateBulkCount();
+  if (hadFocus) bulkList.querySelector("input")?.focus();
+}
+
+// The background forwards a click on a page card's X (it is the one place that decides). Taken only when this window
+// holds the lot of that page and is idle; the reply tells it whether the removal is stored here.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.action !== "applyOverlayRemove" || !acceptFromBackground(sender, chrome.runtime.id)) return;
+  const take = !_restoring && !isScanning && acceptRemove(msg.tabUrl, msg.index, _lotUrl, _lastResult?.cards);
+  if (take) removeAt(msg.index, { fromPage: true });
+  sendResponse({ handled: take });
+});
+
 function putBackAt(idx) {
   const scan = _lastResult;
   const card = scan?.cards?.[idx];
   if (!card?.skipped) return;
-  chrome.runtime.sendMessage({ action: "unskip", scanId: scan.bgScanId, index: idx })
-    .then((resp) => { if (resp?.error) showMessage(resp.error, true); })
-    .catch((err) => showMessage(explainScanError(err?.message || err), true));
+  // A removed card taught nothing, so putting it back tells nothing either: only a plain skip has a skip to undo.
+  const removed = card.removed === true;
+  if (!removed) {
+    chrome.runtime.sendMessage({ action: "unskip", scanId: scan.bgScanId, index: idx })
+      .then((resp) => { if (resp?.error) showMessage(resp.error, true); })
+      .catch((err) => showMessage(explainScanError(err?.message || err), true));
+  }
   _showChoose = true;
   replaceCard(idx, putBackCard(card));
-  resultsEl.querySelector(`.choose-row[data-idx="${idx}"] [data-confirm-best], .choose-row[data-idx="${idx}"] [data-open-search]`)?.focus();
-  showMessage(`Put back. ${toConfirmCount()} to confirm.`);
+  const row = resultsEl.querySelector(`.card-row[data-idx="${idx}"]`);
+  (row?.querySelector("[data-confirm-best], [data-open-search], [data-remove-card]") || btnScan).focus();
+  showMessage(removed ? (card.removedFromSkipped === true ? "Put back. It is still skipped." : "Put back. It counts in the total again.") : `Put back. ${toConfirmCount()} to confirm.`);
 }
 
 resultsEl.addEventListener("click", (e) => {
@@ -1274,6 +1323,8 @@ resultsEl.addEventListener("click", (e) => {
     if (best?.id) pickCard(idx, best.id, "candidates", best);
   } else if ("skipCard" in button.dataset) {
     skipAt(idx);
+  } else if ("removeCard" in button.dataset) {
+    removeAt(idx, { fromPage: false });
   } else if ("putBack" in button.dataset) {
     putBackAt(idx);
   } else if ("showHidden" in button.dataset) {
@@ -1439,7 +1490,7 @@ function closeBulk(restoreFocus = true) {
 function confirmBulk() {
   if (!_bulk) return;
   const { pairs, skipped, scan, explicit } = _bulk;
-  const kept = pairs.filter((pair) => !skipped.has(pair.idx));
+  const kept = pairs.filter((pair) => !skipped.has(pair.idx) && _lastResult?.cards?.[pair.idx]?.skipped !== true);
   const remembered = new Set(bulkRememberedPairs(kept, explicit).map((pair) => pair.idx));
   closeBulk(false);
   if (_lastResult !== scan) return;
@@ -1684,7 +1735,7 @@ function renderGradedGrid(card, grid) {
 
 function pushOverlay() {
   if (!_lastResult) return;
-  const cards = overlayCards(_lastResult.cards.map((c, idx) => isNotCard(c) ? c : ({
+  const cards = overlayCards(_lastResult.cards.map((c, idx) => isNotCard(c) ? c : c.removed === true ? { box: null, removed: true } : ({
     box: c.box,
     docBox: c.docBox,
     identity: c.identity,

@@ -6,6 +6,7 @@ import { isIdentified, needsPrinting } from "./card-display.js";
 import { escHtml, thumbUrl } from "./card-picker.js";
 import { choiceName } from "./set-choice.js";
 import { CLEAR_GAP } from "./fusion.js";
+import { leftOutLabel } from "./skip.js";
 
 /** 'confirmed' | 'choose' | 'back' | 'skipped'. A card the user just picked and is still pricing is already confirmed. */
 export function chooseState(card) {
@@ -138,7 +139,7 @@ export function renderChooseGroup(rowsHtml, count, expanded, reviewCount = 0) {
   </section>`;
 }
 
-export const skippedHeading = (count) => `Skipped (${count})`;
+export const skippedHeading = (count, removed = 0) => `${leftOutLabel(count, removed)} (${count})`;
 export const SKIP_LABEL = "Can't price this";
 export const SKIP_NAME = "I can't price it (not English, not a card)";
 
@@ -148,21 +149,26 @@ export function renderSkipButton(idx, highlighted = false) {
 }
 
 /** The collapsed "Skipped (N)" group at the bottom of the list; rows are already-escaped HTML. */
-export function renderSkippedGroup(rowsHtml, count, expanded) {
+export function renderSkippedGroup(rowsHtml, count, expanded, removed = 0) {
   if (!count) return "";
   return `<div class="skipped-group">
-    <button type="button" class="unrec-toggle skipped-toggle" id="skipped-heading" data-skipped-toggle aria-expanded="${expanded}" aria-controls="skipped-list">${escHtml(skippedHeading(count))}</button>
+    <button type="button" class="unrec-toggle skipped-toggle" id="skipped-heading" data-skipped-toggle aria-expanded="${expanded}" aria-controls="skipped-list">${escHtml(skippedHeading(count, removed))}</button>
     <div id="skipped-list" class="unrec-list"${expanded ? "" : " hidden"}>${rowsHtml}</div>
   </div>`;
 }
 
 /** One skipped card: its crop and "Put back". Never a name or a price. */
-export function renderSkippedRow(idx, crop) {
+export function renderSkippedRow(idx, crop, removed = false, wasSkipped = false) {
   return `<div class="card-row unrec-row skipped-row" data-idx="${idx}">
     <div class="unrec-line">
       ${crop ? `<img class="unrec-thumb" src="${escHtml(crop)}" alt="" width="34" height="48">` : ""}
-      <span class="unrec-name">Card ${idx + 1}: skipped</span>
-      <button type="button" class="link-btn" data-put-back data-idx="${idx}" aria-label="${escHtml(`Put back card ${idx + 1}: return it to the cards to confirm`)}">Put back</button>
+      <span class="unrec-name">Card ${idx + 1}: ${removed ? "removed" : "skipped"}</span>
+      <button type="button" class="link-btn" data-put-back data-idx="${idx}" aria-label="${escHtml(`Put back card ${idx + 1}: ${removed ? (wasSkipped ? "return it to the skipped cards" : "return it to the lot") : "return it to the cards to confirm"}`)}">Put back</button>
     </div>
   </div>`;
+}
+
+/** The small "x" in a row's corner: takes the card out of the scan and the total (a skip that teaches nothing). */
+export function renderRemoveButton(idx) {
+  return `<button type="button" class="remove-btn" data-remove-card data-idx="${escHtml(String(idx))}" aria-label="${escHtml(`Remove card ${Number(idx) + 1} from the lot`)}" title="Remove from the scan. It is left out of the total.">×</button>`;
 }

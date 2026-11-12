@@ -522,6 +522,11 @@
     .skip-btn-hot { color: #fcd34d; font-weight: 700; border: 1px solid #f59e0b; border-radius: 6px; padding: 2px 8px; text-decoration: none; }
     .skip-btn:focus-visible, .skipped-toggle:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
     .lot-totals .lt-skipped b { color: #8b92ab; }
+    /* The row's X: top-right corner, inside space reserved on the right so it never sits on the price or a button. */
+    .card-row:has(> .remove-btn) { position: relative; padding-right: 42px; }
+    .remove-btn { position: absolute; top: 6px; right: 10px; width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; font: inherit; font-size: 16px; line-height: 1; color: #6b7390; background: transparent; border: none; border-radius: 50%; cursor: pointer; }
+    .remove-btn:hover { color: #fca5a5; background: rgba(248,113,113,0.14); }
+    .remove-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
     .pick-best-card { border-color: #f59e0b; }
     .pick-best { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #f59e0b; text-align: center; }
     .pick-agree { display: block; font-size: 8px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: #34d399; text-align: center; }

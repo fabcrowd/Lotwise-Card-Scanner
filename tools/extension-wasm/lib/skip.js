@@ -19,10 +19,34 @@ export const isSkipRow = (row) => row?.pickedId === SKIP_ID || row?.cardId === S
 
 export const skipCard = (card) => ({ ...card, skipped: true });
 
+/**
+ * The user took this card out of the scan (the X on the page or in the list). It is a skip that teaches nothing:
+ * `skipped` makes every existing exclusion apply (totals, export, to confirm), `removed` says why and keeps it out of
+ * the skip memory. A card already skipped is marked so put back returns it to skipped.
+ */
+export function removeCard(card) {
+  if (card?.removed === true) return card;
+  return { ...card, skipped: true, removed: true, ...(card?.skipped === true ? { removedFromSkipped: true } : {}) };
+}
+
 export function putBackCard(card) {
   const next = { ...card };
+  if (next.removed === true) {
+    delete next.removed;
+    if (next.removedFromSkipped === true) delete next.removedFromSkipped;
+    else delete next.skipped;
+    return next;
+  }
   delete next.skipped;
   return next;
+}
+
+export const removedCount = (cards) => (cards || []).filter((card) => card?.removed === true).length;
+
+/** What the left-out cards are called: "Skipped", "Removed", or "Skipped or removed" when both are in the lot. */
+export function leftOutLabel(skipped, removed) {
+  if (!removed) return "Skipped";
+  return removed >= skipped ? "Removed" : "Skipped or removed";
 }
 
 export const skippedCount = (cards) => (cards || []).filter((card) => card?.skipped === true).length;

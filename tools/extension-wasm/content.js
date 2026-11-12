@@ -227,7 +227,8 @@
    */
   function hoveredTarget(targets, hover, point) {
     if (!point) return null;
-    if (hover && targets[hover.target] && inRect(hover.rect, point)) return hover.target;
+    // The X sticks out past the card box, so the pointer moving onto it keeps the card open.
+    if (hover && targets[hover.target] && (inRect(hover.rect, point) || inRect(hover.close, point))) return hover.target;
     let best = null;
     let bestArea = Infinity;
     targets.forEach((t, i) => {
@@ -642,7 +643,7 @@
       _targets.push({ rect: { x: seen.x1, y: seen.y1, w: seen.x2 - seen.x1, h: seen.y2 - seen.y1 }, tag: lastTags.get(p.index), box, clip, card, color, index: p.index });
     }
 
-    const kept = previous ? { target: _targets.findIndex((t) => t.index === previous.index), rect: previous.rect } : null;
+    const kept = previous ? { target: _targets.findIndex((t) => t.index === previous.index), rect: previous.rect, close: previous.close } : null;
     const hit = hoveredTarget(_targets, kept, _mouse);
     // Every card carries a small tag (name and number, price): placed where it overlaps no other tag, else left to hover.
     const taken = [];
@@ -675,8 +676,50 @@
       const rect = drawLabel(t.box, t.card, t.color, t.clip);
       ctx.restore();
       if (rect && cardState(t.card) !== 'identified') _clickable.push({ rect, index: t.index });
-      if (i === hit) _hover = { target: i, index: t.index, rect };
+      if (i !== hit) continue;
+      // The X is drawn after the label so it sits on top, and pushed last so it wins the click.
+      const close = closeButtonRect(t.box, t.clip);
+      if (close) {
+        ctx.save();
+        clipTo(t.clip);
+        drawCloseButton(close);
+        ctx.restore();
+        _clickable.push({ rect: close, remove: t.index });
+      }
+      _hover = { target: i, index: t.index, rect, close };
     }
+  }
+
+  // The X on a hovered card: removes it from the scan and the total. Centred on the box's top-right corner, pulled in
+  // so the whole circle stays on the visible photo; null when the visible part is too small to hold it.
+  const CLOSE_R = 9;
+  function closeButtonRect(box, clip) {
+    if (!box || !clip) return null;
+    const room = 2 * CLOSE_R + 2;
+    if (clip.x2 - clip.x1 < room || clip.y2 - clip.y1 < room) return null;
+    const cx = Math.max(clip.x1 + CLOSE_R + 1, Math.min(box[2], clip.x2 - CLOSE_R - 1));
+    const cy = Math.min(clip.y2 - CLOSE_R - 1, Math.max(box[1], clip.y1 + CLOSE_R + 1));
+    return { x: cx - CLOSE_R, y: cy - CLOSE_R, w: 2 * CLOSE_R, h: 2 * CLOSE_R };
+  }
+
+  function drawCloseButton(rect) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = 'rgba(12,14,20,0.92)';
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, rect.w, rect.h, CLOSE_R);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `700 15px ${LABEL_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('×', rect.x + rect.w / 2, rect.y + rect.h / 2 + 0.5);
+    ctx.restore();
   }
 
   // "Open full-size photo": drawn above the first row of the photo's cards when the scan found the cards small and a
@@ -724,8 +767,20 @@
     if (!hit) return;
     e.preventDefault();
     e.stopPropagation();
-    if (hit.url) window.open(hit.url, '_blank', 'noopener');
-    else chrome.runtime.sendMessage({ action: 'overlayPick', index: hit.index }).catch(() => {});
+    if (hit.url) { window.open(hit.url, '_blank', 'noopener'); return; }
+    if (Number.isInteger(hit.remove)) {
+      // The box goes only once the removal is stored (the scanner or the background says so); until then it stays.
+      const index = hit.remove;
+      chrome.runtime.sendMessage({ action: 'overlayRemove', index }).then((reply) => {
+        if (reply?.ok !== true) return;
+        _placed = _placed.filter((p) => p.index !== index);
+        if (_highlight === index) _highlight = null;
+        _hover = null;
+        _drawOverlay();
+      }).catch(() => {});
+      return;
+    }
+    chrome.runtime.sendMessage({ action: 'overlayPick', index: hit.index }).catch(() => {});
   }
 
   const HIGHLIGHT_COLOR = '#6366f1';
@@ -1965,6 +2020,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { pickDrawTarget, acceptClick,labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, labelLayout, paintedBox, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, hasBlur, decorativeReason, canvasBacking, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { pickDrawTarget, acceptClick,labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, labelLayout, paintedBox, hoveredTarget, closeButtonRect, CLOSE_R, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, hasBlur, decorativeReason, canvasBacking, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

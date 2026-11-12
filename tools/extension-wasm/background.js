@@ -23,8 +23,10 @@ import { CORNER_MIN_CONF, cornerModelReady, loadCornerModel, predictCorners, val
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
 import { isTooSmallBox, smallPhotoCounts, tooSmallCard, canFrameTooSmall, keepTooSmall } from "./lib/tiny-card.js";
 import {
-  acceptDrawnSender, correctionSource, drawnCardEntry, examGroupAllowed, examHoldAllowed, normalizeDrawnMessage, viewportRectToBitmapBox, viewportToPhotoBox,
+  acceptDrawnSender, correctionSource, drawnCardEntry, examGroupAllowed, examHoldAllowed, normalizeDrawnMessage, viewportRectToBitmapBox, viewportToPhotoBox, isSamePage,
 } from "./lib/draw-box.js";
+import { loadLot, saveLot } from "./lib/lot-session.js";
+import { acceptPageSender, removalStored, removeFromLot } from "./lib/overlay-remove.js";
 import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
@@ -369,7 +371,7 @@ async function numberReaderReady() {
 // ─── message handler ─────────────────────────────────────────────────────────
 
 // Messages that drive the scanner come only from this extension's own pages. A page's content script may
-// send newCardsDetected and nothing else.
+// send newCardsDetected, the box it drew (drawnBox) and the X on a card (overlayRemove), each checked in its own case.
 const OWN_PAGE_ONLY = new Set([
   "checkReady", "startSetup", "detect", "priceCard", "scanPage", "scanState", "awaitScan",
   "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard", "setOverlayShown", "drawBox", "cancelDraw",
@@ -477,6 +479,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       return false;
 
+    case "overlayRemove":
+      // The X on a page card: the scanner window takes it when it is open on this tab, else the saved lot and held scan do.
+      // The page drops the box only on {ok: true}.
+      if (!acceptPageSender(sender, chrome.runtime.id) || !Number.isInteger(msg.index) || msg.index < 0) {
+        sendResponse({ ok: false });
+        return false;
+      }
+      handleOverlayRemove(msg.index, sender.tab)
+        .then((ok) => sendResponse({ ok }))
+        .catch((err) => { console.error("[BG] overlayRemove failed", err?.message || err); sendResponse({ ok: false }); });
+      return true;
+
     case "newCardsDetected":
       // Content script saw new card-shaped images load (lazy/infinite scroll).
       // Re-scan only when the popup is open, models are ready, and no scan is running.
@@ -492,6 +506,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (Object.hasOwn(_ownPageActions, msg.action)) return handleOwnPageMessage(msg, sender, sendResponse);
   }
 });
+
+async function handleOverlayRemove(index, tab) {
+  const open = await chrome.runtime.getContexts({ contextTypes: ["TAB"], documentUrls: [chrome.runtime.getURL("popup.html")] });
+  if (open.length && tab.id === _targetTabId) {
+    // The open window owns the list: it takes the removal or the page keeps the box (never a change behind its back).
+    const reply = await chrome.runtime.sendMessage({ action: "applyOverlayRemove", index, tabId: tab.id, tabUrl: tab.url }).catch(() => null);
+    const popupHandled = reply?.handled === true;
+    return removalStored({ popupHandled, popupDeclined: !popupHandled });
+  }
+  if (Boolean(_held?.running) && tab.id === _targetTabId) return removalStored({ running: true });
+  const saved = await loadLot(chrome.storage.session, tab.url);
+  const next = saved ? removeFromLot(saved.state, index) : null;
+  if (next) await saveLot(chrome.storage.session, tab.url, next);
+  let heldChanged = false;
+  if (_held?.data && isSamePage(_held.url, tab.url)) {
+    const held = removeFromLot(_held.data, index);
+    if (held) { _held.data = held; heldChanged = true; }
+  }
+  return removalStored({ savedChanged: Boolean(next), heldChanged });
+}
 
 // ─── setup ───────────────────────────────────────────────────────────────────
 

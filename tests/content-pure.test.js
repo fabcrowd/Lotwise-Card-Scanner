@@ -620,3 +620,24 @@ test('a skipped card has a grey Skipped tag with no name or price, even if the c
   assert.equal(label.name, 'Skipped');
   assert.doesNotMatch(JSON.stringify(label), /Charizard|\$/);
 });
+
+test('closeButtonRect centres the X on the top-right corner, kept whole inside the visible clip', () => {
+  const R = pure.CLOSE_R;
+  const area = { x1: 0, y1: 0, x2: 1000, y2: 800 };
+  assert.deepEqual({ ...pure.closeButtonRect([100, 200, 300, 400], area) }, { x: 300 - R, y: 200 - R, w: 2 * R, h: 2 * R });
+  // At the clip's top edge and right edge the centre is pulled in so the circle is not cut.
+  const top = pure.closeButtonRect([100, 0, 300, 400], area);
+  assert.equal(top.y, 1);
+  const right = pure.closeButtonRect([100, 200, 1000, 400], area);
+  assert.equal(right.x + right.w, 1000 - 1);
+  assert.equal(pure.closeButtonRect([100, 200, 300, 400], { x1: 0, y1: 0, x2: 10, y2: 10 }), null);
+  assert.equal(pure.closeButtonRect([100, 200, 300, 400], null), null);
+});
+
+test('the hover stays on a card while the pointer is on its X, which sticks out past the card box', () => {
+  const targets = [{ rect: { x: 10, y: 50, w: 100, h: 140 } }];
+  const hover = { target: 0, rect: { x: 12, y: 52, w: 80, h: 30 }, close: { x: 101, y: 41, w: 18, h: 18 } };
+  assert.equal(pure.hoveredTarget(targets, hover, { x: 112, y: 45 }), 0);
+  assert.equal(pure.hoveredTarget(targets, { ...hover, close: null }, { x: 112, y: 45 }), null);
+  assert.equal(pure.hoveredTarget(targets, hover, { x: 300, y: 45 }), null);
+});

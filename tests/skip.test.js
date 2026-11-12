@@ -2,13 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-import { SKIP_ID, UNSKIP_ID, isSkipRow, putBackCard, skipCard, skipDraft, skipHit, skipNote, skippedCount, unskipDraft } from '../tools/extension-wasm/lib/skip.js';
+import { SKIP_ID, UNSKIP_ID, isSkipRow, leftOutLabel, putBackCard, removeCard, removedCount, skipCard, skipDraft, skipHit, skipNote, skippedCount, unskipDraft } from '../tools/extension-wasm/lib/skip.js';
 import { applyMemory, EMBEDDING_DIM } from '../tools/extension-wasm/lib/references.js';
 import { REFERENCE_BARS, referenceBar } from '../tools/extension-wasm/lib/reference-bars.js';
 import { memoryVerdict, skipVerdict } from '../tools/extension-wasm/lib/memory-confirm.js';
 import { storeCorrection } from '../tools/extension-wasm/lib/correction-save.js';
 import { createCorrectionsStore } from '../tools/extension-wasm/lib/corrections-store.js';
-import { chooseState, bulkPairs, chooseIndexes, overlayStateOf } from '../tools/extension-wasm/lib/choose-flow.js';
+import { chooseState, bulkPairs, chooseIndexes, overlayStateOf, renderSkippedGroup, renderSkippedRow, skippedHeading } from '../tools/extension-wasm/lib/choose-flow.js';
 import { isIdentified, lotEstimate, scanStatus, splitByRecognition } from '../tools/extension-wasm/lib/card-display.js';
 import { lotExportLabels, lotExportRows } from '../tools/extension-wasm/lib/lot-export.js';
 import { EMBEDDING_VERSION } from '../tools/extension-wasm/lib/embed.js';
@@ -220,4 +220,37 @@ test('the Choose row button and the Skipped group are accessible, collapsed by d
   assert.equal(renderSkippedGroup('', 0, false), '');
   assert.match(memoryChipHtml({ skippedBefore: true }, { choose: true }), /You skipped this before/);
   assert.equal(memoryChipHtml({}, { choose: true }), '');
+});
+
+test('removeCard is idempotent, never mutates, and marks a skipped card so put back can return it to skipped', () => {
+  const card = choose();
+  const removed = removeCard(card);
+  assert.deepEqual(removed, { ...card, skipped: true, removed: true });
+  assert.equal(card.skipped, undefined);
+  assert.equal(removeCard(removed), removed);
+  const wasSkipped = removeCard(skipCard(card));
+  assert.equal(wasSkipped.removedFromSkipped, true);
+  const back = putBackCard(removed);
+  assert.equal(back.skipped, undefined);
+  assert.equal(back.removed, undefined);
+  assert.equal(removed.removed, true, 'putBackCard does not mutate');
+  assert.equal(putBackCard(skipCard(card)).skipped, undefined, 'a plain skip is put back as before');
+  assert.equal(removedCount([card, removed, skipCard(card), wasSkipped]), 2);
+  assert.equal(removedCount(null), 0);
+});
+
+test('leftOutLabel and the group heading and row text say skipped, removed, or both', () => {
+  assert.equal(leftOutLabel(2, 0), 'Skipped');
+  assert.equal(leftOutLabel(2, 2), 'Removed');
+  assert.equal(leftOutLabel(2, 1), 'Skipped or removed');
+  assert.equal(skippedHeading(3), 'Skipped (3)');
+  assert.equal(skippedHeading(1, 1), 'Removed (1)');
+  assert.equal(skippedHeading(3, 1), 'Skipped or removed (3)');
+  assert.match(renderSkippedGroup('<i></i>', 1, false, 1), />Removed \(1\)</);
+  assert.match(renderSkippedGroup('<i></i>', 1, false), />Skipped \(1\)</);
+  const row = renderSkippedRow(0, null, true);
+  assert.match(row, /Card 1: removed/);
+  assert.match(row, /Put back card 1: return it to the lot/);
+  assert.match(renderSkippedRow(0, null), /Card 1: skipped/);
+  assert.match(renderSkippedRow(0, null), /return it to the cards to confirm/);
 });
