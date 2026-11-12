@@ -18,6 +18,14 @@ test('the popup wires Show it and keeps hidden cards out of the overlay', () => 
   assert.match(popup, /renderNotCardGroup\(/);
 });
 
+test('pushCard takes its docBox from docBoxFor, and the drawn card and scanState carry the tab id', () => {
+  const bg = src('background.js');
+  assert.match(bg, /docBoxFor\(card, slot, wholePage, origin\)/);
+  assert.match(bg, /action: "drawnCard"[^\n]*tabId: tab\.id/);
+  assert.match(bg, /tabId: tab\?\.id \?\? null/);
+  assert.match(src('popup.js'), /isSameLot\(/);
+});
+
 test('the packaged check is loaded at startup and chosen by pickCheck against packBuild()', () => {
   const bg = src('background.js');
   assert.match(bg, /pickCheck\(stored, _packagedCheck, packBuild\(\)\)/);

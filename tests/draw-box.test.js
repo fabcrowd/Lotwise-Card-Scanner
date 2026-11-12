@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DRAWN_VIA, MIN_DRAW_SIDE, REPLACE_IOU,
-  acceptDrawnSender, correctionSource, examGroupAllowed, examHoldAllowed, drawnCardEntry, drawnIndices, iou, isSamePage, normalizeDrawnMessage, placeDrawnCard,
+  acceptDrawnSender, correctionSource, examGroupAllowed, examHoldAllowed, drawnCardEntry, drawnIndices, iou, isSameLot, isSamePage, normalizeDrawnMessage, placeDrawnCard, restoredLotTabId,
   viewportRectToBitmapBox, viewportToPhotoBox,
 } from '../tools/extension-wasm/lib/draw-box.js';
 import { correctionRecord } from '../tools/extension-wasm/lib/card-picker.js';
@@ -186,6 +186,41 @@ test('document boxes decide the overlap when both entries have them (the page wa
   assert.equal(scrolled.replaced, true);
   const elsewhere = placeDrawnCard([hidden], drawnCardEntry({ box: [0, 0, 100, 140], docBox: [0, 0, 100, 140], read: read(null), readHeight: 140 }));
   assert.equal(elsewhere.replaced, false);
+});
+
+test('scanned cards with a docBox pick the right hidden entry after the page was scrolled (viewport boxes would pick wrong)', () => {
+  // Scanned at scroll 0: A at doc y 0, B at doc y 300. The user scrolls 300, then draws where B is: viewport [0,0,100,140].
+  const a = notCardEntry({ box: [0, 0, 100, 140], docBox: [0, 0, 100, 140], score: 0.4, readHeight: 140, unread: true });
+  const b = notCardEntry({ box: [0, 300, 100, 440], docBox: [0, 300, 100, 440], score: 0.4, readHeight: 140, unread: true });
+  const drawn = drawnCardEntry({ box: [0, 0, 100, 140], docBox: [0, 300, 100, 440], read: read(null), readHeight: 140 });
+  const placed = placeDrawnCard([a, b], drawn);
+  assert.equal(placed.replaced, true);
+  assert.equal(placed.index, 1);
+  const wrong = placeDrawnCard([{ ...a, docBox: undefined }, { ...b, docBox: undefined }], drawn);
+  assert.equal(wrong.index, 0); // without docBoxes the viewport boxes pick the wrong entry
+});
+
+test('isSameLot: same page and same tab, or an unknown tab id falls back to the page alone', () => {
+  const url = 'https://x.test/a#top';
+  assert.equal(isSameLot({ url, tabId: 5 }, { url: 'https://x.test/a', tabId: 5 }), true);
+  assert.equal(isSameLot({ url, tabId: 5 }, { url, tabId: 6 }), false);
+  assert.equal(isSameLot({ url, tabId: undefined }, { url, tabId: 6 }), true);
+  assert.equal(isSameLot({ url, tabId: 5 }, { url, tabId: null }), true);
+  assert.equal(isSameLot({ url, tabId: 5 }, { url: 'https://x.test/b', tabId: 5 }), false);
+  assert.equal(isSameLot({ url: null, tabId: 5 }, { url, tabId: 5 }), false);
+  assert.equal(isSameLot(null, { url, tabId: 5 }), false);
+});
+
+test('a lot restored for tab 42 keeps a box drawn in tab 42 and not one drawn in tab 17 (the tab it was saved from)', () => {
+  const url = 'https://x.test/a';
+  const lotTab = restoredLotTabId({ tabUrl: url, tabId: 42 });
+  assert.equal(lotTab, 42);
+  assert.equal(isSameLot({ url, tabId: lotTab }, { url, tabId: 42 }), true);
+  assert.equal(isSameLot({ url, tabId: lotTab }, { url, tabId: 17 }), false);
+  assert.equal(restoredLotTabId({ tabUrl: url }), null);
+  assert.equal(restoredLotTabId({ tabId: 'x' }), null);
+  assert.equal(restoredLotTabId(null), null);
+  assert.equal(isSameLot({ url, tabId: restoredLotTabId({}) }, { url, tabId: 17 }), true);
 });
 
 // The message the page sends.

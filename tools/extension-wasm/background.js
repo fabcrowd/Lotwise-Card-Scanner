@@ -16,7 +16,7 @@ import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from ".
 import { acceptWholePhoto, displayedRegion, dropEdgeFragments, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { GALLERY_BUDGET_MS, MIN_GALLERY_SIDE, galleryPhotos, mergeAcrossPhotos } from "./lib/gallery.js";
-import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
+import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, docBoxFor, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard, warpQuad }       from "./lib/rectify.js";
 import { CORNER_MIN_CONF, cornerModelReady, loadCornerModel, predictCorners, validQuad } from "./lib/corners.js";
@@ -584,6 +584,7 @@ async function scanState() {
   }
   return {
     tabUrl: tab?.url ?? null,
+    tabId: tab?.id ?? null,
     running: Boolean(_held?.running),
     progress: _held?.running ? _held.progress : null,
     finishedAt: _held && !_held.running && _held.data ? _held.finishedAt : null,
@@ -719,7 +720,10 @@ async function handleScanPage(sendResponse, era) {
     };
     const pushCard = (card, cardCanvas, share = null, slot = null, hint = null) => {
       if (slot?.replaces != null) dropped.add(slot.replaces);
-      cards.push(wholePage && slot ? { ...card, docBox: slot.docBox } : card);
+      // Document box for every on-page card: a whole-page scan's slot box, else the viewport box plus the scroll the scan
+      // was taken at (what content.js renderOverlay computes), so a later drawn box compares in the same space.
+      const docBox = docBoxFor(card, slot, wholePage, origin);
+      cards.push(docBox ? { ...card, docBox } : card);
       crops.push(encodeCrop(cardCanvas));
       shares.push(share);
       slots.push(slot);
@@ -1339,7 +1343,7 @@ async function handleDrawnBox(raw, tab) {
     if (!_ready) throw new Error("The models are not loaded yet.");
     await numberReaderReady();
     const card = await readDrawnBox(msg, tab, _drawEra);
-    tell({ action: "drawnCard", card, srcWidth: msg.viewportWidth, srcHeight: msg.viewportHeight, tabUrl: tab.url });
+    tell({ action: "drawnCard", card, srcWidth: msg.viewportWidth, srcHeight: msg.viewportHeight, tabUrl: tab.url, tabId: tab.id });
   } catch (err) {
     console.error("[BG] reading a drawn box failed:", err?.message || err);
     tell({ action: "drawnFailed", error: explainDrawError(err) });

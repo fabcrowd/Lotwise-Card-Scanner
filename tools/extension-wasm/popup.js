@@ -1,7 +1,7 @@
 import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, chosenPrintingHasNoPrice, isIdentified, isStale, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { TOO_SMALL_ROW_TEXT } from "./lib/tiny-card.js";
-import { DRAW_HINT_TEXT, drawnIndices, isSamePage, placeDrawnCard } from "./lib/draw-box.js";
+import { DRAW_HINT_TEXT, drawnIndices, isSameLot, placeDrawnCard, restoredLotTabId } from "./lib/draw-box.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
@@ -272,6 +272,7 @@ btnClear.addEventListener("click", () => {
   clearLot(lotArea(), _lotUrl).catch(() => {});
   restoreNote.hidden = true;
   _lastResult = null;
+  _lotTabId = null;
   _variantChoice = new Map();
   _variantSuggest = new Map();
   _variantPicked = new Set();
@@ -330,6 +331,7 @@ async function scanPage() {
 function applyScanResult(data) {
   restoreNote.hidden = true;
   if (data.tabUrl) _lotUrl = data.tabUrl;
+  if (Number.isInteger(data.targetTabId) || Number.isInteger(data.tabId)) _lotTabId = data.targetTabId ?? data.tabId;
   const cards = (data.cards || []).map((card) => ({ ...card, guess: guessOf(card) }));
   _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight,
     fullSize: data.fullSizePhoto?.url ? data.fullSizePhoto : null };
@@ -518,8 +520,9 @@ function applyDrawnCard(msg) {
   _drawPending = false;
   const card = { ...msg.card, guess: guessOf(msg.card) };
   // A result from another page is not added to: the drawn card starts its own one-card result, so the overlay and totals never mix pages.
-  if (!_lastResult || !isSamePage(_lotUrl, msg.tabUrl)) {
-    applyScanResult({ cards: [card], srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, tabUrl: msg.tabUrl, scanId: null });
+  // Two tabs on the same URL are two lots, so the tab counts too.
+  if (!_lastResult || !isSameLot({ url: _lotUrl, tabId: _lotTabId }, { url: msg.tabUrl, tabId: msg.tabId })) {
+    applyScanResult({ cards: [card], srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, tabUrl: msg.tabUrl, tabId: msg.tabId, scanId: null });
     return;
   }
   const placed = placeDrawnCard(_lastResult.cards, card);
@@ -1802,6 +1805,7 @@ function computeDisplayForOverlay(card, idx) {
 const THUMB_SIDE = 160;
 const SAVE_DELAY_MS = 300;
 let _lotUrl = null;       // the page the list is about: where its saved copy is kept
+let _lotTabId = null;     // the tab that page was scanned in (null when unknown, e.g. a lot saved before tab ids were kept)
 let _saveTimer = null;
 let _restoring = false;
 const _thumbCache = new Map(); // crop data URL -> its small JPEG
@@ -1901,7 +1905,10 @@ async function recoverLot() {
     const reply = await chrome.runtime.sendMessage({ action: "awaitScan" }).catch(() => null);
     if (reply?.data) { applyScanResult(reply.data); return; }
   }
-  if (saved) restoreSession(saved);
+  if (saved) {
+    restoreSession(saved);
+    _lotTabId = restoredLotTabId(state);
+  }
 }
 
 /* ─── Init ─── */

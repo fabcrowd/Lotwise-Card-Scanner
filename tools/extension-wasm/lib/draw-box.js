@@ -141,6 +141,24 @@ export function isSamePage(resultUrl, drawnUrl) {
   return withoutHash(resultUrl) === withoutHash(drawnUrl);
 }
 
+/**
+ * Whether a drawn card belongs to the lot the list holds: the same page and, when both tab ids are known, the same tab
+ * (two tabs on one URL are two lots). An unknown tab id on either side falls back to the page alone, so lots saved
+ * before tab ids were kept still work.
+ */
+export function isSameLot(lot, drawn) {
+  if (!isSamePage(lot?.url, drawn?.url)) return false;
+  return Number.isInteger(lot.tabId) && Number.isInteger(drawn.tabId) ? lot.tabId === drawn.tabId : true;
+}
+
+/**
+ * The tab id a restored lot belongs to: the tab the restore was done for (the scanState reply's tab id), never one saved
+ * with the lot, because a lot is found by URL and may be reopened in another tab. Null when unknown.
+ */
+export function restoredLotTabId(state) {
+  return Number.isInteger(state?.tabId) ? state.tabId : null;
+}
+
 /** A drawn box is taken only from the tab that started draw mode, and from its top frame. */
 export function acceptDrawnSender(drawTabId, sender) {
   return Number.isInteger(drawTabId) && sender?.tab?.id === drawTabId && sender.frameId === 0;
