@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXT_PATH  = path.resolve(__dirname, '../../dist/extension');
+const EXT_PATH  = path.resolve(__dirname, '../../tools/chrome-extension');
 
 test.describe('Chrome extension (loaded in real browser)', () => {
   let context;
@@ -27,14 +27,28 @@ test.describe('Chrome extension (loaded in real browser)', () => {
     });
 
     // Discover extension ID from the service worker URL
+    // Wait longer for service worker - models download takes ~30-60s on first run
     let sw = context.serviceWorkers().find(w => w.url().startsWith('chrome-extension://'));
     if (!sw) {
       sw = await context.waitForEvent('serviceworker', {
         predicate: w => w.url().startsWith('chrome-extension://'),
-        timeout: 10_000,
+        timeout: 90_000,
       });
     }
     extensionId = new URL(sw.url()).hostname;
+
+    // Wait for models to be ready before running tests
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
+    // Wait for models to finish downloading (or be already downloaded)
+    await page.waitForFunction(
+      () => {
+        const downloadText = document.querySelector('.download-progress');
+        return !downloadText || downloadText.textContent.includes('100%') || downloadText.textContent.includes('complete') || downloadText.textContent.includes('Ready');
+      },
+      { timeout: 120_000 }
+    );
+    await page.close();
   });
 
   test.afterAll(async () => {

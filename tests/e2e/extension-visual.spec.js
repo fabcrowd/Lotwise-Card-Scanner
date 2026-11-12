@@ -12,7 +12,7 @@ import fs   from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXT_PATH  = path.resolve(__dirname, '../../dist/extension');
+const EXT_PATH  = path.resolve(__dirname, '../../tools/chrome-extension');
 const SHOT_DIR  = path.join(__dirname, 'screenshots', 'visual');
 
 fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -118,16 +118,30 @@ test.describe('Visual smoke — Card Scanner popup', () => {
       ],
     });
 
+    // Wait longer for service worker - models download takes ~30-60s on first run
     let sw = context.serviceWorkers().find(w => w.url().startsWith('chrome-extension://'));
     if (!sw) {
       sw = await context.waitForEvent('serviceworker', {
         predicate: w => w.url().startsWith('chrome-extension://'),
-        timeout: 10_000,
+        timeout: 90_000,
       });
     }
     EXT_ID = new URL(sw.url()).hostname;
     console.log(`\n  Extension ID: ${EXT_ID}`);
     console.log(`  Screenshots → ${SHOT_DIR}\n`);
+
+    // Wait for models to be ready before running tests
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${EXT_ID}/popup.html`);
+    // Wait for models to finish downloading (or be already downloaded)
+    await page.waitForFunction(
+      () => {
+        const downloadText = document.querySelector('.download-progress');
+        return !downloadText || downloadText.textContent.includes('100%') || downloadText.textContent.includes('complete') || downloadText.textContent.includes('Ready');
+      },
+      { timeout: 120_000 }
+    );
+    await page.close();
   });
 
   test.afterAll(async () => { await context.close(); });

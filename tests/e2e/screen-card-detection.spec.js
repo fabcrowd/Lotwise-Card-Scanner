@@ -60,7 +60,7 @@ test.describe('screen card candidate detection', () => {
           <img alt="Legendary Collection Charizard" width="200" height="280" src="${image}">
           <span>Legendary Collection Charizard</span>
         </a>
-        <a href="/product/tcg-classic" style="position:absolute;left:100px;top:450px">
+        <a href="/product/tcg-classic" aria-label="Pokemon Trading Card Game Classic" style="position:absolute;left:100px;top:450px">
           <div style="width:200px;height:280px;background-image:url('${image}')"></div>
           <span>Pokemon Trading Card Game Classic</span>
         </a>`;
