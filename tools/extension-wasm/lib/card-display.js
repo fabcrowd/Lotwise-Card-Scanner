@@ -319,6 +319,7 @@ export function needsPrinting(card) {
  */
 export function classifyCard(card) {
   if (card?.skipped === true) return 'skipped';
+  if (card?.notCard === true) return 'hidden';
   if (isIdentified(card)) return 'identified';
   if (card?.cardBack) return 'unrecognised';
   return 'pick';
@@ -329,18 +330,19 @@ export function splitByRecognition(cards) {
   const shown = [];
   const hidden = [];
   const skipped = [];
+  const notCard = [];
   (cards || []).forEach((card, index) => {
     const kind = classifyCard(card);
-    (kind === 'skipped' ? skipped : kind === 'unrecognised' ? hidden : shown).push(index);
+    (kind === 'hidden' ? notCard : kind === 'skipped' ? skipped : kind === 'unrecognised' ? hidden : shown).push(index);
   });
-  return { shown, hidden, skipped };
+  return { shown, hidden, skipped, notCard };
 }
 
 const plural = (n, one, many) => (n === 1 ? one : many);
 
 /** "Found 15 cards: 2 identified (1 to pick printing), 13 need your pick". Empty when nothing was found. */
 export function scanStatus(cards) {
-  const list = cards || [];
+  const list = (cards || []).filter((card) => card?.notCard !== true);
   if (list.length === 0) return '';
   const counts = { identified: 0, pick: 0, unrecognised: 0, skipped: 0 };
   let printing = 0;

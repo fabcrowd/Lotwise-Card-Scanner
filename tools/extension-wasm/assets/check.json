@@ -1,0 +1,38 @@
+{
+ "v": 1,
+ "model_sha256": "0dba1302580da2a629936be835b765d6dba9019e677284257470d30070d9d52b",
+ "model_tag16": "0dba1302580da2a6",
+ "crop_version": 3,
+ "crop_path": "detector box stretched to 750x1050 (corner model off), art crop, model E epoch16-ema-int8",
+ "threshold": 0.25221944241130606,
+ "bias": 2.49027982509188,
+ "sha256": "c048ee69871df2a2e82d48ff78206dc7eaf4d8fd7d39a61f52fdec421d4d0929",
+ "bytes": 2125,
+ "fit": {
+  "set": "obscure",
+  "n_real": 983,
+  "n_nonc": 69,
+  "listings": 155,
+  "cv_folds": 5,
+  "cv_grouped_by": "listing",
+  "cv_auc": 0.9785336223038024,
+  "cv_real_kept": 0.9908443540183113,
+  "cv_nonc_rejected": 0.6231884057971014,
+  "in_sample_real_kept": 0.9898270600203459,
+  "in_sample_nonc_rejected": 0.8405797101449275
+ },
+ "frozen_fresh_20261111": {
+  "n_real": 849,
+  "n_nonc": 57,
+  "real_kept": 0.9893992932862191,
+  "nonc_rejected": 0.5263157894736842,
+  "auc": 0.9638997375653504
+ },
+ "frozen_photos30_check_only": {
+  "n_real": 675,
+  "n_nonc": 41,
+  "real_kept": 0.9644444444444444,
+  "nonc_rejected": 0.7804878048780488,
+  "auc": 0.9639385727190605
+ }
+}

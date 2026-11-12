@@ -113,5 +113,5 @@ test('the popup has the "Show boxes on page" toggle, on by default, wired to sto
   assert.match(background, /"setOverlayShown"/);
   assert.match(background, /tabMessageFor\(msg\)/);
   // The scan's own overlay (a fresh page has no setting yet) carries the stored choice too.
-  assert.match(background, /action: "relayOverlay", cards, srcWidth, srcHeight, shown: await loadOverlayShown\(chrome\.storage\.local\)/);
+  assert.match(background, /action: "relayOverlay", cards: overlayCards\(cards\), srcWidth, srcHeight, shown: await loadOverlayShown\(chrome\.storage\.local\)/);
 });

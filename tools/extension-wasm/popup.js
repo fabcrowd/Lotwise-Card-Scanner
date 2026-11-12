@@ -7,6 +7,7 @@ import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList
 import { bulkPairs, bulkRememberedPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderSkipButton, renderSkippedGroup, renderSkippedRow, tickAllLabel } from "./lib/choose-flow.js";
 import { clearLot, loadLot, saveLot } from "./lib/lot-session.js";
 import { putBackCard, skipCard, skippedCount } from "./lib/skip.js";
+import { UNREAD_ROW_TEXT, hiddenCount, isNotCard, overlayCards, renderNotCardGroup, renderNotCardRow, shownMessage, showNotCard } from "./lib/not-card.js";
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
 import { userWhy } from "./lib/why.js";
@@ -85,6 +86,7 @@ let _picker = new Map();        // card index -> { via, query, results } while i
 let _showUnrecognised = false;  // the "not recognised" group is open
 let _showChoose = true;         // the "To confirm" group is open
 let _showSkipped = false;       // the "Skipped" group is open
+let _showNotCard = false;       // the "Hidden: not a card" group is open (never saved: it opens collapsed)
 let _bulk = null;               // { pairs, skipped, opener, scan } while the review-all panel is open
 let _searchTimer = null;
 let _pickSeq = 0;
@@ -336,6 +338,7 @@ function applyScanResult(data) {
   _stripMore = new Set();
   _userEdits = false;
   _showUnrecognised = false;
+  _showNotCard = false;
   _showChoose = true;
   closeBulk(false);
   _lastResult.cards.forEach(seedVariant);
@@ -346,7 +349,7 @@ function applyScanResult(data) {
   maybeOfferSiteAccess(data).catch(() => { accessNotice.hidden = true; });
   showFullSizeOffer(_lastResult.fullSize);
 
-  if (cards.length === 0) {
+  if (cards.length === hiddenCount(cards)) {
     showMessage("No Pokémon cards detected on this page.");
   } else {
     const stillLoading = data.pending > 0
@@ -794,13 +797,14 @@ function renderResults() {
   if (cards.length === 0) { resetResults(); return; }
   emptyHint.remove();
 
-  const { shown, hidden, skipped } = splitByRecognition(cards);
+  const { shown, hidden, skipped, notCard } = splitByRecognition(cards);
   const toChoose = shown.filter((idx) => chooseState(cards[idx]) === "choose");
   const confirmed = shown.filter((idx) => chooseState(cards[idx]) !== "choose");
   resultsEl.innerHTML = renderChooseGroup(toChoose.map((idx) => renderChooseRow(cards[idx], idx)).join(""), toChoose.length, _showChoose, bulkPairs(cards).length)
     + confirmed.map((idx) => renderCardRow(cards[idx], idx)).join("")
     + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised)
-    + renderSkippedGroup(skipped.map((idx) => renderSkippedRow(idx, cropThumb(cards[idx]))).join(""), skipped.length, _showSkipped);
+    + renderSkippedGroup(skipped.map((idx) => renderSkippedRow(idx, cropThumb(cards[idx]))).join(""), skipped.length, _showSkipped)
+    + renderNotCardGroup(notCard.map((idx) => renderNotCardRow(idx, cropThumb(cards[idx]), cards[idx].tooSmall === true)).join(""), notCard.length, _showNotCard);
 }
 
 function renderCardRow(card, idx) {
@@ -872,6 +876,7 @@ function renderPrice(card, idx) {
   if (card.pricing) return cell("…", "Getting price…");
   if (card.priceError) return cell("—", card.priceError);
   if (card.tooSmall) return cell("—", TOO_SMALL_ROW_TEXT);
+  if (card.unread) return cell("—", UNREAD_ROW_TEXT);
   if (card.cardBack) return cell("—", "Turn it over to identify it");
   // A card still to choose shows its best match's price, marked unconfirmed: it is quoted for real only once picked.
   if (!isIdentified(card)) return renderUnconfirmedPrice(card, cell);
@@ -905,7 +910,7 @@ function renderPrice(card, idx) {
 function renderUnrecognisedRow(card, idx) {
   const thumb = cropThumb(card);
   const inPhoto = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
-  const label = (card.tooSmall ? `Card ${idx + 1}: ${TOO_SMALL_ROW_TEXT}` : card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`) + (inPhoto ? ` · ${inPhoto}` : "");
+  const label = (card.tooSmall ? `Card ${idx + 1}: ${TOO_SMALL_ROW_TEXT}` : card.unread ? `Card ${idx + 1}: ${UNREAD_ROW_TEXT}` : card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`) + (inPhoto ? ` · ${inPhoto}` : "");
   const search = card.cardBack || _picker.get(idx)
     ? ""
     : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="Search for card ${idx + 1}">Search for this card</button>`;
@@ -1059,7 +1064,7 @@ function showSearchResults(idx) {
 // What each row shows now, after any fixes: the answers "All right" confirms.
 function shownAnswers(cards) {
   return cards.map((card, index) => {
-    if (card.tooSmall) return { index, unknown: true };
+    if (card.tooSmall || card.unread) return { index, unknown: true };
     if (card.cardBack) return { index, notACard: true };
     return card.identity?.id ? { index, cardId: card.identity.id } : { index, unknown: true };
   });
@@ -1145,6 +1150,19 @@ function skipAt(idx) {
   advanceAfterConfirm(idx, null, `Skipped. ${left ? `${left} to confirm.` : "Nothing left to confirm."}`);
 }
 
+// "Show it": the hidden box becomes a normal row (Choose when it has a read, Too small when it has none) and the page
+// overlay draws it. Nothing is confirmed; a pick goes through the usual pick and confirm. The row is part of the saved lot.
+function showHiddenAt(idx) {
+  const card = _lastResult?.cards?.[idx];
+  if (!isNotCard(card)) return;
+  const next = showNotCard(card);
+  _showChoose = true;
+  replaceCard(idx, { ...next, guess: guessOf(next) });
+  loadBestMatchPrices(_lastResult);
+  resultsEl.querySelector(`.choose-row[data-idx="${idx}"] [data-confirm-best], .choose-row[data-idx="${idx}"] [data-open-search]`)?.focus();
+  showMessage(shownMessage(next, toConfirmCount()));
+}
+
 function putBackAt(idx) {
   const scan = _lastResult;
   const card = scan?.cards?.[idx];
@@ -1175,6 +1193,12 @@ resultsEl.addEventListener("click", (e) => {
     resultsEl.querySelector("#skipped-list").hidden = !_showSkipped;
     return;
   }
+  if ("notcardToggle" in button.dataset) {
+    _showNotCard = !_showNotCard;
+    button.setAttribute("aria-expanded", String(_showNotCard));
+    resultsEl.querySelector("#notcard-list").hidden = !_showNotCard;
+    return;
+  }
   if ("chooseToggle" in button.dataset) {
     _showChoose = !_showChoose; scheduleSave();
     button.setAttribute("aria-expanded", String(_showChoose));
@@ -1193,6 +1217,8 @@ resultsEl.addEventListener("click", (e) => {
     skipAt(idx);
   } else if ("putBack" in button.dataset) {
     putBackAt(idx);
+  } else if ("showHidden" in button.dataset) {
+    showHiddenAt(idx);
   } else if ("variantConfirm" in button.dataset) {
     const suggested = _variantSuggest.get(idx);
     if (!suggested) return;
@@ -1599,7 +1625,7 @@ function renderGradedGrid(card, grid) {
 
 function pushOverlay() {
   if (!_lastResult) return;
-  const cards = _lastResult.cards.map((c, idx) => ({
+  const cards = overlayCards(_lastResult.cards.map((c, idx) => isNotCard(c) ? c : ({
     box: c.box,
     docBox: c.docBox,
     identity: c.identity,
@@ -1614,7 +1640,7 @@ function pushOverlay() {
       ...(isHighValue(c, typicalForFlag(c, idx)) && ["choose", "confirmed"].includes(chooseState(c)) ? { highValue: true } : {}),
       ...overlayGuess(c),
     },
-  }));
+  })));
   const message = {
     action: "overlayWithGrid",
     cards,

@@ -46,6 +46,9 @@ export function judgeDuplicate(seen, card) {
   const index = seen.findIndex((other) => (card.anchor != null && card.anchor === other.anchor)
     || iou(card.docBox, other.docBox) > SAME_CARD_IOU);
   if (index < 0) return { verdict: "new" };
+  // A hidden ("not a card") view never holds a spot against a real one, and never replaces a real one.
+  if (seen[index].hidden && !card.hidden) return { verdict: "replace", index };
+  if (card.hidden && !seen[index].hidden) return { verdict: "skip" };
   return card.area > seen[index].area ? { verdict: "replace", index } : { verdict: "skip" };
 }
 

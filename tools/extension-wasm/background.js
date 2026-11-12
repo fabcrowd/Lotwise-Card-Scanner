@@ -38,7 +38,8 @@ import { skipDraft, unskipDraft } from "./lib/skip.js";
 import { memoryVerdict, skipVerdict } from "./lib/memory-confirm.js";
 import { referenceBar } from "./lib/reference-bars.js";
 import { whyOf, withVerdicts } from "./lib/why.js";
-import { adaptedRows, cardProbability, checkBundle, liveParts, loadStoredBundle, mergeExtra } from "./lib/bundle.js";
+import { adaptedRows, cardProbability, checkBundle, liveParts, loadStoredBundle, mergeExtra, parsePackagedCheck, pickCheck } from "./lib/bundle.js";
+import { canReadHidden, keepHidden, keptRealCount, notCardEntry, overlayCards, realCards } from "./lib/not-card.js";
 import { photoIdFromRgba } from "./lib/photo-id.js";
 import { createShareStore } from "./lib/share-store.js";
 import { createSharing } from "./lib/sharing.js";
@@ -651,10 +652,12 @@ async function handleScanPage(sendResponse, era) {
     let screenNo = 0;
     let offset = { x: 0, y: 0 };
     let capped = false;
-    const claim = (box, anchor, area) => {
-      const slot = { docBox: toDocBox(box, offset), anchor, area, screen: screenNo };
+    // Boxes the card check rejected that were read in full this scan (capped: see HIDDEN_READ_CAP).
+    let hiddenReads = 0;
+    const claim = (box, anchor, area, hidden = false) => {
+      const slot = { docBox: toDocBox(box, offset), anchor, area, screen: screenNo, ...(hidden ? { hidden: true } : {}) };
       if (pageFocus.kind === "listing") return slot;
-      const judged = claimSlot(slots, dropped, slot, cards.length - dropped.size);
+      const judged = claimSlot(slots, dropped, slot, keptRealCount(cards, dropped));
       if (judged.verdict === "skip") return null;
       if (judged.verdict === "full") { capped = true; return null; }
       // The earlier card is only given up once this one has been read and kept (see pushCard).
@@ -739,7 +742,7 @@ async function handleScanPage(sendResponse, era) {
         let focus = pageFocus;
         let domCards = sealed ? [] : pageFocus.cards;
         if (wholePage) {
-          if (cardRoom(cards.length - dropped.size) <= 0) { capped = true; break; }
+          if (cardRoom(keptRealCount(cards, dropped)) <= 0) { capped = true; break; }
           (_held && (_held.progress = { screen: stop + 1, screens: stops.length }), chrome.runtime.sendMessage({ action: "scanProgress", screen: stop + 1, screens: stops.length })).catch(() => {});
           scrolled = true;
           await sendToTab(chrome, targetTab.id, { action: "scrollTo", x: origin.x, y });
@@ -955,7 +958,26 @@ async function handleScanPage(sendResponse, era) {
                     ? cardCanvasFor(photoBitmap, box)
                     : cardCanvasFor(bitmap, [sx + box[0], sy + box[1], sx + box[2], sy + box[3]]));
                 // The hero fallback is never checked: it may be the listing's only card.
-                if (!hero && !(await boxLooksLikeCard(cardCanvas))) continue;
+                if (!hero && !(await boxLooksLikeCard(cardCanvas))) {
+                  // Hidden, not dropped: the popup lists it under "Hidden: not a card" and can bring it back. Never drawn, priced,
+                  // totalled, shared or remembered; a box big enough to read keeps its read for "Show it".
+                  const claimedHidden = claim(viewportBox, undefined, (viewportBox[2] - viewportBox[0]) * (viewportBox[3] - viewportBox[1]), true);
+                  if (!keepHidden({ tooSmall, claimed: claimedHidden, mappedBox, gallery })) continue;
+                  let hiddenRead = null;
+                  const unread = !tooSmall && !canReadHidden(hiddenReads);
+                  if (!tooSmall && !unread) {
+                    hiddenReads++;
+                    try {
+                      hiddenRead = await identifyCard(cardCanvas, era, by2 - by1, cardBox[3] === box[3] ? null : rectify(cardBox), capFor(by2 - by1, naturalPerFed), { bitmap: photoBitmap, box });
+                    } catch (err) {
+                      console.error("[BG] hidden card read failed:", err?.message || err);
+                    }
+                  }
+                  if (photoNo !== undefined) photoMeta[cards.length] = { photo: photoNo, height: by2 - by1, embedding: null };
+                  pushCard(notCardEntry({ box: viewportBox, score, read: hiddenRead, tooSmall, unread, readHeight: Math.round(informationHeight(by2 - by1, naturalPerFed)), via: "yolo-in-photo", photoBoxes: boxes.length,
+                    ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }), cardCanvas, null, claimedHidden);
+                  continue;
+                }
                 if (tooSmall) {
                   const claimedSmall = claim(viewportBox, undefined, (viewportBox[2] - viewportBox[0]) * (viewportBox[3] - viewportBox[1]));
                   if (!keepTooSmall({ claimed: claimedSmall, mappedBox, gallery })) continue;
@@ -1001,7 +1023,7 @@ async function handleScanPage(sendResponse, era) {
               cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
               {
                 // Small cards and a larger picture the scan could not read itself: the user can open that one.
-                const read = cards.slice(photoFirst).filter((c) => !c.cardBack || c.tooSmall);
+                const read = cards.slice(photoFirst).filter((c) => !c.notCard && (!c.cardBack || c.tooSmall));
                 const small = smallPhotoCounts(read, FULL_SIZE_SMALL_PX).small;
                 if (read.length && small >= Math.max(2, read.length / 2)) {
                   if (upgrade) console.log("[BG]   cards small (" + small + "/" + read.length + " under " + FULL_SIZE_SMALL_PX + " px, median fed " + (read.map((c) => c.readHeight).sort((a, b) => a - b)[read.length >> 1] ?? 0) + " px) even in the full-size photo");
@@ -1028,7 +1050,7 @@ async function handleScanPage(sendResponse, era) {
           await scanPhotos(photos);
           // The main photo held no card: the listing may be a lot photographed in the gallery's other pictures.
           // Related-item carousels are never part of this.
-          const triedFallback = !cards.length && !sealed && focus.kind === "listing" && focus.fallback?.length ? focus.fallback : [];
+          const triedFallback = !realCards(cards).length && !sealed && focus.kind === "listing" && focus.fallback?.length ? focus.fallback : [];
           if (triedFallback.length) {
             console.log("[BG] main photo held no card — trying", triedFallback.length, "other gallery photos");
             await scanPhotos(triedFallback, { firstPhoto: 2 });
@@ -1094,7 +1116,7 @@ async function handleScanPage(sendResponse, era) {
           // Last resort — a page with no <img> cards and no photo candidates
           // (CSS backgrounds, canvas renders, lightbox overlays).
           // Not on a listing: the other pictures on that page are other people's cards.
-          if (cards.length === 0 && focus.kind !== "listing") {
+          if (!realCards(cards).length && focus.kind !== "listing") {
             try {
               console.log("[BG] still nothing — running YOLO over whole viewport");
               const yoloBoxes = await detectCards(bitmap);
@@ -1159,7 +1181,7 @@ async function handleScanPage(sendResponse, era) {
       if (shares.size) console.log("[BG] set prior", JSON.stringify([...shares].map(([k, v]) => [k, Math.round(v * 100) / 100])), "moved", moved, "best guesses");
     }
     cards.splice(0, cards.length, ...await withBestGuesses(cards, setHint));
-    if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product and no cards detected: nothing to report");
+    if (shouldSuppressCards({ sealed, detectedCards: realCards(cards).length })) console.log("[BG] sealed product and no cards detected: nothing to report");
     const identified = cards.filter((c) => !c.abstain).length;
     console.log("[BG] identified", identified, "/", cards.length, "cards");
     const guessed = cards.filter((c) => c.lowCertainty).length;
@@ -1173,7 +1195,7 @@ async function handleScanPage(sendResponse, era) {
       applyBatchedPrices(cards, priceMap);
     }
 
-    await relayToTab({ action: "relayOverlay", cards, srcWidth, srcHeight, shown: await loadOverlayShown(chrome.storage.local) }, targetTab.id);
+    await relayToTab({ action: "relayOverlay", cards: overlayCards(cards), srcWidth, srcHeight, shown: await loadOverlayShown(chrome.storage.local) }, targetTab.id);
     console.log("[BG] overlay relayed");
 
     // Ask the content script to start watching for lazy-loaded card images.
@@ -1184,9 +1206,17 @@ async function handleScanPage(sendResponse, era) {
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
     // An asked card carries the picture it was read from, so the user can see which card the question is about.
     // `ranked` (id, rank, cosine score) rides along so the popup can judge how far the first candidate leads; the set prior ran before.
-    const withCandidates = cards.map(({ rankedScores, ...card }, i) => (isUnsure(card)
+    const withCandidates = cards.map(({ rankedScores, ...card }, i) => (card.notCard && card.hiddenRead
+      // A hidden card keeps its read with the same candidates a Choose row gets, for "Show it". No price is fetched for it.
+      ? { ...card, hiddenRead: hiddenReadWithCandidates(card.hiddenRead), crop: encoded[i] ?? null }
+      : card.notCard ? { ...card, crop: encoded[i] ?? null }
+      : isUnsure(card)
       ? { ...card, candidates: candidatesFor(card, _meta, 5, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
       : card));
+    function hiddenReadWithCandidates({ rankedScores, ...read }) {
+      const asChoose = { ...read, unsure: true };
+      return { ...read, candidates: candidatesFor(asChoose, _meta, 5, era), ...(read.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) };
+    }
     const asked = applyTitlePrior(withCandidates, {
       kind: pageFocus.kind,
       page: domResp?.page,
@@ -1490,6 +1520,24 @@ async function loadedReferences() {
 let _packRows = [];
 let _photoCheck = null;
 
+// The check that ships inside the extension, used when the signed bundle has none. Read once; a missing or
+// unreadable file leaves the check off, as before.
+const PACKAGED_CHECK_PATHS = ["assets/check.bin", "assets/check.json"];
+let _packagedCheck;
+
+async function loadPackagedCheck() {
+  try {
+    const [bin, meta] = await Promise.all(PACKAGED_CHECK_PATHS.map((path) => fetch(chrome.runtime.getURL(path)).then((res) => {
+      if (!res.ok) throw new Error(`${path} answered ${res.status}`);
+      return path.endsWith(".json") ? res.json() : res.arrayBuffer();
+    })));
+    return parsePackagedCheck(new Uint8Array(bin), meta);
+  } catch (err) {
+    console.log("[BG] packaged card check not available:", err?.message || err);
+    return null;
+  }
+}
+
 const packBuild = () => {
   const { clip, crop } = modelTags();
   return { model: clip, crop };
@@ -1507,6 +1555,7 @@ function applyBundle() {
 
 async function applyBundleOnce() {
   if (!_metaBase) return;
+  if (_packagedCheck === undefined) _packagedCheck = await loadPackagedCheck();
   const stored = await loadStoredBundle(_shareStore, packBuild());
   const merged = stored?.extra ? mergeExtra(_metaBase, stored.extra) : null;
   let adapter = null;
@@ -1525,8 +1574,8 @@ async function applyBundleOnce() {
   _meta = merged ? _metaBase.concat(merged.meta) : _metaBase;
   _catalogNames = _indicesByName = _setSizes = _metaById = _catalogSets = _metaRank = null;
   _packRows = stored?.memory ?? [];
-  _photoCheck = stored?.check ?? null;
-  console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }));
+  _photoCheck = pickCheck(stored, _packagedCheck, packBuild());
+  console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }), "| card check:", _photoCheck ? (stored?.check ? "bundle" : "packaged") : "off");
   if (adapter) console.log("[BG] photo adapter in use: rank", adapter.rank, "sha", stored.manifest.assets.adapter.sha256.slice(0, 8), "seq", stored.manifest.seq);
   else console.log("[BG] photo adapter not in use:", stored ? "the bundle has none" : "no bundle stored yet");
 }

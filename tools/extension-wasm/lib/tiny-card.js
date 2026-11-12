@@ -38,9 +38,9 @@ export function keepTooSmall({ claimed, mappedBox, gallery }) {
   return canFrameTooSmall({ mappedBox, gallery });
 }
 
-/** Cards read from one photo, and how many of them read small (a too-small card always does). Card backs are left out. */
+/** Cards read from one photo, and how many of them read small (a too-small card always does). Card backs and hidden entries are left out. */
 export function smallPhotoCounts(cards, smallPx) {
-  const read = (cards || []).filter((c) => !c.cardBack || c.tooSmall === true);
+  const read = (cards || []).filter((c) => c.notCard !== true && (!c.cardBack || c.tooSmall === true));
   const small = read.filter((c) => c.tooSmall === true || (c.readHeight > 0 && c.readHeight < smallPx)).length;
   return { read: read.length, small };
 }

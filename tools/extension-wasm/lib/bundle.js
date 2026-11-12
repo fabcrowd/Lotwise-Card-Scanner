@@ -140,6 +140,26 @@ export function parseCheck(bytes) {
   return { weights, bias, threshold };
 }
 
+/**
+ * The check that ships inside the extension (assets/check.bin + assets/check.json): { weights, bias, threshold, model, crop }.
+ * `meta` names the model (first 16 hex of its sha256) and crop version the check was fitted for.
+ */
+export function parsePackagedCheck(bytes, meta) {
+  if (!meta || typeof meta.model_tag16 !== "string" || !HEX16.test(meta.model_tag16) || !Number.isInteger(meta.crop_version)) {
+    throw new Error("packaged check has no model or crop");
+  }
+  return { ...parseCheck(bytes), model: meta.model_tag16, crop: meta.crop_version };
+}
+
+/**
+ * The check in use: a valid same-build bundle check wins; otherwise the packaged one, but only when it was fitted for
+ * this build's model and crop. A bundle that carries no check leaves the packaged one live.
+ */
+export function pickCheck(stored, packaged, expected) {
+  if (stored?.check) return stored.check;
+  return packaged && sameBuild(packaged, expected) ? packaged : null;
+}
+
 /** p that the crop embedded as `embedding` (raw, unadapted) is a card. */
 export function cardProbability(embedding, check) {
   let z = check.bias;
