@@ -346,7 +346,9 @@ export function scanStatus(cards) {
   if (list.length === 0) return '';
   const counts = { identified: 0, pick: 0, unrecognised: 0, skipped: 0 };
   let printing = 0;
+  let removed = 0;
   for (const card of list) {
+    if (card?.removed === true) { removed += 1; continue; }
     counts[classifyCard(card)] += 1;
     if (needsPrinting(card)) printing += 1;
   }
@@ -354,6 +356,8 @@ export function scanStatus(cards) {
     counts.identified ? `${counts.identified} identified${printing ? ` (${printing} to pick printing)` : ''}` : '',
     counts.pick ? `${counts.pick} ${plural(counts.pick, 'needs', 'need')} your pick` : '',
     counts.unrecognised ? `${counts.unrecognised} not recognised` : '',
+    counts.skipped ? `${counts.skipped} skipped` : '',
+    removed ? `${removed} removed` : '',
   ].filter(Boolean);
   return `Found ${list.length} ${plural(list.length, 'card', 'cards')}: ${parts.join(', ')}`;
 }

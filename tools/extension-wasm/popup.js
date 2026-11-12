@@ -722,8 +722,8 @@ function currentLot() {
   return lotExportRows(cards, choiceFor, enabledConditions());
 }
 function currentLotCounts(cards, choiceFor) {
-  const { count, notIncluded, skipped } = lotExportRows(cards, choiceFor, enabledConditions());
-  return [count, notIncluded, skipped];
+  const { count, notIncluded, skipped, removed } = lotExportRows(cards, choiceFor, enabledConditions());
+  return [count, notIncluded, skipped, removed];
 }
 
 // The clipboard API needs no extra permission from a click; the textarea route is for when it refuses.
@@ -739,7 +739,7 @@ function copyWithTextarea(text) {
 
 async function copyLot() {
   const lot = currentLot();
-  const labels = lotExportLabels(lot.count, lot.notIncluded, lot.skipped);
+  const labels = lotExportLabels(lot.count, lot.notIncluded, lot.skipped, lot.removed);
   if (!labels) return;
   const text = lotToTsv(lot.rows);
   let copied = false;
@@ -754,7 +754,7 @@ async function copyLot() {
 
 function downloadLot() {
   const lot = currentLot();
-  const labels = lotExportLabels(lot.count, lot.notIncluded, lot.skipped);
+  const labels = lotExportLabels(lot.count, lot.notIncluded, lot.skipped, lot.removed);
   if (!labels) return;
   const name = lotFileName(new Date());
   // The byte order mark makes Excel read the file as UTF-8.

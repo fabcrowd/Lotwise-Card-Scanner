@@ -60,7 +60,7 @@ test('counts: skipped cards leave To confirm, the lot estimate and the status li
   assert.equal(lot.total, 2);
   assert.equal(lot.identified, 1);
   assert.equal(skippedCount(cards), 2);
-  assert.equal(scanStatus(cards), 'Found 4 cards: 1 identified, 1 needs your pick');
+  assert.equal(scanStatus(cards), 'Found 4 cards: 1 identified, 1 needs your pick, 2 skipped');
   const split = splitByRecognition(cards);
   assert.deepEqual(split.shown, [0, 1]);
   assert.deepEqual(split.hidden, []);
@@ -78,6 +78,27 @@ test('export excludes skipped cards and says how many; they are not counted as s
   assert.doesNotMatch(lotExportLabels(1, 0, 0).tip, /skipped/);
   assert.equal(skipNote(0), '');
   assert.equal(skipNote(3), '3 skipped cards are not included');
+});
+
+test('removed cards are counted apart from skipped ones in the status line, the export and the note', () => {
+  const cards = [sure(), choose(), skipCard(choose()), removeCard(choose()), removeCard(skipCard(choose()))];
+  assert.equal(scanStatus(cards), 'Found 5 cards: 1 identified, 1 needs your pick, 1 skipped, 2 removed');
+  const fifteen = [...Array.from({ length: 10 }, () => sure()), ...Array.from({ length: 3 }, () => choose()), skipCard(choose()), removeCard(choose())];
+  assert.equal(scanStatus(fifteen), 'Found 15 cards: 10 identified, 3 need your pick, 1 skipped, 1 removed');
+  const lot = lotExportRows(cards, none, ['NM'], NOW);
+  assert.equal(lot.count, 1);
+  assert.equal(lot.notIncluded, 1);
+  assert.equal(lot.skipped, 1);
+  assert.equal(lot.removed, 2);
+  assert.equal(skipNote(0, 0), '');
+  assert.equal(skipNote(2), '2 skipped cards are not included');
+  assert.equal(skipNote(0, 1), '1 removed card is not included');
+  assert.equal(skipNote(0, 2), '2 removed cards are not included');
+  assert.equal(skipNote(2, 1), '2 skipped cards and 1 removed card are not included');
+  assert.equal(skipNote(1, 1), '1 skipped card and 1 removed card are not included');
+  assert.match(lotExportLabels(1, 0, 0, 1).tip, /^Every card you are pricing is confirmed\. 1 removed card is not included$/);
+  assert.match(lotExportLabels(1, 0, 1, 1).tip, /1 skipped card and 1 removed card are not included/);
+  assert.doesNotMatch(lotExportLabels(1, 0, 0, 0).tip, /removed|skipped/);
 });
 
 test('the skip draft stores type skip with the scanner why-record and the crop; the put-back draft has no crop', () => {

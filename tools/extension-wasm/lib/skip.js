@@ -51,9 +51,13 @@ export function leftOutLabel(skipped, removed) {
 
 export const skippedCount = (cards) => (cards || []).filter((card) => card?.skipped === true).length;
 
-/** The sentence that says what an export leaves out, or "" when no card is skipped. */
-export function skipNote(count) {
-  return count > 0 ? `${count} skipped ${count === 1 ? "card is" : "cards are"} not included` : "";
+/** The sentence that says what an export leaves out, or "" when no card is skipped or removed. */
+export function skipNote(count, removed = 0) {
+  const total = count + removed;
+  if (!(total > 0)) return "";
+  const noun = (n, word) => `${n} ${word} ${n === 1 ? "card" : "cards"}`;
+  const parts = [count > 0 ? noun(count, "skipped") : "", removed > 0 ? noun(removed, "removed") : ""].filter(Boolean);
+  return `${parts.join(" and ")} ${total === 1 ? "is" : "are"} not included`;
 }
 
 /** The correction record for a skip: what the scanner believed (why, guess) and the crop, kept like any correction. */

@@ -95,7 +95,8 @@ test('a removed confirmed priced card leaves the total, the export and the uncon
   assert.equal(lotExportRows([card], none, ['NM'], NOW).count, 1);
   const rows = lotExportRows([removed], none, ['NM'], NOW);
   assert.equal(rows.count, 0);
-  assert.equal(rows.skipped, 1);
+  assert.equal(rows.skipped, 0);
+  assert.equal(rows.removed, 1);
   const guess = choose();
   const match = () => ({ price: 3 });
   assert.equal(unconfirmedTotal([guess], match).count, 1);

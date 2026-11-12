@@ -55,13 +55,15 @@ function priceOf(card, choice, conditions) {
 /**
  * One row per distinct confirmed card + printing + condition, with Qty. `count` is the cards in the file (sum of
  * Qty); `notIncluded` is every other real card (still to confirm, or priced from an old grid); `skipped` is the cards
- * the user skipped, which are neither in the file nor still to confirm.
+ * the user skipped and `removed` the cards they removed; neither is in the file or still to confirm.
  */
 export function lotExportRows(cards, choiceFor, enabledConditions = ['NM'], now = Date.now()) {
   const merged = new Map();
   let notIncluded = 0;
   let skipped = 0;
+  let removed = 0;
   for (const card of cards || []) {
+    if (card?.removed === true) { removed += 1; continue; }
     if (card?.skipped === true) { skipped += 1; continue; }
     if (card?.cardBack) continue;
     if (!isIdentified(card) || isStale(card, now)) { notIncluded += 1; continue; }
@@ -82,7 +84,7 @@ export function lotExportRows(cards, choiceFor, enabledConditions = ['NM'], now 
     ]);
   }
   const rows = [...merged.values()];
-  return { rows, count: rows.reduce((sum, row) => sum + row[6], 0), notIncluded, skipped };
+  return { rows, count: rows.reduce((sum, row) => sum + row[6], 0), notIncluded, skipped, removed };
 }
 
 // A spreadsheet runs a cell that starts with one of these as a formula, so it is made plain text.
@@ -117,12 +119,12 @@ export const CONDITION_TIP = 'Prices are Near Mint market prices unless your pri
 const cardsOf = (n) => `${n} ${n === 1 ? 'card' : 'cards'}`;
 
 /** Button names, the tooltip naming what is left out, and the copy message. Null when nothing is confirmed. */
-export function lotExportLabels(count, notIncluded, skipped = 0) {
+export function lotExportLabels(count, notIncluded, skipped = 0, removed = 0) {
   if (!(count > 0)) return null;
   const left = notIncluded === 1
     ? '1 more card still needs confirming and is not included'
     : notIncluded > 1 ? `${notIncluded} more cards still need confirming and are not included`
-      : skipped > 0 ? 'Every card you are pricing is confirmed' : 'Every card in the lot is confirmed';
-  const tip = skipped > 0 ? `${left}. ${skipNote(skipped)}` : left;
+      : skipped + removed > 0 ? 'Every card you are pricing is confirmed' : 'Every card in the lot is confirmed';
+  const tip = skipped + removed > 0 ? `${left}. ${skipNote(skipped, removed)}` : left;
   return { copy: `Copy ${count} confirmed`, csv: `Download CSV (${count})`, tip, copied: `Copied ${cardsOf(count)}` };
 }
