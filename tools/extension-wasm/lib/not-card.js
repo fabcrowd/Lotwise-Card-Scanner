@@ -88,13 +88,15 @@ export function renderNotCardGroup(rowsHtml, count, expanded) {
 }
 
 /** One hidden entry: its crop and "Show it". Never a name or a price. */
-export function renderNotCardRow(idx, crop, tooSmall) {
+export function renderNotCardRow(idx, crop, tooSmall, unread = false) {
   const what = tooSmall ? "too small to read" : "not a card";
+  const draw = unread && !tooSmall ? `<button type="button" class="link-btn" data-draw-box aria-label="${escHtml(`Draw a box around box ${idx + 1} to read it`)}">Draw a box</button>` : "";
   return `<div class="card-row unrec-row skipped-row" data-idx="${idx}">
     <div class="unrec-line">
       ${crop ? `<img class="unrec-thumb" src="${escHtml(crop)}" alt="" width="34" height="48">` : ""}
       <span class="unrec-name">Box ${idx + 1}: ${what}</span>
       <button type="button" class="link-btn" data-show-hidden data-idx="${idx}" aria-label="${escHtml(`Show box ${idx + 1} as a card`)}">Show it</button>
+      ${draw}
     </div>
   </div>`;
 }

@@ -13,12 +13,12 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/scan-smoke.spec.js'],
+      testIgnore: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/scan-smoke.spec.js', '**/draw-box.spec.js'],
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'extension',
-      testMatch: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/extension-wasm-popup.spec.js', '**/scan-smoke.spec.js'],
+      testMatch: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/extension-wasm-popup.spec.js', '**/scan-smoke.spec.js', '**/draw-box.spec.js'],
       timeout: 180_000,
       use: {
         headless: false,

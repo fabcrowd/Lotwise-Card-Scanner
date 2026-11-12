@@ -1763,8 +1763,152 @@
     return out;
   }
 
+  // ─── Draw a box ───────────────────────────────────────────────────────────
+  // The user drags a rectangle around a card the scan missed. One box per activation; Esc, or a click without a drag,
+  // cancels. Everything it adds (a full-viewport veil, a hint bar, the rubber band) and every listener goes on exit,
+  // so outside draw mode the page's own clicks are never touched. The rectangle must lie mostly over one visible
+  // photo; the photo's data is collected by the same finder the scan uses and sent to the background with the rectangle.
+  const DRAW_HINT = 'Drag a box around the card. Esc to cancel.';
+  const DRAW_NOT_PHOTO = 'Draw over a photo.';
+  const DRAW_MIN_SIDE = 12;     // CSS px: a smaller rectangle is ignored
+  const DRAW_CLICK_SLOP = 3;    // CSS px: a press and release this close together is a click, which cancels
+  const DRAW_MIN_COVER = 0.5;   // share of the drawn area that must lie over the photo
+  const DRAW_Z = '2147483647';
+  let _draw = null;             // { veil, hint, band, start, off } while draw mode is on
+
+  // The photo the drawn rectangle [x1, y1, x2, y2] (viewport CSS px) is mostly over: the one with the largest visible
+  // overlap, and only when that is at least DRAW_MIN_COVER of the drawn area. Null otherwise.
+  function pickDrawTarget(drawn, photos) {
+    const area = (drawn[2] - drawn[0]) * (drawn[3] - drawn[1]);
+    if (!(area > 0)) return null;
+    let best = null;
+    let bestOverlap = 0;
+    for (const photo of photos || []) {
+      const r = photo.rect;
+      const w = Math.min(drawn[2], r.vx + r.vw) - Math.max(drawn[0], r.vx);
+      const h = Math.min(drawn[3], r.vy + r.vh) - Math.max(drawn[1], r.vy);
+      const overlap = w > 0 && h > 0 ? w * h : 0;
+      if (overlap > bestOverlap) { best = photo; bestOverlap = overlap; }
+    }
+    return bestOverlap / area >= DRAW_MIN_COVER ? best : null;
+  }
+
+  // The scan's own collector, so a drawn box is mapped with the same placement data a detector box is. The overlay's
+  // anchors and scan scroll belong to the last scan, so they are put back as they were.
+  function collectDrawPhotos() {
+    const saved = {
+      anchors: _scanAnchors.map((a) => ({ ...a })), ids: new Map(_anchorIds), scroll: _scanScroll, view: _scanView,
+    };
+    try {
+      const { photos, cards } = findCardImages({ keepAnchors: true });
+      const seen = new Set(photos.map((p) => p.src + ':' + Math.round(p.rect.x) + ':' + Math.round(p.rect.y)));
+      return [...photos, ...cards.filter((c) => !seen.has(c.src + ':' + Math.round(c.rect.x) + ':' + Math.round(c.rect.y)))];
+    } finally {
+      _scanAnchors = saved.anchors; _anchorIds = saved.ids; _scanScroll = saved.scroll; _scanView = saved.view;
+    }
+  }
+
+  function drawEl(tag, css, text) {
+    const el = document.createElement(tag);
+    Object.assign(el.style, css);
+    if (text) el.textContent = text;
+    document.documentElement.appendChild(el);
+    return el;
+  }
+
+  function setDrawHint(text) { if (_draw) _draw.hint.textContent = text; }
+
+  function stopDraw() {
+    if (!_draw) return;
+    const { veil, hint, band, off } = _draw;
+    _draw = null;
+    off();
+    for (const el of [band, hint, veil]) el.remove();
+  }
+
+  function swallow(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+  }
+
+  function finishDraw(end) {
+    const start = _draw.start;
+    _draw.start = null;
+    _draw.band.style.display = 'none';
+    const moved = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+    if (moved < DRAW_CLICK_SLOP) { stopDraw(); return; }
+    const drawn = [Math.min(start.x, end.x), Math.min(start.y, end.y), Math.max(start.x, end.x), Math.max(start.y, end.y)];
+    if (drawn[2] - drawn[0] < DRAW_MIN_SIDE || drawn[3] - drawn[1] < DRAW_MIN_SIDE) return;
+    const photo = pickDrawTarget(drawn, collectDrawPhotos());
+    if (!photo) { setDrawHint(DRAW_NOT_PHOTO); return; }
+    stopDraw();
+    chrome.runtime.sendMessage({
+      action: 'drawnBox', photo, drawn,
+      viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, devicePixelRatio: window.devicePixelRatio || 1,
+      scrollX: window.scrollX, scrollY: window.scrollY,
+      page: pageInfo(),
+    }).catch(() => {});
+  }
+
+  function startDraw() {
+    if (_draw) return;
+    const veil = drawEl('div', { position: 'fixed', left: '0', top: '0', width: '100vw', height: '100vh', cursor: 'crosshair', zIndex: DRAW_Z, background: 'rgba(0,0,0,0.04)' });
+    const band = drawEl('div', { position: 'fixed', display: 'none', border: '1.5px solid #6366f1', background: 'rgba(99,102,241,0.15)', zIndex: DRAW_Z, pointerEvents: 'none', boxSizing: 'border-box' });
+    const hint = drawEl('div', {
+      position: 'fixed', left: '50%', top: '12px', transform: 'translateX(-50%)', zIndex: DRAW_Z, pointerEvents: 'none',
+      font: '600 13px system-ui, sans-serif', color: '#fff', background: 'rgba(17,19,31,0.92)', padding: '6px 12px', borderRadius: '6px',
+    }, DRAW_HINT);
+    const onDown = (e) => {
+      swallow(e);
+      if (e.button !== 0) return;
+      _draw.start = { x: e.clientX, y: e.clientY };
+      setDrawHint(DRAW_HINT);
+    };
+    const onMove = (e) => {
+      if (!_draw) return;
+      swallow(e);
+      if (!_draw.start) return;
+      const s = _draw.start;
+      Object.assign(_draw.band.style, {
+        display: 'block', left: Math.min(s.x, e.clientX) + 'px', top: Math.min(s.y, e.clientY) + 'px',
+        width: Math.abs(e.clientX - s.x) + 'px', height: Math.abs(e.clientY - s.y) + 'px',
+      });
+    };
+    const onUp = (e) => {
+      swallow(e);
+      if (_draw?.start) finishDraw({ x: e.clientX, y: e.clientY });
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { swallow(e); stopDraw(); } };
+    const events = [['mousedown', onDown], ['mousemove', onMove], ['mouseup', onUp], ['click', swallow], ['contextmenu', swallow], ['keydown', onKey]];
+    for (const [type, fn] of events) window.addEventListener(type, fn, true);
+    // The page going away or into the background ends draw mode; visibilitychange bubbles from the document to the window.
+    const onLeave = () => stopDraw();
+    const onVisibility = () => { if (document.visibilityState === 'hidden') stopDraw(); };
+    window.addEventListener('pagehide', onLeave);
+    window.addEventListener('beforeunload', onLeave);
+    window.addEventListener('visibilitychange', onVisibility);
+    _draw = {
+      veil, hint, band, start: null,
+      off: () => {
+        for (const [type, fn] of events) window.removeEventListener(type, fn, true);
+        window.removeEventListener('pagehide', onLeave);
+        window.removeEventListener('beforeunload', onLeave);
+        window.removeEventListener('visibilitychange', onVisibility);
+      },
+    };
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg.action === 'showOverlay') {
+    if (msg.action === 'startDraw') {
+      startDraw();
+      sendResponse({ ok: true });
+      return false;
+    } else if (msg.action === 'cancelDraw') {
+      stopDraw();
+      sendResponse({ ok: true });
+      return false;
+    } else if (msg.action === 'showOverlay') {
       _fullSize = msg.fullSize?.url && /^https?:/.test(msg.fullSize.url) ? { url: msg.fullSize.url } : null;
       if (typeof msg.shown === 'boolean') _shown = msg.shown;
       renderOverlay(msg.cards, msg.srcWidth, msg.srcHeight);
@@ -1821,6 +1965,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { acceptClick, labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, labelLayout, paintedBox, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, hasBlur, decorativeReason, canvasBacking, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { pickDrawTarget, acceptClick,labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, labelLayout, paintedBox, hoveredTarget, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, hasBlur, decorativeReason, canvasBacking, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

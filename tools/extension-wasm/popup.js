@@ -1,6 +1,7 @@
 import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, chosenPrintingHasNoPrice, isIdentified, isStale, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { TOO_SMALL_ROW_TEXT } from "./lib/tiny-card.js";
+import { DRAW_HINT_TEXT, drawnIndices, isSamePage, placeDrawnCard } from "./lib/draw-box.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
@@ -21,6 +22,7 @@ import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSit
 
 const btnScan      = document.getElementById("btn-scan");
 const btnClear     = document.getElementById("btn-clear");
+const btnDraw      = document.getElementById("btn-draw");
 const restoreNote  = document.getElementById("restore-note");
 const restoreText  = document.getElementById("restore-text");
 const restoreRescan = document.getElementById("restore-rescan");
@@ -486,6 +488,57 @@ chrome.runtime.onMessage.addListener((msg) => {
   applyScanResult(msg.data);
 });
 
+/* ─── Draw a box: a card the scan missed ─── */
+
+// The page enters draw mode; when the user has drawn, the background reads the box and sends the card back as "drawnCard".
+let _drawPending = false;   // draw mode is on in the page and no box has come back yet
+
+async function startDrawBox() {
+  if (isScanning) { showMessage("Wait for the scan to finish, then draw a box.", true); return; }
+  try {
+    const resp = await chrome.runtime.sendMessage({ action: "drawBox", era: eraSelect.value || null });
+    if (resp?.error) { showMessage(resp.error, true); return; }
+    _drawPending = true;
+    showMessage(DRAW_HINT_TEXT);
+  } catch (err) {
+    showMessage(explainScanError(err?.message || err), true);
+  }
+}
+btnDraw.addEventListener("click", startDrawBox);
+
+// Closing the popup with a draw pending leaves the page's draw mode too (best effort: the page also leaves it on its own).
+window.addEventListener("pagehide", () => {
+  if (_drawPending) chrome.runtime.sendMessage({ action: "cancelDraw" }).catch(() => {});
+});
+
+// The drawn card joins the list (replacing a hidden or Too small entry it covers) and the page overlay, as a Choose or
+// confirmed row by the usual rules; drawing confirms nothing. With no scan yet it starts a one-card result.
+function applyDrawnCard(msg) {
+  _drawPending = false;
+  const card = { ...msg.card, guess: guessOf(msg.card) };
+  // A result from another page is not added to: the drawn card starts its own one-card result, so the overlay and totals never mix pages.
+  if (!_lastResult || !isSamePage(_lotUrl, msg.tabUrl)) {
+    applyScanResult({ cards: [card], srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, tabUrl: msg.tabUrl, scanId: null });
+    return;
+  }
+  const placed = placeDrawnCard(_lastResult.cards, card);
+  _lastResult = { ..._lastResult, cards: placed.cards };
+  for (const map of [_variantChoice, _variantSuggest]) map.delete(placed.index);
+  _variantPicked.delete(placed.index);
+  seedVariant(card, placed.index);
+  _showChoose = true;
+  updateStats(placed.cards);
+  renderResults();
+  loadBestMatchPrices(_lastResult);
+  pushOverlay();
+  showMessage(`Box ${placed.index + 1} added${card.tooSmall ? ": too small to read" : card.cardBack ? ": it reads as a card back" : ""}.`);
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.action === "drawnCard" && msg.card) applyDrawnCard(msg);
+  else if (msg?.action === "drawnFailed") { _drawPending = false; showMessage(typeof msg.error === "string" ? msg.error : "Could not read that box.", true); }
+});
+
 /* ─── Site access offer ─── */
 
 // The site the offer is about, and the origins "Allow" asks for: the page and the hosts of the photos it could not read.
@@ -804,7 +857,7 @@ function renderResults() {
     + confirmed.map((idx) => renderCardRow(cards[idx], idx)).join("")
     + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised)
     + renderSkippedGroup(skipped.map((idx) => renderSkippedRow(idx, cropThumb(cards[idx]))).join(""), skipped.length, _showSkipped)
-    + renderNotCardGroup(notCard.map((idx) => renderNotCardRow(idx, cropThumb(cards[idx]), cards[idx].tooSmall === true)).join(""), notCard.length, _showNotCard);
+    + renderNotCardGroup(notCard.map((idx) => renderNotCardRow(idx, cropThumb(cards[idx]), cards[idx].tooSmall === true, cards[idx].unread === true)).join(""), notCard.length, _showNotCard);
 }
 
 function renderCardRow(card, idx) {
@@ -919,6 +972,7 @@ function renderUnrecognisedRow(card, idx) {
       ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <span class="unrec-name">${escHtml(label)}</span>
       ${search}
+      ${card.unread && !card.tooSmall ? `<button type="button" class="link-btn" data-draw-box aria-label="${escHtml(`Draw a box around card ${idx + 1} to read it`)}">Draw a box</button>` : ""}
     </div>
     ${renderSearchPanel(idx)}
   </div>`;
@@ -1064,10 +1118,11 @@ function showSearchResults(idx) {
 // What each row shows now, after any fixes: the answers "All right" confirms.
 function shownAnswers(cards) {
   return cards.map((card, index) => {
+    if (card.drawn) return null;
     if (card.tooSmall || card.unread) return { index, unknown: true };
     if (card.cardBack) return { index, notACard: true };
     return card.identity?.id ? { index, cardId: card.identity.id } : { index, unknown: true };
-  });
+  }).filter(Boolean);
 }
 
 examDismiss.addEventListener("click", () => { examStrip.hidden = true; });
@@ -1077,7 +1132,7 @@ examYes.addEventListener("click", async () => {
   if (!scan) return;
   examYes.disabled = true;
   try {
-    const resp = await chrome.runtime.sendMessage({ action: "confirmExam", scanId: scan.bgScanId, answers: shownAnswers(scan.cards) });
+    const resp = await chrome.runtime.sendMessage({ action: "confirmExam", scanId: scan.bgScanId, answers: shownAnswers(scan.cards), drawnIndices: drawnIndices(scan.cards) });
     if (resp?.error || !resp?.ok) throw new Error(resp?.error || "not sent");
     examStrip.hidden = true;
     showMessage("Thanks. Those results were sent to help check the scanner.");
@@ -1087,6 +1142,9 @@ examYes.addEventListener("click", async () => {
     examYes.disabled = false;
   }
 });
+
+// A drawn row's own picture goes with its answer: the scan's crop at that row number is another box's.
+const drawnFields = (card) => (card?.drawn ? { drawn: true, crop: card.crop ?? null } : {});
 
 function pickCard(idx, id, via, row, remember = true) {
   const scan = _lastResult;
@@ -1101,7 +1159,7 @@ function pickCard(idx, id, via, row, remember = true) {
   if (remember) {
     scan.cards[idx] = { ...card, why: userWhy(card.why) };
     chrome.runtime.sendMessage({
-      action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess, pickedId: id, via,
+      action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess, pickedId: id, via, ...drawnFields(card),
     }).then((resp) => {
       if (resp?.error) { showMessage(resp.error, true); return; }
       const corrected = correctedMark(guess, id, resp);
@@ -1142,7 +1200,7 @@ function skipAt(idx) {
   if (!card || chooseState(card) !== "choose") return;
   _picker.delete(idx);
   const guess = guessWithWhy(card);
-  chrome.runtime.sendMessage({ action: "saveSkip", scanId: scan.bgScanId, index: idx, guess })
+  chrome.runtime.sendMessage({ action: "saveSkip", scanId: scan.bgScanId, index: idx, guess, ...drawnFields(card) })
     .then((resp) => { if (resp?.error) showMessage(resp.error, true); })
     .catch((err) => showMessage(explainScanError(err?.message || err), true));
   replaceCard(idx, skipCard(card));
@@ -1193,6 +1251,7 @@ resultsEl.addEventListener("click", (e) => {
     resultsEl.querySelector("#skipped-list").hidden = !_showSkipped;
     return;
   }
+  if ("drawBox" in button.dataset) { startDrawBox(); return; }
   if ("notcardToggle" in button.dataset) {
     _showNotCard = !_showNotCard;
     button.setAttribute("aria-expanded", String(_showNotCard));

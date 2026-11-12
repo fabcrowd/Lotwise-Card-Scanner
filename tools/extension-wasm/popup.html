@@ -170,6 +170,7 @@
     .overlay-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #8b92ab; cursor: pointer; }
     .overlay-toggle input { width: 14px; height: 14px; margin: 0; accent-color: #6366f1; cursor: pointer; }
     .overlay-toggle input:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .overlay-row .draw-btn { margin-left: auto; align-self: center; font-size: 11px; font-weight: 600; color: #a5b4fc; }
 
     /* SITE ACCESS NOTICE — offered after a screenshot scan that lacked site access */
     .access-notice {
@@ -662,6 +663,7 @@
   </div>
   <div class="overlay-row">
     <label class="overlay-toggle" title="Hides the boxes and tags on the page. Your results stay here."><input type="checkbox" id="overlay-shown" checked> Show boxes on page</label>
+    <button type="button" class="link-btn draw-btn" id="btn-draw" title="Missed a card? Drag a box around it on the page to read it.">Draw a box</button>
   </div>
 
   <div class="access-notice" id="restore-note" hidden>

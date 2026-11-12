@@ -22,6 +22,9 @@ import { rectifyCard, warpQuad }       from "./lib/rectify.js";
 import { CORNER_MIN_CONF, cornerModelReady, loadCornerModel, predictCorners, validQuad } from "./lib/corners.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
 import { isTooSmallBox, smallPhotoCounts, tooSmallCard, canFrameTooSmall, keepTooSmall } from "./lib/tiny-card.js";
+import {
+  acceptDrawnSender, correctionSource, drawnCardEntry, examGroupAllowed, examHoldAllowed, normalizeDrawnMessage, viewportRectToBitmapBox, viewportToPhotoBox,
+} from "./lib/draw-box.js";
 import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
@@ -369,7 +372,7 @@ async function numberReaderReady() {
 // send newCardsDetected and nothing else.
 const OWN_PAGE_ONLY = new Set([
   "checkReady", "startSetup", "detect", "priceCard", "scanPage", "scanState", "awaitScan",
-  "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard", "setOverlayShown",
+  "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard", "setOverlayShown", "drawBox", "cancelDraw",
 ]);
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -455,6 +458,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "highlightCard":
       relayToTab({ action: "relayHighlight", index: Number.isInteger(msg.index) ? msg.index : null, scroll: msg.scroll === true });
       sendResponse({ ok: true });
+      return false;
+
+    case "drawBox":
+      startDrawBox(msg).then(sendResponse);
+      return true;
+
+    case "cancelDraw":
+      cancelDrawBox();
+      sendResponse({ ok: true });
+      return false;
+
+    case "drawnBox":
+      // From the top frame of the tab that started draw mode only, once: the box the user drew, over a photo of that tab.
+      if (acceptDrawnSender(_drawTabId, sender)) {
+        _drawTabId = null;
+        handleDrawnBox(msg, sender.tab);
+      }
       return false;
 
     case "newCardsDetected":
@@ -1240,6 +1260,167 @@ async function handleScanPage(sendResponse, era) {
   }
 }
 
+// ─── draw a box ──────────────────────────────────────────────────────────────
+
+// The era the popup had picked when the user pressed "Draw a box": the drawn card is read with it like a scanned one.
+let _drawEra = null;
+// The tab draw mode is on, until it sends its one box or is cancelled; a drawnBox from anywhere else is ignored.
+let _drawTabId = null;
+
+function cancelDrawBox() {
+  const tabId = _drawTabId;
+  _drawTabId = null;
+  if (tabId !== null) sendToTab(chrome, tabId, { action: "cancelDraw" }).catch(() => {});
+}
+
+async function startDrawBox(msg) {
+  try {
+    let tab = _targetTabId !== null ? await chrome.tabs.get(_targetTabId).catch(() => null) : null;
+    if (!tab || _isInternalUrl(tab.url) || tab.windowId === _popupWinId) {
+      const open = await chrome.tabs.query({ active: true, windowType: "normal" }).catch(() => []);
+      tab = chooseFallbackTab(open, _popupWinId).tab;
+      if (tab) _setTargetTabId(tab.id);
+    }
+    if (!tab) return { error: "No scannable tab. Open a webpage first." };
+    _drawEra = eraById(msg.era);
+    _drawTabId = tab.id;
+    await sendToTab(chrome, tab.id, { action: "startDraw" });
+    // The page may be in another window than the popup: bring it forward so the user can draw on it.
+    chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    return { ok: true };
+  } catch (err) {
+    _drawTabId = null;
+    console.error("[BG] draw mode failed:", err?.message || err);
+    return { error: "Card Scanner cannot draw on this tab." };
+  }
+}
+
+async function handleDrawnBox(raw, tab) {
+  const tell = (message) => chrome.runtime.sendMessage(message).catch(() => {});
+  const msg = normalizeDrawnMessage(raw);
+  if (!msg) return;
+  _setTargetTabId(tab.id);
+  try {
+    if (!_ready) await tryAutoLoad();
+    if (!_ready) throw new Error("The models are not loaded yet.");
+    await numberReaderReady();
+    const card = await readDrawnBox(msg, tab, _drawEra);
+    tell({ action: "drawnCard", card, srcWidth: msg.viewportWidth, srcHeight: msg.viewportHeight, tabUrl: tab.url });
+  } catch (err) {
+    console.error("[BG] reading a drawn box failed:", err?.message || err);
+    tell({ action: "drawnFailed", error: explainDrawError(err) });
+  }
+}
+
+const DRAW_OFF_PHOTO = "That box is not on the photo. Draw it over the card.";
+const explainDrawError = (err) => (err?.message === DRAW_OFF_PHOTO ? err.message : "Could not read that box. Try again.");
+
+// The same screenshot the scan takes when a photo's source cannot be read.
+async function captureDrawnViewport(tab) {
+  const dataUrl = await captureWithoutOverlay(chrome, tab.id, async () => {
+    await new Promise((resolve) => setTimeout(resolve, captureWait(_lastCaptureAt, Date.now())));
+    const current = await chrome.tabs.get(tab.id).catch(() => null);
+    if (!current?.active) throw new Error("That tab is no longer in front. Draw again.");
+    try {
+      return await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 92 });
+    } catch (err) {
+      if (!isCaptureQuotaError(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      return chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 92 });
+    }
+  });
+  _lastCaptureAt = Date.now();
+  return b64ToBitmap(dataUrl.split(",")[1]);
+}
+
+/**
+ * The card in the box the user drew: the photo is loaded the way the scan loads it (its source, a larger rendition
+ * when the site allows, else the screenshot), the viewport rectangle is mapped back to photo pixels, and a box big
+ * enough is read like a detector box, minus the "is this a card" check (the user says it is). Never shared, never
+ * confirmed because it was drawn. Resolves the entry the popup adds to its list.
+ */
+async function readDrawnBox(msg, tab, era) {
+  const ph = msg.photo;
+  let photoBitmap = null;
+  let upgrade = null;
+  try {
+    let sourceTransform = null;
+    const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
+    if (sourceCanMap && await canReadPhotoSource(ph.src)) {
+      const allowedHosts = new Set((msg.page.imageHosts || []).map((host) => String(host).toLowerCase()));
+      const limits = { allowedHosts, budget: createBudget(PHOTO_BUDGET_MS) };
+      upgrade = await loadUpgradedSource(ph, msg.page.ogImages || [], tab.url, limits);
+      photoBitmap = upgrade ? upgrade.bitmap : await loadPhotoSource(ph.src, { ...limits, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE });
+    }
+    if (photoBitmap) {
+      sourceTransform = upgrade
+        ? rescaleTransform(imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {}),
+          ph.naturalWidth / photoBitmap.width, ph.naturalHeight / photoBitmap.height)
+        : imageToViewportTransform(ph.rect, photoBitmap.width, photoBitmap.height, ph.render || {});
+      if (!sourceTransform) { photoBitmap.close(); photoBitmap = null; }
+    }
+    let box;
+    let viewportBox;
+    let fedPerCssPx = 1;
+    if (sourceTransform) {
+      box = viewportToPhotoBox(msg.drawn, sourceTransform, { width: photoBitmap.width, height: photoBitmap.height });
+      viewportBox = box && mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
+    } else {
+      // Unreadable source: the screenshot, cut where the picture is drawn (not the letterbox bars around it).
+      photoBitmap = await captureDrawnViewport(tab);
+      fedPerCssPx = photoBitmap.width / (msg.viewportWidth || photoBitmap.width / msg.devicePixelRatio);
+      const shown = ph.naturalHeight > 0 ? imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {}) : null;
+      const picture = (shown && mapPhotoBoxToViewport([0, 0, ph.naturalWidth, ph.naturalHeight], shown, ph.rect)) || [ph.rect.x, ph.rect.y, ph.rect.x + ph.rect.w, ph.rect.y + ph.rect.h];
+      viewportBox = [Math.max(msg.drawn[0], picture[0]), Math.max(msg.drawn[1], picture[1]), Math.min(msg.drawn[2], picture[2]), Math.min(msg.drawn[3], picture[3])];
+      box = viewportBox[2] > viewportBox[0] && viewportBox[3] > viewportBox[1]
+        ? viewportRectToBitmapBox(viewportBox, fedPerCssPx, { width: photoBitmap.width, height: photoBitmap.height }) : null;
+    }
+    if (!box || !viewportBox) throw new Error(DRAW_OFF_PHOTO);
+    const fromSource = sourceTransform !== null;
+    console.log("[BG] drawn box", fromSource ? (upgrade ? "(source image, upgraded)" : "(source image)") : "(viewport crop)", box.map(Math.round).join(","), "->", viewportBox.map(Math.round).join(","));
+    // A fetched picture is judged on its own pixels; a screenshot at the shown scale (same rule as the scan).
+    const naturalPerFed = naturalPerFedFor({
+      fromSource,
+      shownNaturalPerFed: !fromSource && ph.naturalHeight > 0
+        ? (() => {
+          const shown = imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {});
+          return shown ? 1 / (shown.scaleY * fedPerCssPx) : undefined;
+        })()
+        : undefined,
+    });
+    const fedHeight = box[3] - box[1];
+    const readHeight = Math.round(informationHeight(fedHeight, naturalPerFed));
+    const place = { docBox: toDocBox(viewportBox, msg.scroll), readHeight };
+    if (isTooSmallBox(box)) {
+      const cardCanvas = rectifyCard(photoBitmap, box);
+      return drawnCardEntry({ box: viewportBox, tooSmall: true, crop: await encodeCrop(cardCanvas), ...place });
+    }
+    const pixels = readBitmap(photoBitmap);
+    const cardBox = extendClippedBottom(pixels.data, pixels.width, pixels.height, box);
+    const cardCanvas = await cardCanvasFor(photoBitmap, box);
+    const stampCanvas = cardBox[3] === box[3] ? null : rectifyCard(photoBitmap, cardBox);
+    let read;
+    try {
+      read = await identifyCard(cardCanvas, era, fedHeight, stampCanvas, informationHeight(fedHeight, naturalPerFed), { bitmap: photoBitmap, box });
+    } catch (err) {
+      console.error("[BG] drawn card read failed:", err?.message || err);
+      read = { identity: null, confidence: 0, abstain: true, market_price: null, price_variant: null, price_grid: null };
+    }
+    [read] = await withBestGuesses([read], null);
+    const crop = await encodeCrop(cardCanvas);
+    let entry = drawnCardEntry({ box: viewportBox, read, crop, ...place });
+    // The usual price path: batch pricing for the ids the row can show, then the candidates a Choose row lists.
+    const ids = collectBatchIds([entry]);
+    if (ids.size) applyBatchedPrices([entry], await batchPriceCards([...ids]));
+    const { rankedScores, ...rest } = entry;
+    return isUnsure(entry)
+      ? { ...rest, candidates: candidatesFor(entry, _meta, 5, era), ...(entry.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) }
+      : rest;
+  } finally {
+    photoBitmap?.close?.();
+  }
+}
+
 // ─── corrections ─────────────────────────────────────────────────────────────
 
 function photoIdOf(pixels) {
@@ -1272,9 +1453,9 @@ async function shareCrop(cropDataUrl) {
 // Never lets sharing break the pick the user made.
 async function contributeTeachPick(scan, msg) {
   try {
-    const share = scan?.shares?.[msg.index];
+    const { share, crop: scanCrop } = correctionSource(scan, msg);
     if (!share || share.split !== "teach" || !(await _sharing.enabled())) return;
-    const crop = await shareCrop(scan.crops?.[msg.index]);
+    const crop = await shareCrop(scanCrop);
     if (!crop) return;
     await _sharing.contribute({ photoId: share.photoId, cards: [teachRow({ share, crop, pickedId: msg.pickedId, via: msg.via })] });
   } catch (err) {
@@ -1294,7 +1475,9 @@ async function confirmExam(msg) {
   const crops = await Promise.all(scan.crops.map((crop) => shareCrop(crop).catch(() => null)));
   const known = (id) => Boolean(catalogCard(id));
   let sent = 0;
+  const drawn = Array.isArray(msg.drawnIndices) ? msg.drawnIndices.filter(Number.isInteger) : [];
   for (const [photoId, indices] of examGroups(scan.shares)) {
+    if (!examGroupAllowed(indices, drawn)) continue;
     const cards = examRows({ shares: scan.shares, indices, crops, picks: scan.examPicks || {}, displayed, known });
     if (!cards) continue;
     try {
@@ -1374,7 +1557,7 @@ const _ownPageActions = {
     const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
     // An exam photo's answers leave only as a whole, when sharing is on and the user confirms the photo; they never enter
     // the shared training queue. That is the only thing the exam split decides: the correction itself is always kept here.
-    await holdExamPick(_corrections, scan, msg, await _sharing.enabled().catch(() => false));
+    if (examHoldAllowed(msg)) await holdExamPick(_corrections, scan, msg, await _sharing.enabled().catch(() => false));
     // The same card the user corrected before, confirmed again from a different crop: that counts as "x2" on the earlier
     // correction instead of storing a near-duplicate picture.
     const agreed = await agreeWithReference(_corrections, msg);
@@ -1392,7 +1575,7 @@ const _ownPageActions = {
       guess: msg.guess,
       pickedId: msg.pickedId,
       via: msg.via,
-      crop: scan?.crops?.[msg.index],
+      crop: correctionSource(scan, msg).crop,
       extVersion: chrome.runtime.getManifest().version,
       why: msg.guess?.why,
       wrongId,
@@ -1413,7 +1596,7 @@ const _ownPageActions = {
       index: msg.index,
       pageUrl: scan?.pageUrl,
       guess: msg.guess,
-      crop: scan?.crops?.[msg.index],
+      crop: correctionSource(scan, msg).crop,
       extVersion: chrome.runtime.getManifest().version,
       why: msg.guess?.why,
     });
