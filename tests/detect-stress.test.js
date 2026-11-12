@@ -491,7 +491,6 @@ test('/detect: scanAndPrice throwing with no message returns 500', async () => {
   await withServer(
     {
       scanAndPrice: async () => {
-        // eslint-disable-next-line no-throw-literal
         throw null;
       },
     },
@@ -804,7 +803,6 @@ test('/detect: multi-card scanAndPrice returning null-like result produces absta
 // ─── Mixed confidence filtering ───────────────────────────────────────────────
 
 test('/detect: rawCards with mixed conf — filters phantoms, keeps valid', async () => {
-  let scanCallCount = 0;
   await withServer(
     {
       multiCardSplitter: {
@@ -816,7 +814,6 @@ test('/detect: rawCards with mixed conf — filters phantoms, keeps valid', asyn
         ],
       },
       scanAndPrice: async () => {
-        scanCallCount++;
         return { ok: true, identity: { name: 'Snorlax' }, suggested: { tcgplayer: 12 }, vellumConfidence: 'high' };
       },
     },

@@ -294,11 +294,6 @@ function suggestedListPrice(suggested) {
   return values.length > 0 ? Math.max(...values) : null;
 }
 
-function baseValue(comps) {
-  const values = numericValues(comps);
-  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-}
-
 function cardLabel(card) {
   const identity = card.pricedCache?.identity;
   if (identity?.name) {
@@ -332,13 +327,6 @@ function reviewReason(card) {
     return `missing comps: ${missing.join(', ')} — only ${3 - missing.length} of 3 sources available`;
   }
   return 'needs review';
-}
-
-function formatComp(value, missingLabel) {
-  if (typeof value === 'number') {
-    return money(value);
-  }
-  return missingLabel;
 }
 
 async function refreshStats() {

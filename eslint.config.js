@@ -49,6 +49,7 @@ export default [
         DecompressionStream: 'readonly',
         Option: 'readonly',
         Image: 'readonly',
+        ImageData: 'readonly',
         ort: 'readonly',
         AbortController: 'readonly',
         atob: 'readonly',
@@ -65,6 +66,32 @@ export default [
         OffscreenCanvas: 'readonly',
         self: 'readonly',
         window: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['tools/chrome-extension/**/*.js'],
+    languageOptions: {
+      globals: {
+        chrome: 'readonly',
+        document: 'readonly',
+        window: 'readonly',
+        navigator: 'readonly',
+      },
+    },
+  },
+  {
+    // Playwright scripts: page.evaluate callbacks run in the browser.
+    files: ['tasks/qa-smoke/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        chrome: 'readonly',
+        document: 'readonly',
+        window: 'readonly',
+        location: 'readonly',
+        getComputedStyle: 'readonly',
+        innerWidth: 'readonly',
+        innerHeight: 'readonly',
       },
     },
   },
