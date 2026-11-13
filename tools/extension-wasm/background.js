@@ -43,7 +43,7 @@ import { skipDraft, unskipDraft } from "./lib/skip.js";
 import { memoryVerdict, skipVerdict } from "./lib/memory-confirm.js";
 import { referenceBar } from "./lib/reference-bars.js";
 import { whyOf, withVerdicts } from "./lib/why.js";
-import { adaptedRows, cardProbability, checkBundle, liveParts, loadStoredBundle, mergeExtra, parsePackagedCheck, pickCheck } from "./lib/bundle.js";
+import { adaptedRows, checkBundle, checkKeepsBox, liveParts, loadStoredBundle, mergeExtra, parsePackagedCheck, pickCheck } from "./lib/bundle.js";
 import { canReadHidden, keepHidden, keptRealCount, notCardEntry, overlayCards, realCards } from "./lib/not-card.js";
 import { photoIdFromRgba } from "./lib/photo-id.js";
 import { createShareStore } from "./lib/share-store.js";
@@ -1022,7 +1022,7 @@ async function handleScanPage(sendResponse, era) {
                     ? cardCanvasFor(photoBitmap, box)
                     : cardCanvasFor(bitmap, [sx + box[0], sy + box[1], sx + box[2], sy + box[3]]));
                 // The hero fallback is never checked: it may be the listing's only card.
-                if (!hero && !(await boxLooksLikeCard(cardCanvas))) {
+                if (!hero && !(await boxLooksLikeCard(cardCanvas, { detConf: score, aspect: (bx2 - bx1) / (by2 - by1) }))) {
                   // Hidden, not dropped: the popup lists it under "Hidden: not a card" and can bring it back. Never drawn, priced,
                   // totalled, shared or remembered; a box big enough to read keeps its read for "Show it".
                   const claimedHidden = claim(viewportBox, undefined, (viewportBox[2] - viewportBox[0]) * (viewportBox[3] - viewportBox[1]), true);
@@ -1948,12 +1948,14 @@ function embedSerial(canvas) {
   return run;
 }
 
-// The pipeline's "is this a card" check, on the raw embedding of a detected box. A failure keeps the box.
-async function boxLooksLikeCard(canvas) {
+// The pipeline's "is this a card" check, on the raw embedding of a detected box and, for a v2 check, the detector's
+// own confidence and the box's w/h (`extras`). A failure, or a check that cannot run, keeps the box.
+async function boxLooksLikeCard(canvas, extras) {
   if (!_photoCheck) return true;
   try {
-    const p = cardProbability(await embedSerial(canvas), _photoCheck);
-    if (p >= _photoCheck.threshold) return true;
+    const { keep, p } = checkKeepsBox(await embedSerial(canvas), _photoCheck, extras);
+    if (p === null) console.log("[BG]   card check could not run (missing detector confidence or aspect); box kept");
+    if (keep) return true;
     console.log("[BG]   box dropped by the card check, p=" + p.toFixed(2));
     return false;
   } catch (err) {

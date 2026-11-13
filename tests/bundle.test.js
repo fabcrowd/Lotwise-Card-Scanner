@@ -346,6 +346,12 @@ test('parseCheck reads weights, bias and threshold; cardProbability is sigmoid(w
   assert.throws(() => parseCheck(makeCheck({ weights: nan })), /finite/);
 });
 
+test('only the check accepts a v2 header: pack, adapter and catalogExtra still refuse it', () => {
+  assert.throws(() => parsePack(withHeader({ v: 2, dim: DIM, entries: 1, cardIds: ['a'] }, rowsBody([1])), {}), /build/);
+  assert.throws(() => parseAdapter(withHeader({ v: 2, dim: DIM, rank: 1, scale: 0.01 }, new Uint8Array(DIM * 2))), /build/);
+  assert.throws(() => parseCatalogExtra(withHeader({ v: 2, dim: DIM, entries: 1, cardIds: ['sv9-1'], cards: [CARDS[0]] }, rowsBody([1]))), /build/);
+});
+
 test('parseCatalogExtra gives unit float rows and meta in the catalog\'s own shape', () => {
   const extra = parseCatalogExtra(makeExtra());
   assert.equal(extra.rows.length, 2 * DIM);
