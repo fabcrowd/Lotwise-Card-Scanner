@@ -30,9 +30,10 @@ export const STORE_HOSTS = [
   'https://release-assets.githubusercontent.com/*',
 ];
 
-export const STRIP_FILES = ['background.js', 'content.js', 'options.js', 'options.html', 'lib/condition-pricing.js', 'lib/corrections-store.js'];
+export const STRIP_FILES = ['background.js', 'content.js', 'options.js', 'options.html', 'popup.js', 'lib/condition-pricing.js', 'lib/corrections-store.js'];
 // The variant model is held back until it passes the sealed test (docs/plans/card-picker-and-sealed-test.md).
-export const EXCLUDE_FILES = ['INSTALL.md', 'lib/test-photos.js', 'models/variant.onnx'];
+// lib/drawn-examples-store.js is the developer-only drawn-box training log.
+export const EXCLUDE_FILES = ['INSTALL.md', 'lib/test-photos.js', 'lib/drawn-examples-store.js', 'models/variant.onnx'];
 
 const START = 'dev-only:start';
 const END = 'dev-only:end';

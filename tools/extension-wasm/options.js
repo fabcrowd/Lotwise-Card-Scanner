@@ -447,6 +447,59 @@ btnClearPhotos.addEventListener("click", async () => {
 
 // dev-only:end
 
+// dev-only:start
+/* ─── Drawn boxes for training ─── */
+
+const drawnCount  = document.getElementById("drawn-examples-count");
+const drawnStatus = document.getElementById("drawn-examples-status");
+const btnExportDrawn = document.getElementById("export-drawn-examples");
+const btnClearDrawn  = document.getElementById("clear-drawn-examples");
+
+function showDrawnStatus(text, kind = "info") {
+  drawnStatus.textContent = text;
+  drawnStatus.className = "test-result " + kind;
+  drawnStatus.focus();
+}
+
+async function refreshDrawnCount() {
+  const resp = await chrome.runtime.sendMessage({ action: "drawnExamplesCount" }).catch(() => null);
+  const known = typeof resp?.count === "number";
+  drawnCount.textContent = known ? `Drawn boxes: ${resp.count} saved` : "Drawn boxes: unavailable";
+  btnExportDrawn.disabled = !known || resp.count === 0;
+  btnClearDrawn.disabled = !known || resp.count === 0;
+  if (!known) showDrawnStatus("Couldn't read the saved drawn boxes. Reload this page to try again.", "err");
+}
+
+btnExportDrawn.addEventListener("click", async () => {
+  // A chunk per message keeps each under the extension message size limit.
+  const examples = [];
+  let total = 0;
+  do {
+    const chunk = await chrome.runtime.sendMessage({ action: "exportDrawnExamples", from: examples.length }).catch(() => null);
+    if (!Array.isArray(chunk?.examples)) { showDrawnStatus("Export failed. Try again.", "err"); return; }
+    total = chunk.total;
+    examples.push(...chunk.examples);
+    if (chunk.examples.length === 0) break;
+  } while (examples.length < total);
+  const file = { exportedAt: new Date().toISOString(), v: 1, examples };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `card-scanner-drawn-${file.exportedAt.slice(0, 10)}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  showDrawnStatus(`Exported ${examples.length} drawn boxes.`, "ok");
+});
+
+btnClearDrawn.addEventListener("click", async () => {
+  if (!window.confirm("Delete every saved drawn box? Export first if you want to keep them.")) return;
+  const resp = await chrome.runtime.sendMessage({ action: "clearDrawnExamples" }).catch(() => null);
+  if (!resp?.ok) { showDrawnStatus("Couldn't delete the drawn boxes. Try again.", "err"); return; }
+  await refreshDrawnCount();
+  showDrawnStatus("Deleted. 0 drawn boxes saved.", "ok");
+});
+// dev-only:end
+
 refreshCorrectionCount();
 refreshReferenceCount();
 loadReferencesToggle();
@@ -457,5 +510,6 @@ loadShareToggle();
 // dev-only:start
 refreshPhotoCount();
 loadCollectionToggle();
+refreshDrawnCount();
 // dev-only:end
 loadKey();

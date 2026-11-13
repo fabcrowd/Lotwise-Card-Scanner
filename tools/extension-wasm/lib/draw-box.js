@@ -86,8 +86,8 @@ export function placeDrawnCard(cards, entry) {
     const overlap = iou(a, b);
     if (overlap >= best) { best = overlap; at = i; }
   });
-  if (at < 0) return { cards: [...list, entry], index: list.length, replaced: false };
-  return { cards: list.map((card, i) => (i === at ? entry : card)), index: at, replaced: true };
+  if (at < 0) return { cards: [...list, entry], index: list.length, replaced: false, replacedCard: null };
+  return { cards: list.map((card, i) => (i === at ? entry : card)), index: at, replaced: true, replacedCard: list[at] };
 }
 
 /**

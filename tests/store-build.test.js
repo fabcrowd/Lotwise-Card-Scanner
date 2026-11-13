@@ -83,7 +83,7 @@ test('store manifest: exactly the specified permissions and hosts', win32, () =>
 });
 
 test('store package carries no dev code, test hooks, or localhost addresses', win32, () => {
-  const dev = /https?:\/\/(?:localhost|127\.0\.0\.1)|testSetCollection|testPhoto|__cardScanner\b|findCardsDiag|importReferences|forceScreenshotPath|dev-only|photoIds|savePhoto|Local dashboard|Test photos/;
+  const dev = /https?:\/\/(?:localhost|127\.0\.0\.1)|testSetCollection|testPhoto|__cardScanner\b|findCardsDiag|importReferences|forceScreenshotPath|dev-only|photoIds|savePhoto|Local dashboard|Test photos|drawn-examples|drawnExample|DrawnExample|drawnPlaced|drawnKind|DRAWN_KINDS|Drawn boxes for training/;
   for (const file of listFiles(storeDir).filter((f) => /\.(js|html|json)$/.test(f) && !f.startsWith('vendor/'))) {
     const text = readFileSync(path.join(storeDir, file), 'utf8');
     assert.doesNotMatch(text, dev, file);
@@ -166,6 +166,10 @@ test('developer build keeps what the tests rely on and loses only what the store
   assert.match(read('content.js'), /window\.__cardScanner = /);
   assert.match(read('background.js'), /importReferences/);
   assert.match(read('background.js'), /forceScreenshotPath/);
+  assert.match(read('background.js'), /recordDrawnExample/);
+  assert.match(read('popup.js'), /drawnPlaced/);
+  assert.match(read('options.html'), /Drawn boxes for training/);
+  assert.ok(existsSync(path.join(devDir, 'lib', 'drawn-examples-store.js')));
   assert.match(read('lib/condition-pricing.js'), /127\.0\.0\.1:3000/);
   assert.match(read('options.js'), /requestAllSites/);
 });

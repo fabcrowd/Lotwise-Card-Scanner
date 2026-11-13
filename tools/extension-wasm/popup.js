@@ -2,6 +2,9 @@ import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, chosenPrintingHasNoPrice, isIdentified, isStale, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { TOO_SMALL_ROW_TEXT } from "./lib/tiny-card.js";
 import { DRAW_HINT_TEXT, drawnIndices, isSameLot, placeDrawnCard, restoredLotTabId } from "./lib/draw-box.js";
+// dev-only:start
+import { drawnKind } from "./lib/drawn-examples-store.js";
+// dev-only:end
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
@@ -516,6 +519,14 @@ window.addEventListener("pagehide", () => {
 
 // The drawn card joins the list (replacing a hidden or Too small entry it covers) and the page overlay, as a Choose or
 // confirmed row by the usual rules; drawing confirms nothing. With no scan yet it starts a one-card result.
+// dev-only:start
+// Tells the background what the drawn box turned out to be, for the training log. Best effort: never in the way of the list.
+function reportDrawnKind(msg, replacedCard) {
+  if (typeof msg.exampleId !== "string") return;
+  chrome.runtime.sendMessage({ action: "drawnPlaced", exampleId: msg.exampleId, kind: drawnKind(replacedCard) }).catch(() => {});
+}
+// dev-only:end
+
 function applyDrawnCard(msg) {
   _drawPending = false;
   const card = { ...msg.card, guess: guessOf(msg.card) };
@@ -523,9 +534,15 @@ function applyDrawnCard(msg) {
   // Two tabs on the same URL are two lots, so the tab counts too.
   if (!_lastResult || !isSameLot({ url: _lotUrl, tabId: _lotTabId }, { url: msg.tabUrl, tabId: msg.tabId })) {
     applyScanResult({ cards: [card], srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, tabUrl: msg.tabUrl, tabId: msg.tabId, scanId: null });
+    // dev-only:start
+    reportDrawnKind(msg, null);
+    // dev-only:end
     return;
   }
   const placed = placeDrawnCard(_lastResult.cards, card);
+  // dev-only:start
+  reportDrawnKind(msg, placed.replacedCard);
+  // dev-only:end
   _lastResult = { ..._lastResult, cards: placed.cards };
   for (const map of [_variantChoice, _variantSuggest]) map.delete(placed.index);
   _variantPicked.delete(placed.index);

@@ -155,6 +155,10 @@ test.describe('Draw a box', () => {
     const logs = [];
     worker.on('console', (m) => logs.push(m.text()));
 
+    // The dev build keeps each drawn box as a local training example (the profile persists, so count from here).
+    const logged = () => popup.evaluate(() => chrome.runtime.sendMessage({ action: 'exportDrawnExamples', from: 0 }));
+    const loggedBefore = (await logged()).total;
+
     // First box: no scan yet, so it starts a one-card result.
     const first = await drawOver(page, 0, 1);
     await page.waitForTimeout(800);
@@ -179,6 +183,14 @@ test.describe('Draw a box', () => {
       expect(Math.abs(box[2] - want.x2)).toBeLessThan(6);
       expect(Math.abs(box[3] - want.y2)).toBeLessThan(6);
     }
+    // Each box made exactly one example, with the kind the popup reported (both started or joined a result with nothing to replace).
+    await expect.poll(async () => (await logged()).total, { timeout: 15_000 }).toBe(loggedBefore + 2);
+    await expect.poll(async () => (await logged()).examples.slice(-2).map((e) => e.kind), { timeout: 15_000 }).toEqual(['missed', 'missed']);
+    const example = (await logged()).examples.at(-1);
+    expect(example.source).toBe(secure && tag === 'source' ? 'photo' : 'screenshot');
+    expect(example.photo.startsWith('data:image/jpeg;base64,')).toBe(true);
+    expect(Math.max(example.photoWidth, example.photoHeight)).toBeLessThanOrEqual(1600);
+    expect(example.box.length).toBe(4);
     expect(logs.some((l) => l.includes('[BG] drawn box') && l.includes(secure && tag === 'source' ? '(source image' : '(viewport crop)'))).toBe(true);
     await popup.close();
     await page.close();

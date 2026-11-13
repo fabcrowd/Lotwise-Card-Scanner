@@ -53,6 +53,7 @@ import { examGroups, examRows, shareFor, teachRow, wantsExamPrompt } from "./lib
 import { createUploader } from "./lib/upload-queue.js";
 // dev-only:start
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
+import { DRAWN_KINDS, createDrawnExamplesStore, newExampleId } from "./lib/drawn-examples-store.js";
 // dev-only:end
 import { captureWithoutOverlay, sendToTab } from "./lib/tab-messaging.js";
 import { loadOverlayShown, tabMessageFor } from "./lib/overlay-toggle.js";
@@ -98,6 +99,11 @@ const PAGE_CHANGED = "The page changed during the scan. Scan again.";
 // Rectified card pictures are kept in IndexedDB per scan: the service worker sleeps
 // between a scan and the user's pick, and memory does not survive that.
 const _corrections = createCorrectionsStore();
+// dev-only:start
+// The drawn-box training log: its own database, and the writes still in flight (the popup may report a kind before one lands).
+const _drawnExamples = createDrawnExamplesStore();
+const _drawnExampleWrites = new Map();
+// dev-only:end
 
 // Opt-in shared learning (docs/plans/shared-learning.md). Inert while RELAY_URL is empty.
 const local = {
@@ -1342,8 +1348,18 @@ async function handleDrawnBox(raw, tab) {
     if (!_ready) await tryAutoLoad();
     if (!_ready) throw new Error("The models are not loaded yet.");
     await numberReaderReady();
-    const card = await readDrawnBox(msg, tab, _drawEra);
-    tell({ action: "drawnCard", card, srcWidth: msg.viewportWidth, srcHeight: msg.viewportHeight, tabUrl: tab.url, tabId: tab.id });
+    // dev-only:start
+    const capture = {};
+    // dev-only:end
+    const card = await readDrawnBox(msg, tab, _drawEra, capture);
+    const message = { action: "drawnCard", card, srcWidth: msg.viewportWidth, srcHeight: msg.viewportHeight, tabUrl: tab.url, tabId: tab.id };
+    // dev-only:start
+    if (capture.canvas) message.exampleId = newExampleId(Date.now());
+    // dev-only:end
+    tell(message);
+    // dev-only:start
+    if (message.exampleId) recordDrawnExample(message.exampleId, card, tab, capture);
+    // dev-only:end
   } catch (err) {
     console.error("[BG] reading a drawn box failed:", err?.message || err);
     tell({ action: "drawnFailed", error: explainDrawError(err) });
@@ -1377,7 +1393,7 @@ async function captureDrawnViewport(tab) {
  * enough is read like a detector box, minus the "is this a card" check (the user says it is). Never shared, never
  * confirmed because it was drawn. Resolves the entry the popup adds to its list.
  */
-async function readDrawnBox(msg, tab, era) {
+async function readDrawnBox(msg, tab, era, capture = null) {
   const ph = msg.photo;
   let photoBitmap = null;
   let upgrade = null;
@@ -1415,6 +1431,9 @@ async function readDrawnBox(msg, tab, era) {
     }
     if (!box || !viewportBox) throw new Error(DRAW_OFF_PHOTO);
     const fromSource = sourceTransform !== null;
+    // dev-only:start
+    if (capture) drawnPhotoCopy(capture, photoBitmap, box, fromSource);
+    // dev-only:end
     console.log("[BG] drawn box", fromSource ? (upgrade ? "(source image, upgraded)" : "(source image)") : "(viewport crop)", box.map(Math.round).join(","), "->", viewportBox.map(Math.round).join(","));
     // A fetched picture is judged on its own pixels; a screenshot at the shown scale (same rule as the scan).
     const naturalPerFed = naturalPerFedFor({
@@ -1582,6 +1601,57 @@ async function collectTestPhoto(bitmap, detections, pageUrl) {
 }
 // dev-only:end
 
+// dev-only:start
+// ─── drawn-box training log ──────────────────────────────────────────────────
+
+const DRAWN_PHOTO_MAX_SIDE = 1600;
+const DRAWN_PHOTO_QUALITY = 0.85;
+const DRAWN_EXPORT_CHUNK = 10;
+
+// A small copy of the picture the box was read from, made while the bitmap is still open (it is closed when the read
+// ends). Only drawing it happens here; the JPEG is encoded after the card has been sent.
+function drawnPhotoCopy(capture, bitmap, box, fromSource) {
+  try {
+    const scale = Math.min(1, DRAWN_PHOTO_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = new OffscreenCanvas(width, height);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+    Object.assign(capture, { canvas, width, height, box: box.map((v) => Math.round(v * scale * 10) / 10), source: fromSource ? "photo" : "screenshot" });
+  } catch (err) {
+    console.error("[BG] copying the drawn photo failed:", err?.message || err);
+  }
+}
+
+// Runs after the drawn card has been sent and never throws: a failure here only costs the example.
+function recordDrawnExample(id, card, tab, capture) {
+  const write = (async () => {
+    const photo = await jpegDataUrl(capture.canvas, capture.width, capture.height, DRAWN_PHOTO_QUALITY);
+    await _drawnExamples.add({
+      id,
+      ts: Date.now(),
+      extVersion: chrome.runtime.getManifest().version,
+      modelTag: _photoCheck?.model ?? null,
+      pageUrl: String(tab.url ?? "").split("#")[0],
+      source: capture.source,
+      photo,
+      photoWidth: capture.width,
+      photoHeight: capture.height,
+      box: capture.box,
+      crop: card.crop ?? null,
+      readHeight: card.readHeight ?? null,
+      tooSmall: card.tooSmall === true,
+      kind: null,
+    });
+  })().catch((err) => {
+    console.error("[BG] saving a drawn example failed:", err?.message || err);
+    return null;
+  });
+  _drawnExampleWrites.set(id, write);
+  write.finally(() => { if (_drawnExampleWrites.get(id) === write) _drawnExampleWrites.delete(id); });
+}
+// dev-only:end
+
 // Only the extension's own pages may read or write corrections; a web page's content script may not.
 const _ownPageActions = {
   findCards: async (msg) => {
@@ -1695,6 +1765,23 @@ const _ownPageActions = {
   },
   clearTestPhotos: async () => {
     await _corrections.clearPhotos();
+    return { ok: true };
+  },
+  // The popup reports what its drawn box turned out to be once it has placed it.
+  drawnPlaced: async (msg) => {
+    if (typeof msg.exampleId !== "string" || !DRAWN_KINDS.includes(msg.kind)) return { error: "Not allowed." };
+    await _drawnExampleWrites.get(msg.exampleId);
+    return { ok: await _drawnExamples.setKind(msg.exampleId, msg.kind) };
+  },
+  drawnExamplesCount: async () => ({ count: await _drawnExamples.count() }),
+  // A chunk at a time, oldest first: all of them in one message would be over the message size limit.
+  exportDrawnExamples: async (msg) => {
+    const all = await _drawnExamples.list();
+    const from = Number.isInteger(msg.from) && msg.from > 0 ? msg.from : 0;
+    return { total: all.length, examples: all.slice(from, from + DRAWN_EXPORT_CHUNK) };
+  },
+  clearDrawnExamples: async () => {
+    await _drawnExamples.clear();
     return { ok: true };
   },
   // dev-only:end
