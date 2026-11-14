@@ -34,7 +34,7 @@ Run this pass as the main Claude Code session on Claude Fable 5.2:
 ## Read first
 1. CLAUDE.md.
 2. `tasks/lessons.md`.
-3. HANDOFF.md, together with `docs/handoff-2026-10-24.md`.
+3. HANDOFF.md (the older `docs/archive/handoff-2026-10-24.md` is history).
 4. card-scanner-data `tasks/handoff.md`.
 5. `data/reports/check-20261112/README.md` (in card-scanner-data).
 

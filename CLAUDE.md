@@ -13,7 +13,7 @@ Session continuity lives in `HANDOFF.md`, `tasks/todo.md`, the root `todo.md` (p
 and extension proposal), and `tasks/lessons.md` — read them before proposing work.
 `HANDOFF.md` summarizes task status; `tasks/todo.md` is the task history. The separate
 `detector-upgrade-handoff.md` is a proposed plan with blockers, not a report of completed
-work. Cursor conventions: `docs/autopilot/CURSOR.md`.
+work. Older dated handoffs are archived history in `docs/archive/`. Cursor conventions: `docs/autopilot/CURSOR.md`.
 
 ## Working model
 
@@ -61,7 +61,7 @@ Scripts worth knowing (`scripts/`):
 - `realworld-run.mjs` real-world harness; `sealed-score.mjs` sealed totals; `references-dev-check.mjs`; `scan-pricing-smoke.mjs`; `bench-round*.mjs` older benchmarks; `lib/sealed-*.mjs` sealed-set helpers (never run against files in the sealed folder yourself).
 
 Docs and continuity:
-- `HANDOFF.md`, `docs/handoff-fable-5.2-hardening.md` (current), `docs/handoff-2026-10-24.md`, `docs/handoff-2026-10-22-clip-v3.md`, `tasks/todo.md`, `tasks/lessons.md`, `todo.md`, `detector-upgrade-handoff.md` (proposal, not a report).
+- `HANDOFF.md`, `docs/handoff-fable-5.2-hardening.md` (current), `tasks/todo.md`, `tasks/lessons.md`, `todo.md`, `detector-upgrade-handoff.md` (proposal, not a report). Archived history: `docs/archive/handoff-2026-10-24.md`, `docs/archive/handoff-2026-10-22-clip-v3.md`, `docs/archive/root-lessons.md`.
 - `docs/plans/` (`shared-learning.md`, `self-learning.md`, `card-picker-and-sealed-test.md`, `launch.md`), `docs/store/` (listing, privacy policy, icons), `docs/blurry-training-plan.md`, `docs/known-limits.md`.
 
 Data and scratch:
@@ -94,7 +94,7 @@ npm run lint                               # eslint .
 npm run vellum-ai                          # start VellumAI identify sidecar (prefers .venv312, then .venv)
 npm run test:vellum                        # Python unittest suite in tools/vellum-ai/tests (uses .venv)
 
-npx playwright test                        # E2E, headless Chromium (excludes extension-chrome.spec.js)
+npx playwright test                        # E2E, headless Chromium (skips the extension specs listed in playwright.config.js)
 npx playwright test --project=extension    # Chrome extension tests (headed, needs real Chrome)
 npx playwright test --project=demo         # demo overlay (headed)
 ```

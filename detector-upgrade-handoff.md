@@ -526,8 +526,8 @@ Before uploading any new `card_detect.onnx` to a public release:
 
 - [ ] `python detect/eval_shipping.py --model <new> --baseline <current>` returns exit 0
 - [ ] `python detect/stress_test_multi.py` all cases pass
-- [ ] `node test-page-scan.js` end-to-end still passes locally
-- [ ] `node test-hibid-fb.js --url=http://127.0.0.1:7788/multi.html` finds ≥ 2 cards
+- [ ] `node scripts/archive/test-page-scan.js` end-to-end still passes locally
+- [ ] `node scripts/archive/test-hibid-fb.js --url=http://127.0.0.1:7788/multi.html` finds ≥ 2 cards
 - [ ] SHA256 computed and added to `model-manifest.json`
 - [ ] `min_extension_version` set so old extension builds don't try to use a format they can't parse
 - [ ] Rollback plan documented in release notes (prev manifest archived as `v<n-1>.json`)

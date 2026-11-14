@@ -1,6 +1,89 @@
 # Handoff
 
-> Newer handoff: see `docs/handoff-2026-10-24.md` (state after 2026-10-21: skip card, independent audit, G5 persistence, labelling, next steps).
+## Current state (2026-11-14)
+
+The work of branch `feat/price-follows-pick` is merged into `main` and the services it needs are deployed. The extension is not released: no store listing has been submitted, and only the owner's unpacked developer build exists. The first real box signal row has not been sent yet.
+
+### Code
+
+- Pull request #2 merged `feat/price-follows-pick` into `main` on 2026-11-14 (merge commit `1efb2f3`, 55 commits).
+- The feature branch has one later docs commit, `4f73cbb`, that is not on `main` yet.
+- Gates at the merged code:
+  - `npm test`: 1,713 tests, 1,712 pass, 0 fail, 1 skipped.
+  - `npm run lint`: clean.
+  - Shared-data Python suite: 206 tests OK.
+  - Store and build tests: 27 of 27.
+  - Playwright: draw-box 3 of 3, overlay-remove 3 of 3.
+
+### What the branch delivered
+
+- The price follows the card the user picks and is shown only once a card is confirmed.
+- Draw a box around a missed card.
+- Remove a card with an X.
+- The non-linear "is this a card" check (`check.bin` v2).
+- Drawn boxes kept as local examples in the developer build.
+- Box signal sharing (below).
+
+### Box signal sharing (built, merged, deployed 2026-11-14)
+
+- With the opt-in toggle on, the extension sends `drawn`, `removed` and `put-back` rows. Each row has the crop, the box position and `detector {score, aspect, kind}`.
+- Only teach-split photos send these rows. A skip sends nothing. Pick, wrong-card and confirm rows are unchanged.
+- The contract and the rollout order are in `docs/plans/shared-learning.md`.
+- The nightly job counts these rows (`boxSignals`) and strips them before consensus, the exam and training. Nothing trains on them yet. Using them needs its own preregistered study once data exists.
+
+### Live services
+
+- Nightly job: `fabcrowd/card-scanner-data` `main` at `5268adb`.
+- Relay: Cloudflare version `862687d4-61d4-4d72-b473-9177afa8aff9`. A smoke check sent one deliberately invalid row and got HTTP 400 with the new detector message.
+- The relay is on the owner's second Cloudflare account. Before any deploy, run `npx wrangler deployments status` in `tools/relay` and check that it shows the Worker (created 2026-10-17). If it says the Worker does not exist, the sign-in is the wrong account.
+- No real box signal row has been sent yet. Sending one is the remaining end-to-end check. The relay commits to the data repo's `inbox` branch hourly at seven minutes past.
+
+### Extension builds
+
+- Developer build: `dist/extension-wasm` (load unpacked in Chrome).
+- Store package: `dist/extension-wasm-store.zip`, version 3.1.0, built by `scripts/build-wasm-extension.ps1 -Store`.
+- Rebuild after any source change.
+- There is no release channel yet, and the store listing has not been submitted.
+
+### Store submission: what is left
+
+- Owner only: the $5 developer registration, the dashboard forms and the upload.
+- After the first upload: add the store-assigned extension id to `ALLOWED_EXTENSION_IDS` in `tools/relay/wrangler.toml` and redeploy the relay.
+- A manual test of the zip.
+- Ready: listing text and data-use answers (`docs/store/listing.md`), and the privacy policy (`docs/store/privacy-policy.md`; the URL in the listing file now serves the redrafted text).
+- Ready, with checks: real-scan screenshots in `.tmp/store-screenshots/real/`. They come from the developer build on the demo page. Check the cut-off popup rows and the third-party card art before using them.
+
+### Decisions made 2026-11-13 and 2026-11-14
+
+- The live adapter stays for now. The check was a diagnostic on boxes that had been viewed. Before the store submission, run a preregistered keep-versus-pull test on the next blind names harvest, with sure-wrong as a deciding criterion.
+- Sending the scanner's own sure answers with no click was tested and not adopted. Report: `card-scanner-data/data/reports/selflearn-20261113/README.md`.
+
+### Open work, in rough order
+
+1. Send and confirm the first real box signal row.
+2. A browser-level test that the popup sends the box signal messages. Today only source-text pins cover it.
+3. Share "Show it" on a hidden box (the next obvious signal).
+4. The preregistered study for training the check from box signals.
+5. Detector misses (target 2 in the hardening handoff).
+6. The items under "Still owner decisions" in the hardening handoff: the pins.json v3.0 bundle rebuild, the price snapshot 404, relay moderation, revoking the two tokens pasted into a chat on 2026-10-17, and the `card_corners.onnx` upload.
+
+### Rules that do not change
+
+- Follow the "Hard rules" in `docs/handoff-fable-5.2-hardening.md` and `CLAUDE.md`: the sealed test set, preregistration before any model or threshold change, no tuning to viewed sets, staging specific files, and the working model with builders and a cold review.
+- Merges to `main`, pushes to the data repo and relay deploys go through only when the owner asks for that exact step in chat.
+
+### Where to read next
+
+- `docs/handoff-fable-5.2-hardening.md`: detail and numbers.
+- `tasks/lessons.md`.
+- `docs/plans/shared-learning.md`.
+- `card-scanner-data/tasks/handoff.md`: studies.
+
+## History (before 2026-11-14)
+
+> Newest (2026-11-12): `docs/handoff-fable-5.2-hardening.md` (branch `feat/price-follows-pick`: draw a box, remove with X, drawn-box training log; check refit stopped by its stop rule; Fable 5.2 hardening pass brief).
+
+> Newer handoff: the "Current state (2026-11-14)" section above is current, and `docs/handoff-fable-5.2-hardening.md` holds the detail. `docs/archive/handoff-2026-10-24.md` covers the state after 2026-10-21 (skip card, independent audit, G5 persistence, labelling, next steps).
 
 Last updated: 2026-10-21 (afternoon, America/New_York). The newest work is the Facebook accuracy and UI pass on `feat/fb-accuracy-ui`, directly below. Older sections follow unchanged. Owner workspace: `C:\Users\daroo\Desktop\Repos\cardscanner\pokemon-auto-lister`. The previous handoff is in git history (`git log -- HANDOFF.md`).
 
