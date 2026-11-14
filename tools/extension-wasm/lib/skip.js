@@ -20,7 +20,7 @@ export const isSkipRow = (row) => row?.pickedId === SKIP_ID || row?.cardId === S
 export const skipCard = (card) => ({ ...card, skipped: true });
 
 /**
- * The user took this card out of the scan (the X on the page or in the list). It is a skip that teaches nothing:
+ * The user took this card out of the scan (the X on the page or in the list). It is a skip that teaches the skip memory nothing (a box signal may be shared):
  * `skipped` makes every existing exclusion apply (totals, export, to confirm), `removed` says why and keeps it out of
  * the skip memory. A card already skipped is marked so put back returns it to skipped.
  */

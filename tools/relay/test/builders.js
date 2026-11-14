@@ -28,6 +28,13 @@ export function card(over = {}) {
   };
 }
 
+export const detector = (over = {}) => ({ score: 0.7, aspect: 0.72, kind: "found", ...over });
+
+/** A box signal row (drawn / removed / put-back): the same card plus the required detector object. */
+export function boxCard(over = {}) {
+  return card({ source: "drawn", answer: { unknown: true }, detector: detector(), ...over });
+}
+
 export function contribution(over = {}) {
   return {
     v: 1,

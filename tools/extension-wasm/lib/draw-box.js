@@ -1,6 +1,7 @@
 // "Draw a box": the user marks a card the scan missed. These are the pure parts the background uses to turn the
 // rectangle drawn on the page back into photo pixels, to build the entry, and to place it in the result.
-// A drawn box is never shared: it carries no share record and never goes through the sharing code.
+// A drawn box is shared only as a box signal row (lib/share-rows.js signalRow), never as an exam row and never
+// confirmed because it was drawn; it carries a share only when the caller gives it one.
 
 import { tooSmallCard } from "./tiny-card.js";
 
@@ -119,11 +120,21 @@ const CROP_PREFIX = "data:image/jpeg;base64,";
 /**
  * The picture and share a correction, skip or teach pick is about. A drawn row may sit at the index of a box it replaced,
  * so scan.crops[index] and scan.shares[index] describe another picture: a drawn row uses only the crop it brought
- * (null when that is missing or not a JPEG data URL) and never has a share.
+ * (null when that is missing or not a JPEG data URL) and the share it brought (null when none), never the scan's.
  */
 export function correctionSource(scan, msg) {
-  if (msg?.drawn === true) return { crop: typeof msg.crop === "string" && msg.crop.startsWith(CROP_PREFIX) ? msg.crop : null, share: null };
+  if (msg?.drawn === true) {
+    const share = msg.share !== null && typeof msg.share === "object" ? msg.share : null;
+    return { crop: typeof msg.crop === "string" && msg.crop.startsWith(CROP_PREFIX) ? msg.crop : null, share };
+  }
   return { crop: scan?.crops?.[msg?.index], share: scan?.shares?.[msg?.index] };
+}
+
+/** What the scan had where a box was drawn: a hidden entry, a Too small one, or nothing. */
+export function replacedKind(replacedCard) {
+  if (replacedCard?.notCard === true) return "hidden";
+  if (replacedCard?.tooSmall === true) return "tooSmall";
+  return "missed";
 }
 
 /** Row numbers of the drawn cards. */

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DRAWN_VIA, MIN_DRAW_SIDE, REPLACE_IOU,
-  acceptDrawnSender, correctionSource, examGroupAllowed, examHoldAllowed, drawnCardEntry, drawnIndices, iou, isSameLot, isSamePage, normalizeDrawnMessage, placeDrawnCard, restoredLotTabId,
+  acceptDrawnSender, correctionSource, replacedKind, examGroupAllowed, examHoldAllowed, drawnCardEntry, drawnIndices, iou, isSameLot, isSamePage, normalizeDrawnMessage, placeDrawnCard, restoredLotTabId,
   viewportRectToBitmapBox, viewportToPhotoBox,
 } from '../tools/extension-wasm/lib/draw-box.js';
 import { correctionRecord } from '../tools/extension-wasm/lib/card-picker.js';
@@ -89,7 +89,7 @@ test('IoU of two boxes', () => {
 });
 
 // The result entry.
-test('a read drawn box is a normal card marked drawn: not shared, not confirmed on its own', () => {
+test('a read drawn box is a normal card marked drawn: no share by default, not confirmed on its own', () => {
   const read = { identity: { id: 'base1-4', name: 'Charizard' }, confidence: 0.9, abstain: false, unsure: true, market_price: null, price_variant: null, price_grid: null };
   const entry = drawnCardEntry({ box: [10, 20, 110, 160], read, readHeight: 140, crop: 'data:image/jpeg;base64,xx' });
   assert.equal(entry.drawn, true);
@@ -108,7 +108,21 @@ test('drawing never adds a confirmation the read did not have', () => {
   assert.ok(!('userConfirmed' in drawnCardEntry({ box: [0, 0, 50, 70], read, readHeight: 70 })));
 });
 
-test('a drawn box under the read gate is a Too small entry, still marked drawn and not shared', () => {
+test('a drawn entry carries the share it is given', () => {
+  const given = { photoId: 'p1', split: 'teach' };
+  assert.equal(drawnCardEntry({ box: [0, 0, 30, 40], tooSmall: true, readHeight: 40, share: given }).share, given);
+  assert.equal(drawnCardEntry({ box: [0, 0, 30, 40], tooSmall: true, readHeight: 40 }).share, null);
+});
+
+test('replacedKind names what the scan had where the box was drawn', () => {
+  assert.equal(replacedKind({ notCard: true }), 'hidden');
+  assert.equal(replacedKind({ tooSmall: true }), 'tooSmall');
+  assert.equal(replacedKind(null), 'missed');
+  assert.equal(replacedKind(undefined), 'missed');
+  assert.equal(replacedKind({ identity: { id: 'x' } }), 'missed');
+});
+
+test('a drawn box under the read gate is a Too small entry, still marked drawn and no share by default', () => {
   const entry = drawnCardEntry({ box: [0, 0, 30, 40], tooSmall: true, readHeight: 40 });
   assert.equal(entry.tooSmall, true);
   assert.equal(entry.cardBack, true);
@@ -254,6 +268,13 @@ test('replacing a hidden row then correcting it stores the drawn crop, not the o
   assert.equal(source.share, null, 'a drawn row never carries the old box share');
   const record = correctionRecord({ ts: 1, scanId: 's1', index: placed.index, guess: {}, pickedId: 'base1-4', via: 'candidates', crop: source.crop });
   assert.equal(record.crop, DRAWN_CROP);
+});
+
+test('a drawn row uses the share it brought, only when it is an object, never the scan share at its index', () => {
+  const scan = { crops: [OLD_CROP], shares: [teachShare] };
+  const own = { photoId: 'p2', split: 'teach', detector: { score: null, aspect: 0.7, kind: 'missed' } };
+  assert.equal(correctionSource(scan, { index: 0, drawn: true, crop: DRAWN_CROP, share: own }).share, own);
+  for (const bad of [null, undefined, 'x', 5]) assert.equal(correctionSource(scan, { index: 0, drawn: true, crop: DRAWN_CROP, share: bad }).share, null);
 });
 
 test('a scanned row still uses the scan crop and share; a drawn row with no usable crop gets none, never the old one', () => {

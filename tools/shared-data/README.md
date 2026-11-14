@@ -104,6 +104,19 @@ What the extension sends:
                "source": "pick"|"wrong-card"|"confirm" } ] }
 ```
 
+Box signal rows are cards with `"source": "drawn"|"removed"|"put-back"` and one more key, which those rows must have
+and the three sources above must not:
+
+```
+"detector": { "score": null | 0..1, "aspect": 0.05..20, "kind": "found"|"missed"|"hidden"|"tooSmall" }
+```
+
+`drawn` means the user drew a box around a card the scan missed (`kind` says what the scan had there). `removed` means
+the user pressed X on a box; it does not mean "not a card". `put-back` cancels that install's earlier `removed` for the
+same photo and box. The answer on these rows is `{ "unknown": true }`, or `{ "cardId": "<id>" }` on `drawn` only;
+`notACard` is not allowed. The nightly job stores and counts these rows (`boxSignals` in the run summary) but does not
+train on them yet: they never become samples, votes, exam cases or contributors.
+
 Request: `POST /v1/contributions` with `{ "v": 1, "contributions": [ up to 20 contributions ] }`, at most 1 MB. Any other
 body shape is a 400. Cards: 1 to 30 per contribution, box values in 0..1. Unknown fields are rejected. `day` must be
 within 2 days of the server's clock.

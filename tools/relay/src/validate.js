@@ -15,6 +15,11 @@ const CARD_ID = /^[A-Za-z0-9._-]{1,64}$/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const STRIPES = new Set(["high", "medium", "low", "none"]);
 const SOURCES = new Set(["pick", "wrong-card", "confirm"]);
+// Box signal rows: the user fixed the detector's boxes. They carry a detector object; the sources above may not.
+const BOX_SOURCES = new Set(["drawn", "removed", "put-back"]);
+const DETECTOR_KINDS = new Set(["found", "missed", "hidden", "tooSmall"]);
+const MIN_ASPECT = 0.05;
+const MAX_ASPECT = 20;
 
 /**
  * The split a photo must belong to: the low 32 bits of photoId (its last 8 hex digits) mod 5.
@@ -97,9 +102,16 @@ function validateScanner(s) {
   return null;
 }
 
+function validDetector(d) {
+  if (!isObject(d) || Object.keys(d).length !== 3) return false;
+  if (!(d.score === null || inUnit(d.score))) return false;
+  if (typeof d.aspect !== "number" || !Number.isFinite(d.aspect) || d.aspect < MIN_ASPECT || d.aspect > MAX_ASPECT) return false;
+  return DETECTOR_KINDS.has(d.kind);
+}
+
 function validateCard(c) {
   if (!isObject(c)) return "must be an object";
-  const extra = unknownKey(c, ["box", "crop", "answer", "scanner", "source"]);
+  const extra = unknownKey(c, ["box", "crop", "answer", "scanner", "source", "detector"]);
   if (extra) return `unknown field ${extra}`;
   if (!Array.isArray(c.box) || c.box.length !== 4 || !c.box.every(inUnit) || c.box[2] <= 0 || c.box[3] <= 0) {
     return "box must be [x,y,w,h] in 0..1 with positive size";
@@ -108,7 +120,10 @@ function validateCard(c) {
   if (!validAnswer(c.answer)) return "answer must be exactly one of {cardId}, {notACard:true}, {unknown:true}";
   const scannerError = validateScanner(c.scanner);
   if (scannerError) return scannerError;
-  if (!SOURCES.has(c.source)) return "source is not an allowed value";
+  if (SOURCES.has(c.source)) return "detector" in c ? "detector is only allowed on drawn, removed and put-back rows" : null;
+  if (!BOX_SOURCES.has(c.source)) return "source is not an allowed value";
+  if (!validDetector(c.detector)) return "detector must be {score: null or 0..1, aspect: 0.05..20, kind: found, missed, hidden or tooSmall}";
+  if ("notACard" in c.answer || ("cardId" in c.answer && c.source !== "drawn")) return "answer on a box signal row must be {unknown:true}, or {cardId} on drawn";
   return null;
 }
 

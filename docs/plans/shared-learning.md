@@ -22,6 +22,9 @@ The store build (`scripts/lib/store-package.mjs`) adds the origin of each non-em
 2. `split = parseInt(photoId.slice(-8), 16) % 5 === 0 ? "exam" : "teach"`. The low 32 bits of the id, mod 5. About one photo in five is exam. The relay validates the same rule.
 3. Teach photos: every picker pick and "Wrong card?" correction is saved as before (IndexedDB corrections store) and, if the user opted in, queued as a one-card contribution.
 4. Exam photos: answers are held out. A pick or fix on an exam photo is remembered with the scan only (not saved as a correction, never embedded, never used for reference matching). After the scan the popup shows "Help check: is every card here right?" with "All right" and a dismiss button. The existing "Wrong card?" fixes rows first. "All right" sends one contribution per exam photo with every row: the user's fix where there is one, otherwise what the row shows (`confirm`). A row with no card is answered `unknown`; a card back is `notACard`. Nothing is sent if the user never confirms. The prompt appears only for opted-in users and never blocks anything.
+4a. Box signals (teach photos only): drawing a box around a card the scan missed sends a `drawn` row (the crop of the box, plus the card the user then picks, if any). Removing a box with the X sends a `removed` row. Putting a removed box back sends a `put-back` row, which cancels the removal in the data; the earlier row is not deleted. Each is its own one-card contribution. Exam photos send no box signal rows. Skipping a card sends nothing.
+   - Each box signal counts against the same limits as picks: the 200-item upload queue and the relay's 200 cards per install per day. Many removals in one day can use up the allowance, and while uploads are failing they can push the oldest queued items out.
+   - A drawn card restored from the saved session keeps only a 160-pixel thumbnail, so its later signals are not sent (a picture is never upscaled).
 5. Queue (`lib/share-store.js`, `lib/upload-queue.js`): IndexedDB database `card-scanner-share`. At most 200 contributions wait; past that the oldest are dropped. Batches of at most 20 per request. Retry with exponential backoff (1 minute doubling to 6 hours) for network errors, 5xx, 408 and 429. Any other refusal (4xx) drops that batch, because the relay will never accept it.
 6. Opt-in (`lib/sharing.js`): off by default, enabled only by an explicit click on the options toggle, with the explanation next to it. `crypto.randomUUID()` creates the install id when the setting is turned on (`storage.local` key `shareInstall`). Turning it off deletes the id and the queue.
 
@@ -45,7 +48,8 @@ Any 2xx means the whole batch was accepted. A 4xx other than 408/429 drops the b
                "crop": "<base64 JPEG>",
                "answer": { "cardId": "<catalog id>" } | { "notACard": true } | { "unknown": true },
                "scanner": { "cardId": "<id or null>", "confidence": 0.0-1.0, "stripe": "high|medium|low|none" },
-               "source": "pick|wrong-card|confirm" } ] }
+               "source": "pick|wrong-card|confirm|drawn|removed|put-back",
+               "detector": { "score": 0.0-1.0 | null, "aspect": 0.05-20, "kind": "found|missed|hidden|tooSmall" } } ] }
 ```
 
 - No other keys are allowed at either level.
@@ -56,7 +60,14 @@ Any 2xx means the whole batch was accepted. A 4xx other than 408/429 drops the b
 - `crop` is the card only, long side 320 px, JPEG quality 0.8 (lowered only if needed), at most 40000 base64 characters.
 - `stripe` is the confidence tier the popup shows (`high` >= 0.80, `medium` >= 0.50, `low`), or `none` when the scanner found no card.
 - `cards` holds 1 to 30 rows. A teach contribution holds the one card the user picked. An exam contribution holds every card row of the photo.
-- `source`: `pick` is a choice from the candidate list or search; `wrong-card` is a fix started from "Wrong card?"; `confirm` is a row accepted with "All right".
+- `source`: `pick` is a choice from the candidate list or search; `wrong-card` is a fix started from "Wrong card?"; `confirm` is a row accepted with "All right". These three are the existing rows and carry no `detector` key. `drawn`, `removed` and `put-back` are box signal rows and require `detector`.
+- `detector` is exactly `{ score, aspect, kind }`. `score` is null or 0..1 (null for a drawn box). `aspect` is the box width divided by its height in photo pixels, 0.05..20, rounded to 3 decimals. `kind` is `found` (a box the scan made), or one of three values that name what the scan had where the user drew: `missed` (nothing), `hidden` (an entry hidden by the "is this a card" check), `tooSmall` (a too-small entry).
+- `answer` on box signal rows is `{ "unknown": true }`, or `{ "cardId": "<catalog id>" }` on `drawn` rows after the user picks a card. It is never `notACard`: a removed box is not proof that it is not a card.
+- Box signals are sent for teach photos only. Each is its own one-card contribution. The nightly job keeps them out of consensus, the exam and training until a preregistered study decides how to use them.
+
+### Rollout order
+
+The nightly job and the relay must accept the new rows before any build sends them. The relay answers an unknown row with a 4xx, and the extension then drops that whole batch of up to 20 contributions, including valid ones.
 
 The validator is `validateContribution` in `lib/contribution.js`; the same module builds contributions and refuses to build an invalid one.
 

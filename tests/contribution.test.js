@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CROP_LONG_SIDE, MAX_CARDS, MAX_CROP_CHARS, buildContribution, dayOf, modelTags, normalizeBox, cropSize, scannerOf, validateContribution } from '../tools/extension-wasm/lib/contribution.js';
+import { BOX_KINDS, CROP_LONG_SIDE, MAX_CARDS, MAX_CROP_CHARS, SIGNAL_SOURCES, buildContribution, dayOf, detectorOf, modelTags, normalizeBox, cropSize, cropTooSmall, scannerOf, validateContribution } from '../tools/extension-wasm/lib/contribution.js';
 import { EMBEDDING_VERSION } from '../tools/extension-wasm/lib/embed.js';
 
 const INSTALL = '3f2b1c9e-8a47-4d65-9b0e-1c2d3e4f5a6b';
@@ -74,6 +74,76 @@ test('the three answer shapes and a null scanner card are accepted', () => {
   assert.deepEqual(validateContribution(good({ cards })), []);
 });
 
+const detector = (over = {}) => ({ score: 0.7, aspect: 0.714, kind: 'found', ...over });
+const signal = (over = {}) => row({ answer: { unknown: true }, source: 'removed', detector: detector(), ...over });
+const errorsOf = (card) => validateContribution(good({ cards: [card] }));
+
+test('the box signal sources and kinds are listed', () => {
+  assert.deepEqual(SIGNAL_SOURCES, ['drawn', 'removed', 'put-back']);
+  assert.deepEqual(BOX_KINDS, ['found', 'missed', 'hidden', 'tooSmall']);
+});
+
+test('a valid row for each box signal source', () => {
+  for (const source of SIGNAL_SOURCES) assert.deepEqual(errorsOf(signal({ source })), [], source);
+  assert.deepEqual(errorsOf(signal({ source: 'drawn', answer: { cardId: 'base1-4' }, detector: detector({ score: null, kind: 'missed' }) })), []);
+  for (const kind of BOX_KINDS) assert.deepEqual(errorsOf(signal({ detector: detector({ kind }) })), [], kind);
+  assert.deepEqual(errorsOf(signal({ detector: detector({ aspect: 0.05 }) })), []);
+  assert.deepEqual(errorsOf(signal({ detector: detector({ aspect: 20 }) })), []);
+});
+
+test('the detector key is required on box signal rows and not allowed on the others', () => {
+  const noDetector = Object.fromEntries(Object.entries(signal()).filter(([key]) => key !== 'detector'));
+  for (const source of SIGNAL_SOURCES) assert.ok(errorsOf({ ...noDetector, source }).some((e) => /detector/.test(e)), source);
+  for (const source of ['pick', 'wrong-card', 'confirm']) assert.ok(errorsOf(row({ source, detector: detector() })).some((e) => /detector/.test(e)), source);
+  assert.deepEqual(errorsOf(row()), []);
+});
+
+test('each detector field is checked', () => {
+  const bad = (d) => assert.ok(errorsOf(signal({ detector: d })).some((e) => /detector/.test(e)), JSON.stringify(d));
+  bad(null);
+  bad([]);
+  bad('found');
+  bad(detector({ score: 1.5 }));
+  bad(detector({ score: -0.1 }));
+  bad(detector({ score: '0.5' }));
+  bad(detector({ score: NaN }));
+  bad(detector({ aspect: 0.049 }));
+  bad(detector({ aspect: 20.1 }));
+  bad(detector({ aspect: NaN }));
+  bad(detector({ aspect: '1' }));
+  bad(detector({ kind: 'lost' }));
+  bad(detector({ kind: undefined }));
+  bad({ score: 0.5, aspect: 1 });
+  bad({ ...detector(), extra: 1 });
+});
+
+test('box signal answers: unknown, or a card id only on a drawn box; never notACard', () => {
+  assert.ok(errorsOf(signal({ answer: { notACard: true } })).some((e) => /answer/.test(e)));
+  assert.ok(errorsOf(signal({ source: 'drawn', answer: { notACard: true } })).some((e) => /answer/.test(e)));
+  for (const source of ['removed', 'put-back']) assert.ok(errorsOf(signal({ source, answer: { cardId: 'x1' } })).some((e) => /answer/.test(e)), source);
+});
+
+test('detectorOf builds the detector from a photo-pixel box', () => {
+  assert.deepEqual(detectorOf({ score: 0.7, box: [0, 0, 100, 140], kind: 'found' }), { score: 0.7, aspect: 0.714, kind: 'found' });
+  assert.deepEqual(detectorOf({ score: 2, box: [10, 10, 110, 60], kind: 'missed' }), { score: 1, aspect: 2, kind: 'missed' });
+  assert.equal(detectorOf({ score: -3, box: [0, 0, 10, 10], kind: 'hidden' }).score, 0);
+  assert.equal(detectorOf({ score: undefined, box: [0, 0, 10, 10], kind: 'tooSmall' }).score, null);
+  assert.equal(detectorOf({ score: NaN, box: [0, 0, 10, 10], kind: 'found' }).score, null);
+  assert.equal(detectorOf({ score: null, box: [0, 0, 10, 10], kind: 'found' }).score, null);
+});
+
+test('detectorOf is null for an empty box, an extreme aspect or an unknown kind', () => {
+  assert.equal(detectorOf({ score: 0.5, box: [5, 5, 5, 50], kind: 'found' }), null);
+  assert.equal(detectorOf({ score: 0.5, box: [5, 5, 50, 5], kind: 'found' }), null);
+  assert.equal(detectorOf({ score: 0.5, box: [50, 50, 5, 5], kind: 'found' }), null);
+  assert.equal(detectorOf({ score: 0.5, box: [0, 0, 1, 21], kind: 'found' }), null);
+  assert.equal(detectorOf({ score: 0.5, box: [0, 0, 21, 1], kind: 'found' }), null);
+  assert.equal(detectorOf({ score: 0.5, box: [0, 0, 10, 10], kind: 'lost' }), null);
+  assert.equal(detectorOf({ score: 0.5, box: [0, 0, 10], kind: 'found' }), null);
+  assert.equal(detectorOf({ score: 0.5, box: null, kind: 'found' }), null);
+  assert.equal(detectorOf({ score: 0.5, box: [0, 0, NaN, 10], kind: 'found' }), null);
+});
+
 test('an exam contribution is split exam with an exam photo', () => {
   assert.deepEqual(validateContribution(good({ split: 'exam', photoId: '0000000000000005' })), []);
 });
@@ -112,4 +182,12 @@ test('cropSize scales the long side to 320 and keeps the shape', () => {
   assert.deepEqual(cropSize(375, 525), { width: 229, height: 320 });
   assert.deepEqual(cropSize(800, 400), { width: 320, height: 160 });
   assert.deepEqual(cropSize(100, 100), { width: 320, height: 320 });
+});
+
+test('cropTooSmall is true only when the long side is under the sent size', () => {
+  assert.equal(cropTooSmall(160, 224), true);
+  assert.equal(cropTooSmall(319, 100), true);
+  assert.equal(cropTooSmall(375, 525), false);
+  assert.equal(cropTooSmall(320, 100), false);
+  assert.equal(cropTooSmall(100, 320), false);
 });

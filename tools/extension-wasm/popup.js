@@ -1,7 +1,8 @@
 import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, chosenPrintingHasNoPrice, isIdentified, isStale, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { TOO_SMALL_ROW_TEXT } from "./lib/tiny-card.js";
-import { DRAW_HINT_TEXT, drawnIndices, isSameLot, placeDrawnCard, restoredLotTabId } from "./lib/draw-box.js";
+import { DRAW_HINT_TEXT, drawnIndices, isSameLot, placeDrawnCard, replacedKind, restoredLotTabId } from "./lib/draw-box.js";
+import { withBoxKind } from "./lib/share-rows.js";
 // dev-only:start
 import { drawnKind } from "./lib/drawn-examples-store.js";
 // dev-only:end
@@ -527,28 +528,40 @@ function reportDrawnKind(msg, replacedCard) {
 }
 // dev-only:end
 
+// A box signal for the relay, when sharing is on (the background decides). Never in the way of what the user did.
+function sendBoxSignal(source, scanId, index, card) {
+  chrome.runtime.sendMessage({ action: "shareBoxSignal", source, scanId: scanId ?? null, index, ...drawnFields(card) }).catch(() => {});
+}
+
 function applyDrawnCard(msg) {
   _drawPending = false;
-  const card = { ...msg.card, guess: guessOf(msg.card) };
+  const drawn = { ...msg.card, guess: guessOf(msg.card) };
+  // The kind of box it was (the scan had hidden, Too small or nothing there) is known only here.
+  const withKind = (replacedCard) => (drawn.share ? { ...drawn, share: withBoxKind(drawn.share, replacedKind(replacedCard)) } : drawn);
+  let card = withKind(null);
   // A result from another page is not added to: the drawn card starts its own one-card result, so the overlay and totals never mix pages.
   // Two tabs on the same URL are two lots, so the tab counts too.
   if (!_lastResult || !isSameLot({ url: _lotUrl, tabId: _lotTabId }, { url: msg.tabUrl, tabId: msg.tabId })) {
     applyScanResult({ cards: [card], srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, tabUrl: msg.tabUrl, tabId: msg.tabId, scanId: null });
+    sendBoxSignal("drawn", null, 0, card);
     // dev-only:start
     reportDrawnKind(msg, null);
     // dev-only:end
     return;
   }
-  const placed = placeDrawnCard(_lastResult.cards, card);
+  const placed = placeDrawnCard(_lastResult.cards, drawn);
+  card = withKind(placed.replacedCard);
+  const cards = placed.cards.map((c, i) => (i === placed.index ? card : c));
+  sendBoxSignal("drawn", _lastResult.bgScanId, placed.index, card);
   // dev-only:start
   reportDrawnKind(msg, placed.replacedCard);
   // dev-only:end
-  _lastResult = { ..._lastResult, cards: placed.cards };
+  _lastResult = { ..._lastResult, cards };
   for (const map of [_variantChoice, _variantSuggest]) map.delete(placed.index);
   _variantPicked.delete(placed.index);
   seedVariant(card, placed.index);
   _showChoose = true;
-  updateStats(placed.cards);
+  updateStats(cards);
   renderResults();
   loadBestMatchPrices(_lastResult);
   pushOverlay();
@@ -1169,7 +1182,7 @@ examYes.addEventListener("click", async () => {
 });
 
 // A drawn row's own picture goes with its answer: the scan's crop at that row number is another box's.
-const drawnFields = (card) => (card?.drawn ? { drawn: true, crop: card.crop ?? null } : {});
+const drawnFields = (card) => (card?.drawn ? { drawn: true, crop: card.crop ?? null, share: card.share ?? null } : {});
 
 function pickCard(idx, id, via, row, remember = true) {
   const scan = _lastResult;
@@ -1258,6 +1271,7 @@ function removeAt(idx, { fromPage }) {
   dropFromBulk(idx);
   _userEdits = true; // else a rescan from newCardsDetected would replace the list and bring the card back
   replaceCard(idx, removeCard(card));
+  sendBoxSignal("removed", _lastResult?.bgScanId, idx, card);
   if (_bulk) _bulk.scan = _lastResult;
   if (!fromPage) (neighbour && resultsEl.querySelector(`button[data-remove-card][data-idx="${neighbour.dataset.idx}"]`) || btnScan).focus();
   showMessage(`Removed card ${idx + 1}. It is left out of the total. Put it back from "Removed" at the bottom of the list.`);
@@ -1289,9 +1303,10 @@ function putBackAt(idx) {
   const scan = _lastResult;
   const card = scan?.cards?.[idx];
   if (!card?.skipped) return;
-  // A removed card taught nothing, so putting it back tells nothing either: only a plain skip has a skip to undo.
+  // A removed card taught the skip memory nothing, so only a plain skip has a skip to undo; a removed card's put back is a box signal.
   const removed = card.removed === true;
-  if (!removed) {
+  if (removed) sendBoxSignal("put-back", scan.bgScanId, idx, card);
+  else {
     chrome.runtime.sendMessage({ action: "unskip", scanId: scan.bgScanId, index: idx })
       .then((resp) => { if (resp?.error) showMessage(resp.error, true); })
       .catch((err) => showMessage(explainScanError(err?.message || err), true));

@@ -6,7 +6,7 @@ import { handleRequest } from "../tools/relay/src/handler.js";
 import { ipBucket } from "../tools/relay/src/ids.js";
 import { readConfig } from "../tools/relay/src/config.js";
 import { fakeKV, fakeR2 } from "../tools/relay/test/fakes.js";
-import { contribution, card } from "../tools/relay/test/builders.js";
+import { contribution, card, boxCard } from "../tools/relay/test/builders.js";
 
 const EXT = "abcdefghijklmnopabcdefghijklmnop";
 const ORIGIN = `chrome-extension://${EXT}`;
@@ -49,6 +49,16 @@ test("a valid batch is accepted and stored under a server-time key with a hashed
   assert.doesNotMatch(JSON.stringify(stored), /12:34/);
   assert.doesNotMatch(JSON.stringify([...env.PENDING.map.values()]), /123e4567-e89b/);
   assert.equal(res.headers.get("access-control-allow-origin"), ORIGIN);
+});
+
+test("a batch holding a box signal row is accepted and stored with its detector", async () => {
+  const { env, deps } = setup();
+  const item = contribution({ cards: [card(), boxCard({ source: "removed" })] });
+  const res = await handleRequest(post({ v: 1, contributions: [item] }), env, deps);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { accepted: 1 });
+  const stored = JSON.parse(env.PENDING.map.get(`pending/${TS}-uuid-1.json`));
+  assert.deepEqual(stored.cards[1].detector, item.cards[1].detector);
 });
 
 test("a day far from the server clock is rejected", async () => {

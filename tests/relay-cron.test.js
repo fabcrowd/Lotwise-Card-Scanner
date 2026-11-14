@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { flushPending } from "../tools/relay/src/cron.js";
 import { fakeGitHub, fakeKV, fakeR2 } from "../tools/relay/test/fakes.js";
-import { card, contribution } from "../tools/relay/test/builders.js";
+import { card, boxCard, contribution } from "../tools/relay/test/builders.js";
 
 const EXT = "abcdefghijklmnopabcdefghijklmnop";
 const A = "0123456789abcdef";
@@ -58,6 +58,16 @@ test("pending items become one commit on the inbox branch, filed under the serve
   assert.deepEqual(gh.state.commitBody.parents, ["commit-base"]);
   assert.match(gh.state.commitBody.message, /3/);
   assert.deepEqual(gh.state.refBody, { sha: "commit-new-1", force: false });
+  assert.equal(env.PENDING.map.size, 0);
+});
+
+test("a stored box signal item is revalidated, committed and removed from pending", async () => {
+  const { env, gh, deps } = setup();
+  const item = stored({ cards: [boxCard({ source: "put-back" })] });
+  await put(env, key(1), item);
+  const result = await flushPending(env, deps);
+  assert.deepEqual(result, { committed: 1, commit: "commit-new-1", quarantined: 0 });
+  assert.deepEqual(JSON.parse(gh.state.treeBody.tree[0].content).cards[0].detector, item.cards[0].detector);
   assert.equal(env.PENDING.map.size, 0);
 });
 

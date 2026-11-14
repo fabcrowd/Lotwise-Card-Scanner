@@ -37,7 +37,7 @@ import { looksLikeCard, mergeSourceRead, sourceRefineOrder, tileSource } from ".
 import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage, wrongIdOf } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
-import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
+import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, cropTooSmall, modelTags } from "./lib/contribution.js";
 import { agreeWithReference, holdExamPick, storeCorrection } from "./lib/correction-save.js";
 import { skipDraft, unskipDraft } from "./lib/skip.js";
 import { memoryVerdict, skipVerdict } from "./lib/memory-confirm.js";
@@ -49,7 +49,7 @@ import { photoIdFromRgba } from "./lib/photo-id.js";
 import { createShareStore } from "./lib/share-store.js";
 import { createSharing } from "./lib/sharing.js";
 import { PACK_MANIFEST_URL, PACK_PUBLIC_KEY, RELAY_URL } from "./lib/shared-config.js";
-import { examGroups, examRows, shareFor, teachRow, wantsExamPrompt } from "./lib/share-rows.js";
+import { contributeSignal, examGroups, examRows, shareFor, signalRow, teachRow, wantsExamPrompt } from "./lib/share-rows.js";
 import { createUploader } from "./lib/upload-queue.js";
 // dev-only:start
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
@@ -523,8 +523,13 @@ async function handleOverlayRemove(index, tab) {
   }
   if (Boolean(_held?.running) && tab.id === _targetTabId) return removalStored({ running: true });
   const saved = await loadLot(chrome.storage.session, tab.url);
+  const gone = saved?.state?.cards?.[index];
   const next = saved ? removeFromLot(saved.state, index) : null;
-  if (next) await saveLot(chrome.storage.session, tab.url, next);
+  if (next) {
+    await saveLot(chrome.storage.session, tab.url, next);
+    // Fire-and-forget: the page's box goes whether or not the signal is sent.
+    contributeBoxSignal({ source: "removed", scanId: saved.state.bgScanId, index, ...(gone?.drawn ? { drawn: true, share: gone.share ?? null, crop: gone.crop ?? null } : {}) });
+  }
   let heldChanged = false;
   if (_held?.data && isSamePage(_held.url, tab.url)) {
     const held = removeFromLot(_held.data, index);
@@ -1082,7 +1087,7 @@ async function handleScanPage(sendResponse, era) {
                 pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length,
                   readHeight: Math.round(informationHeight(by2 - by1, naturalPerFed)),
                   ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }, cardCanvas,
-                  shareOf(photoId, box, imageW, imageH, read), claimed);
+                  shareOf(photoId, box, imageW, imageH, { ...read, score }), claimed);
               }
               cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
               {
@@ -1199,7 +1204,7 @@ async function handleScanPage(sendResponse, era) {
                   score,
                   ...read,
                   via: "yolo-viewport",
-                }, cardCanvas, shareOf(viewportId, box, bitmap.width, bitmap.height, read), claimed);
+                }, cardCanvas, shareOf(viewportId, box, bitmap.width, bitmap.height, { ...read, score }), claimed);
               }
             } catch (err) {
               console.error("[BG] YOLO viewport fallback failed:", err?.message || err);
@@ -1390,7 +1395,8 @@ async function captureDrawnViewport(tab) {
 /**
  * The card in the box the user drew: the photo is loaded the way the scan loads it (its source, a larger rendition
  * when the site allows, else the screenshot), the viewport rectangle is mapped back to photo pixels, and a box big
- * enough is read like a detector box, minus the "is this a card" check (the user says it is). Never shared, never
+ * enough is read like a detector box, minus the "is this a card" check (the user says it is). It carries a share (the
+ * box signal the popup sends), but is never shared as an exam row and never
  * confirmed because it was drawn. Resolves the entry the popup adds to its list.
  */
 async function readDrawnBox(msg, tab, era, capture = null) {
@@ -1448,9 +1454,12 @@ async function readDrawnBox(msg, tab, era, capture = null) {
     const fedHeight = box[3] - box[1];
     const readHeight = Math.round(informationHeight(fedHeight, naturalPerFed));
     const place = { docBox: toDocBox(viewportBox, msg.scroll), readHeight };
+    // The photo id comes from the picture the box is measured on, as the scan does; the popup sets the real kind.
+    const photoId = photoIdOf(readBitmap(photoBitmap));
+    const shareOfDrawn = (card) => shareOf(photoId, box, photoBitmap.width, photoBitmap.height, card, "missed");
     if (isTooSmallBox(box)) {
       const cardCanvas = rectifyCard(photoBitmap, box);
-      return drawnCardEntry({ box: viewportBox, tooSmall: true, crop: await encodeCrop(cardCanvas), ...place });
+      return drawnCardEntry({ box: viewportBox, tooSmall: true, crop: await encodeCrop(cardCanvas), share: shareOfDrawn(null), ...place });
     }
     const pixels = readBitmap(photoBitmap);
     const cardBox = extendClippedBottom(pixels.data, pixels.width, pixels.height, box);
@@ -1465,7 +1474,7 @@ async function readDrawnBox(msg, tab, era, capture = null) {
     }
     [read] = await withBestGuesses([read], null);
     const crop = await encodeCrop(cardCanvas);
-    let entry = drawnCardEntry({ box: viewportBox, read, crop, ...place });
+    let entry = drawnCardEntry({ box: viewportBox, read, crop, share: shareOfDrawn(read), ...place });
     // The usual price path: batch pricing for the ids the row can show, then the candidates a Choose row lists.
     const ids = collectBatchIds([entry]);
     if (ids.size) applyBatchedPrices([entry], await batchPriceCards([...ids]));
@@ -1489,13 +1498,15 @@ function photoIdOf(pixels) {
   }
 }
 
-const shareOf = (photoId, box, width, height, card) => (photoId ? shareFor({ photoId, box, width, height, card }) : null);
+const shareOf = (photoId, box, width, height, card, kind = "found") => (photoId ? shareFor({ photoId, box, width, height, card, kind }) : null);
 
 // A scan keeps its pictures at 375x525; the relay gets them smaller (docs/plans/shared-learning.md). Null when none fits.
 async function shareCrop(cropDataUrl) {
   if (typeof cropDataUrl !== "string") return null;
   const bitmap = await b64ToBitmap(cropDataUrl.replace(/^data:image\/jpeg;base64,/, ""));
   try {
+    // Scan crops are 375x525, so they are never too small; a drawn card restored from the saved session keeps only a 160 pixel thumbnail, which must not be upscaled.
+    if (cropTooSmall(bitmap.width, bitmap.height)) return null;
     const { width, height } = cropSize(bitmap.width, bitmap.height);
     for (const quality of [CROP_QUALITY, 0.6, 0.45]) {
       const text = (await jpegDataUrl(bitmap, width, height, quality)).replace(/^data:image\/jpeg;base64,/, "");
@@ -1514,10 +1525,24 @@ async function contributeTeachPick(scan, msg) {
     if (!share || share.split !== "teach" || !(await _sharing.enabled())) return;
     const crop = await shareCrop(scanCrop);
     if (!crop) return;
-    await _sharing.contribute({ photoId: share.photoId, cards: [teachRow({ share, crop, pickedId: msg.pickedId, via: msg.via })] });
+    // A drawn box is a box signal (the user marked it), never a plain pick.
+    const row = msg.drawn === true ? signalRow({ share, crop, source: "drawn", pickedId: msg.pickedId }) : teachRow({ share, crop, pickedId: msg.pickedId, via: msg.via });
+    if (!row) return;
+    await _sharing.contribute({ photoId: share.photoId, cards: [row] });
   } catch (err) {
     console.error("[BG] sharing a pick failed:", err?.message || err);
   }
+}
+
+// A drawn, removed or put-back box as its own one-card contribution. Never lets sharing break what the user did.
+async function contributeBoxSignal(msg) {
+  try {
+    const scan = () => (typeof msg.scanId === "string" ? _corrections.getScan(msg.scanId).catch(() => null) : null);
+    await contributeSignal({ sharing: _sharing, scan, msg, shrink: shareCrop });
+  } catch (err) {
+    console.error("[BG] sharing a box signal failed:", err?.message || err);
+  }
+  return { ok: true };
 }
 
 async function confirmExam(msg) {
@@ -1654,6 +1679,7 @@ function recordDrawnExample(id, card, tab, capture) {
 
 // Only the extension's own pages may read or write corrections; a web page's content script may not.
 const _ownPageActions = {
+  shareBoxSignal: (msg) => contributeBoxSignal(msg),
   findCards: async (msg) => {
     await _ensureCatalog();
     return { cards: findCards(_meta, msg.query, { era: eraById(msg.era) }) };
