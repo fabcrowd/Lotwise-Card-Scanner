@@ -1,7 +1,7 @@
 // The era a lot comes from, chosen once by the user.
 // At listing-photo size the recognizer gets the Pokémon right but leans toward
 // modern printings; among printings of the chosen era it usually ranks the
-// true one first (measured on two ShopGoodwill lots, see lessons.md).
+// true one first (measured on two ShopGoodwill lots, see docs/archive/root-lessons.md).
 
 export const ERAS = [
   { id: "wotc", label: "1999–2003 · Base Set to e-Card", series: ["base", "gym", "neo", "lc", "ecard"] },
