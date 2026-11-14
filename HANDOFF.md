@@ -7,7 +7,7 @@ The work of branch `feat/price-follows-pick` is merged into `main` and the servi
 ### Code
 
 - Pull request #2 merged `feat/price-follows-pick` into `main` on 2026-11-14 (merge commit `1efb2f3`, 55 commits).
-- The feature branch has one later docs commit, `4f73cbb`, that is not on `main` yet.
+- Pull request #3 merged the two follow-up commits, `4f73cbb` and `3d70e5f`, into `main` on 2026-11-14 (merge commit `d539969`). `main` and `feat/price-follows-pick` now have the same content.
 - Gates at the merged code:
   - `npm test`: 1,713 tests, 1,712 pass, 0 fail, 1 skipped.
   - `npm run lint`: clean.

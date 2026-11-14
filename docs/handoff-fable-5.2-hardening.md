@@ -39,7 +39,7 @@ Run this pass as the main Claude Code session on Claude Fable 5.2:
 5. `data/reports/check-20261112/README.md` (in card-scanner-data).
 
 ## Current state (branch `feat/price-follows-pick`, pushed 2026-11-13 up to `ce4d39e`)
-The branch is now pushed up to `ce4d39e` ("feat: share drawn, removed and put-back boxes from opted-in users", 26 files). The branch `feat/price-follows-pick` was merged into `main` by pull request #2 (https://github.com/fabcrowd/pokemon-auto-lister/pull/2, merge commit `1efb2f3`) on 2026-11-14.
+The branch is now pushed up to `ce4d39e` ("feat: share drawn, removed and put-back boxes from opted-in users", 26 files). The branch `feat/price-follows-pick` was merged into `main` by pull request #2 (https://github.com/fabcrowd/pokemon-auto-lister/pull/2, merge commit `1efb2f3`) on 2026-11-14. Pull request #3 (https://github.com/fabcrowd/pokemon-auto-lister/pull/3) then merged the two follow-up commits, `4f73cbb` and `3d70e5f`, into `main` on 2026-11-14 (merge commit `d539969`), and `main` and the feature branch now have the same content.
 
 Recent commits:
 - ce4d39e: feat: share drawn, removed and put-back boxes from opted-in users.
