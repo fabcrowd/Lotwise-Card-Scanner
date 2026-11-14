@@ -104,7 +104,7 @@ Certifications to tick:
 - I do not use or transfer user data for purposes unrelated to the item's single purpose.
 - I do not use or transfer user data to determine creditworthiness or for lending purposes.
 
-Privacy policy URL: TODO-OWNER: host docs/store/privacy-policy.md at a public https URL and paste it here before submitting. No URL has been chosen. Do not submit with this line unfilled.
+Privacy policy URL: https://github.com/fabcrowd/pokemon-auto-lister/blob/main/docs/store/privacy-policy.md (chosen 2026-11-13). The redrafted policy reaches that address when pull request #2 is merged into `main`; do not submit before then.
 
 ## Remote code
 
