@@ -355,6 +355,20 @@
     </div>
   </div>
 
+  <div class="source-card" id="straighten-card">
+    <div class="source-head">
+      <div class="source-name">Straighten cards</div>
+    </div>
+    <div class="source-desc">
+      Finds the four corners of each card and flattens it upright before it is read, which helps with tilted, sideways or
+      loosely boxed cards. It is off until it has been confirmed to help on a separate test set.
+    </div>
+    <div class="source-body">
+      <label class="toggle" for="straighten-cards"><input type="checkbox" id="straighten-cards"> Experimental: straighten cards before reading</label>
+      <div class="test-result info" id="straighten-note" role="status" tabindex="-1"></div>
+    </div>
+  </div>
+
   <!-- dev-only:start -->
   <!-- Source 3: Local backend (advanced) -->
   <details class="advanced" id="advanced-backend">
@@ -374,8 +388,8 @@
       <div class="source-name">Help improve recognition for everyone</div>
     </div>
     <div class="source-desc" id="sharing-desc">
-      If you turn this on, small pictures of the cards you correct or confirm, and the card you chose, are sent to help improve recognition for everyone.
-      No page address, no full photo and no account is sent. It is off until you turn it on, and turning it off deletes your random install id and anything still waiting to be sent.
+      If you turn this on, small pictures of the cards you correct or confirm, and the card you chose, are sent to help improve recognition for everyone. Small pictures of boxes you draw, remove or put back are sent too, and a removed box may show something that is not a card.
+      The pictures become public and cannot be taken back. No page address, no full photo and no account is sent. It is off until you turn it on, and turning it off deletes your random install id and anything still waiting to be sent.
     </div>
     <div class="source-body">
       <label class="toggle" for="share-optin"><input type="checkbox" id="share-optin" aria-describedby="sharing-desc"> Help improve recognition for everyone</label>
@@ -394,9 +408,9 @@
       They stay in this browser unless you turn on shared learning above.
     </div>
     <div class="source-body">
-      <label class="toggle" for="use-references"><input type="checkbox" id="use-references"> Recognize cards I corrected before</label>
+      <label class="toggle" for="use-references"><input type="checkbox" id="use-references"> Use my corrections</label>
       <div class="source-desc" id="references-desc">
-        Uses your own corrections to put a card you fixed earlier first among the choices. It is off until its accuracy has been measured, and turning it on makes the scanner read your saved pictures once.
+        Cards you fix are remembered on this device, with the reason the scanner got them wrong. A card that looks like one you fixed is put first, and a close match is confirmed from your correction. It is on unless you turn it off.
       </div>
       <div class="source-name" id="references-count">References: … </div>
       <div class="btn-row">
@@ -406,6 +420,25 @@
       <div class="test-result info" id="corrections-status" role="status" tabindex="-1"></div>
     </div>
   </div>
+
+  <!-- dev-only:start -->
+  <div class="section-title">Drawn boxes for training</div>
+  <div class="source-card" id="drawn-examples-card">
+    <div class="source-head">
+      <div class="source-name" id="drawn-examples-count">Drawn boxes: … saved</div>
+    </div>
+    <div class="source-desc">
+      Boxes you drew around cards the scanner missed. Kept only on this computer, for retraining.
+    </div>
+    <div class="source-body">
+      <div class="btn-row">
+        <button class="btn secondary" id="export-drawn-examples" type="button">Export</button>
+        <button class="btn danger" id="clear-drawn-examples" type="button">Delete all</button>
+      </div>
+      <div class="test-result info" id="drawn-examples-status" role="status" tabindex="-1"></div>
+    </div>
+  </div>
+  <!-- dev-only:end -->
 
   <!-- dev-only:start -->
   <div class="section-title">Test photos</div>

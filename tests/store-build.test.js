@@ -75,7 +75,7 @@ test('store manifest: exactly the specified permissions and hosts', win32, () =>
     'https://github.com/fabcrowd/card-scanner-data/releases/*',
   ]);
   assert.deepEqual(manifest.optional_host_permissions, ['<all_urls>']);
-  assert.equal(manifest.version, '2.1.0');
+  assert.equal(manifest.version, '3.1.0');
   assert.equal(manifest.minimum_chrome_version, '116');
   assert.equal('content_scripts' in manifest, false);
   assert.equal('web_accessible_resources' in manifest, false);
@@ -83,7 +83,7 @@ test('store manifest: exactly the specified permissions and hosts', win32, () =>
 });
 
 test('store package carries no dev code, test hooks, or localhost addresses', win32, () => {
-  const dev = /https?:\/\/(?:localhost|127\.0\.0\.1)|testSetCollection|testPhoto|__cardScanner\b|findCardsDiag|importReferences|forceScreenshotPath|dev-only|photoIds|savePhoto|Local dashboard|Test photos/;
+  const dev = /https?:\/\/(?:localhost|127\.0\.0\.1)|testSetCollection|testPhoto|__cardScanner\b|findCardsDiag|importReferences|forceScreenshotPath|dev-only|photoIds|savePhoto|Local dashboard|Test photos|drawn-examples|drawnExample|DrawnExample|drawnPlaced|drawnKind|DRAWN_KINDS|Drawn boxes for training/;
   for (const file of listFiles(storeDir).filter((f) => /\.(js|html|json)$/.test(f) && !f.startsWith('vendor/'))) {
     const text = readFileSync(path.join(storeDir, file), 'utf8');
     assert.doesNotMatch(text, dev, file);
@@ -149,7 +149,7 @@ test('store files not stripped are identical to the source; stripped ones only l
 test('developer build keeps what the tests rely on and loses only what the store plan removes', win32, () => {
   const manifest = manifestOf(devDir);
   assert.equal(manifest.name, 'Pokémon Card Scanner');
-  assert.equal(manifest.version, '2.1.0');
+  assert.equal(manifest.version, '3.1.0');
   assert.equal(manifest.minimum_chrome_version, '116');
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
   assert.ok(manifest.host_permissions.includes('<all_urls>'));
@@ -166,6 +166,10 @@ test('developer build keeps what the tests rely on and loses only what the store
   assert.match(read('content.js'), /window\.__cardScanner = /);
   assert.match(read('background.js'), /importReferences/);
   assert.match(read('background.js'), /forceScreenshotPath/);
+  assert.match(read('background.js'), /recordDrawnExample/);
+  assert.match(read('popup.js'), /drawnPlaced/);
+  assert.match(read('options.html'), /Drawn boxes for training/);
+  assert.ok(existsSync(path.join(devDir, 'lib', 'drawn-examples-store.js')));
   assert.match(read('lib/condition-pricing.js'), /127\.0\.0\.1:3000/);
   assert.match(read('options.js'), /requestAllSites/);
 });

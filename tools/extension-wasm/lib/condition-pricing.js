@@ -25,6 +25,7 @@
 //   }
 
 import { getPptKey } from "./ppt-key.js";
+import { STALE_PRICE_DAYS, isGridStale } from "./card-display.js";
 
 // dev-only:start
 const BACKEND_URL = "http://127.0.0.1:3000/api/price-grid";
@@ -76,20 +77,26 @@ export function getBackendStatus() {
 export async function getConditionGrid(identity) {
   if (!identity?.name) return null;
 
-  // dev-only:start
-  // 1. Backend proxy (JustTCG)
-  if (await probeBackend()) {
-    const r = await fetchBackend(identity);
-    if (r) return r;
-  }
-  // dev-only:end
+  // Run independent sources in parallel, return first successful result.
+  // Backend proxy (JustTCG) - only if available
+  const backendPromise = (async () => {
+    // dev-only:start
+    if (!(await probeBackend())) return null;
+    // dev-only:end
+    return fetchBackend(identity);
+  })();
 
-  // 2. PokemonPriceTracker (user key required, needs tcgPlayerId)
-  const pptKey = await getPptKey();
-  if (pptKey && identity.tcgPlayerId) {
-    const r = await fetchPpt(identity, pptKey);
-    if (r) return r;
-  }
+  // PokemonPriceTracker (user key required, needs tcgPlayerId)
+  const pptPromise = (async () => {
+    const pptKey = await getPptKey();
+    if (!pptKey || !identity.tcgPlayerId) return null;
+    return fetchPpt(identity, pptKey);
+  })();
+
+  const [backendResult, pptResult] = await Promise.all([backendPromise, pptPromise]);
+
+  if (backendResult) return backendResult;
+  if (pptResult) return pptResult;
 
   return null;
 }
@@ -219,7 +226,9 @@ export function normalizePpt(card) {
  * — minus per-condition data. Each printing gets {conditions: {NM: <market>, LP: null, ...}}.
  * This exists so the overlay always has SOMETHING to show even when neither backend nor PPT answer.
  */
-export function fromPokemontcgPayload(prices, updatedAt = null) {
+export { STALE_PRICE_DAYS };
+
+export function fromPokemontcgPayload(prices, updatedAt = null, now = Date.now()) {
   const variants = {};
   if (!prices || typeof prices !== "object") return null;
   for (const [printing, p] of Object.entries(prices)) {
@@ -231,6 +240,7 @@ export function fromPokemontcgPayload(prices, updatedAt = null) {
     };
   }
   if (Object.keys(variants).length === 0) return null;
+  const stale = isGridStale({ updatedAt }, now);
   return {
     source: "pokemontcg",
     variants,
@@ -238,6 +248,7 @@ export function fromPokemontcgPayload(prices, updatedAt = null) {
     defaultVariant: pickDefaultPrinting(variants),
     spreadRatio: computeSpread(variants),
     updatedAt: typeof updatedAt === "string" ? updatedAt : null,
+    ...(stale ? { stale: true } : {}),
   };
 }
 

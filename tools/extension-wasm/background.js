@@ -16,32 +16,48 @@ import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from ".
 import { acceptWholePhoto, displayedRegion, dropEdgeFragments, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { GALLERY_BUDGET_MS, MIN_GALLERY_SIDE, galleryPhotos, mergeAcrossPhotos } from "./lib/gallery.js";
-import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
+import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, docBoxFor, isCaptureQuotaError, planScreens, samePage, screensCapped, toDocBox } from "./lib/page-scan.js";
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
-import { rectifyCard }                 from "./lib/rectify.js";
+import { rectifyCard, warpQuad }       from "./lib/rectify.js";
+import { CORNER_MIN_CONF, cornerModelReady, loadCornerModel, predictCorners, validQuad } from "./lib/corners.js";
 import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
-import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, capAdapterChange, capHeightFor, capSmallSource, capUnconfirmedSet, fuseResults, informationHeight, markRepeatedNames } from "./lib/fusion.js";
-import { setChoices, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
+import { isTooSmallBox, smallPhotoCounts, tooSmallCard, canFrameTooSmall, keepTooSmall } from "./lib/tiny-card.js";
+import {
+  acceptDrawnSender, correctionSource, drawnCardEntry, examGroupAllowed, examHoldAllowed, normalizeDrawnMessage, viewportRectToBitmapBox, viewportToPhotoBox, isSamePage,
+} from "./lib/draw-box.js";
+import { loadLot, saveLot } from "./lib/lot-session.js";
+import { acceptPageSender, removalStored, removeFromLot } from "./lib/overlay-remove.js";
+import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
+import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
 import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
+import { applyBatchedPrices as applyBatchedPricesWith, batchPriceCards as batchPriceCardsWith, collectBatchIds, createPriceCache, createRetryLoader } from "./lib/batch-price.js";
 import { looksLikeCard, mergeSourceRead, sourceRefineOrder, tileSource } from "./lib/refine.js";
-import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage } from "./lib/card-picker.js";
+import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage, wrongIdOf } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
-import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, modelTags } from "./lib/contribution.js";
-import { adaptedRows, cardProbability, checkBundle, liveParts, loadStoredBundle, mergeExtra } from "./lib/bundle.js";
+import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, cropTooSmall, modelTags } from "./lib/contribution.js";
+import { agreeWithReference, holdExamPick, storeCorrection } from "./lib/correction-save.js";
+import { skipDraft, unskipDraft } from "./lib/skip.js";
+import { memoryVerdict, skipVerdict } from "./lib/memory-confirm.js";
+import { referenceBar } from "./lib/reference-bars.js";
+import { whyOf, withVerdicts } from "./lib/why.js";
+import { adaptedRows, checkBundle, checkKeepsBox, liveParts, loadStoredBundle, mergeExtra, parsePackagedCheck, pickCheck } from "./lib/bundle.js";
+import { canReadHidden, keepHidden, keptRealCount, notCardEntry, overlayCards, realCards } from "./lib/not-card.js";
 import { photoIdFromRgba } from "./lib/photo-id.js";
 import { createShareStore } from "./lib/share-store.js";
 import { createSharing } from "./lib/sharing.js";
 import { PACK_MANIFEST_URL, PACK_PUBLIC_KEY, RELAY_URL } from "./lib/shared-config.js";
-import { examGroups, examRows, shareFor, teachRow, wantsExamPrompt } from "./lib/share-rows.js";
+import { contributeSignal, examGroups, examRows, shareFor, signalRow, teachRow, wantsExamPrompt } from "./lib/share-rows.js";
 import { createUploader } from "./lib/upload-queue.js";
 // dev-only:start
 import { fitWithin, idWithSize, limitReached, photoRecord, statsFromIds } from "./lib/test-photos.js";
+import { DRAWN_KINDS, createDrawnExamplesStore, newExampleId } from "./lib/drawn-examples-store.js";
 // dev-only:end
-import { sendToTab } from "./lib/tab-messaging.js";
-import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, largerRendition, loadFullSize } from "./lib/full-size.js";
+import { captureWithoutOverlay, sendToTab } from "./lib/tab-messaging.js";
+import { loadOverlayShown, tabMessageFor } from "./lib/overlay-toggle.js";
+import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, largerRendition, loadFullSize, needsShareImages, shareImagesFromHtml } from "./lib/full-size.js";
 import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
 import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
@@ -52,14 +68,16 @@ import { choiceFromCorner, cornerRects, parseCornerText } from "./lib/corner-rea
 import { decideGuesses, withGuess } from "./lib/page-prior.js";
 import { setSizes, exactTotalHits, prefixTotals, printingByNumber, blackStarPromo, promoCollectorNumber } from "./lib/card-number.js";
 import { publicHttpsUrl }              from "./lib/net.js";
-import { MAX_PHOTO_BYTES, createBudget, decodePlan, finalUrlAllowed, imageSize, readCapped } from "./lib/photo-fetch.js";
+import { loadTileSource as loadTileSourceWith } from "./lib/rendition.js";
+import { MAX_PHOTO_BYTES, createBudget, decodePlan, finalUrlAllowed, imageSize, photoTypeVerdict, readCapped, sniffImageType } from "./lib/photo-fetch.js";
 import { FIRST_EDITION_MIN_SCORE, editionAfterEreader, editionAfterPromo, editionForSets, grayFromRgba, hasFirstEdition, pricedEdition, stampAfterFirst, stampBelowText, stampScore } from "./lib/edition-stamp.js";
 import { SHADOW_MIN_DEPTH, borderEdition, shadowDepth } from "./lib/frame-shadow.js";
 import { loadVariantModel, readVariant, variantModelReady } from "./lib/variant-model.js";
-import { choiceForStamp, finishFromNumber, finishFromVariants, finishSharedByNumber, stampAfterWizards, stampFromCorner } from "./lib/variant.js";
+import { finishFromNumber, finishFromVariants, finishSharedByNumber, stampAfterWizards, stampFromCorner } from "./lib/variant.js";
+import { applySetStamp } from "./lib/set-stamp.js";
 import { PROMO_STAR_MIN, choicesForSymbol, promoStarScore, symbolFromScores, symbolScores } from "./lib/set-symbol.js";
 import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard } from "./lib/pricing.js";
-import { applySnapshot, currentSnapshot, refreshPriceSnapshot } from "./lib/price-snapshot.js";
+import { applyCatalogPrices, applySnapshot, currentSnapshot, refreshPriceSnapshot } from "./lib/price-snapshot.js";
 import {
   getConditionGrid, fromPokemontcgPayload, fromTcgdexPayload, tcgPlayerIdFromTcgdex,
 } from "./lib/condition-pricing.js";
@@ -81,6 +99,11 @@ const PAGE_CHANGED = "The page changed during the scan. Scan again.";
 // Rectified card pictures are kept in IndexedDB per scan: the service worker sleeps
 // between a scan and the user's pick, and memory does not survive that.
 const _corrections = createCorrectionsStore();
+// dev-only:start
+// The drawn-box training log: its own database, and the writes still in flight (the popup may report a kind before one lands).
+const _drawnExamples = createDrawnExamplesStore();
+const _drawnExampleWrites = new Map();
+// dev-only:end
 
 // Opt-in shared learning (docs/plans/shared-learning.md). Inert while RELAY_URL is empty.
 const local = {
@@ -294,6 +317,52 @@ function _loadNumberReader() {
   })().catch((err) => console.error("[BG] number reader failed:", err?.message || err));
 }
 
+// The corner model is fetched the first time "straighten cards" is on; without it cards are cropped as before.
+const _loadCornerModel = createRetryLoader(async () => {
+  const buffer = await getOptionalAsset("card_corners.onnx");
+  if (!buffer) {
+    console.log("[BG] corner model not available");
+    return;
+  }
+  await loadCornerModel(buffer);
+  console.log("[BG] corner model loaded");
+}, { log: (err) => console.error("[BG] corner model failed:", err?.message || err) });
+
+// "Experimental: straighten cards before reading" in the options page. Off until a score shows a gain.
+async function straightenCardsInUse() {
+  try {
+    return (await chrome.storage.local.get("straightenCards")).straightenCards === true;
+  } catch {
+    return false;
+  }
+}
+
+// The corner session shares the embedder's queue: single-threaded WASM cannot run two sessions at once.
+function cornersSerial(source, box) {
+  const run = _embedQueue.then(() => predictCorners(source, box));
+  _embedQueue = run.catch(() => {});
+  return run;
+}
+
+/**
+ * The card in a detector box as a 750x1050 canvas: warped upright from its four corners when "straighten cards" is on
+ * and the corner model is confident and returns a sane quad, otherwise cropped from the box as before.
+ */
+async function cardCanvasFor(source, box) {
+  try {
+    if (await straightenCardsInUse()) {
+      await _loadCornerModel();
+      if (cornerModelReady()) {
+        const found = await cornersSerial(source, box);
+        if (found && found.conf >= CORNER_MIN_CONF && validQuad(found.quad)) return warpQuad(source, found.quad);
+      }
+    }
+  } catch (err) {
+    console.error("[BG] straightening failed, using the box:", err?.message || err);
+  }
+  return rectifyCard(source, box);
+}
+
 // A scan that starts while the reader's files are still loading would read no numbers at all. Never held
 // longer than this: a reader that fails to load must not stop scans.
 const NUMBER_READER_WAIT_MS = 15000;
@@ -308,10 +377,10 @@ async function numberReaderReady() {
 // ─── message handler ─────────────────────────────────────────────────────────
 
 // Messages that drive the scanner come only from this extension's own pages. A page's content script may
-// send newCardsDetected and nothing else.
+// send newCardsDetected, the box it drew (drawnBox) and the X on a card (overlayRemove), each checked in its own case.
 const OWN_PAGE_ONLY = new Set([
-  "checkReady", "startSetup", "detect", "priceCard", "scanPage",
-  "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard",
+  "checkReady", "startSetup", "detect", "priceCard", "scanPage", "scanState", "awaitScan",
+  "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard", "setOverlayShown", "drawBox", "cancelDraw",
 ]);
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -347,10 +416,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case "scanPage":
-      handleScanPage(sendResponse, eraById(msg.era));
+      runHeldScan(sendResponse, eraById(msg.era));
       return true; // async
 
+    case "scanState":
+      scanState().then(sendResponse);
+      return true;
+
+    case "awaitScan":
+      if (_held?.running) _held.waiters.push(sendResponse);
+      else sendResponse(_held ? { data: _held.data, url: _held.url, finishedAt: _held.finishedAt } : { data: null });
+      return true;
+
     case "clearPageOverlay":
+      _held = null; // a cleared lot must not come back from the held scan
       relayToTab({ action: "relayClear" });
       sendResponse({ ok: true });
       return false;
@@ -364,7 +443,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         srcWidth: msg.srcWidth,
         srcHeight: msg.srcHeight,
         ...(msg.fullSize ? { fullSize: msg.fullSize } : {}),
+        ...(typeof msg.shown === "boolean" ? { shown: msg.shown } : {}),
       });
+      sendResponse({ ok: true });
+      return false;
+
+    case "setOverlayShown":
+      relayToTab({ action: "setOverlayShown", shown: msg.shown === true });
       sendResponse({ ok: true });
       return false;
 
@@ -383,6 +468,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       return false;
 
+    case "drawBox":
+      startDrawBox(msg).then(sendResponse);
+      return true;
+
+    case "cancelDraw":
+      cancelDrawBox();
+      sendResponse({ ok: true });
+      return false;
+
+    case "drawnBox":
+      // From the top frame of the tab that started draw mode only, once: the box the user drew, over a photo of that tab.
+      if (acceptDrawnSender(_drawTabId, sender)) {
+        _drawTabId = null;
+        handleDrawnBox(msg, sender.tab);
+      }
+      return false;
+
+    case "overlayRemove":
+      // The X on a page card: the scanner window takes it when it is open on this tab, else the saved lot and held scan do.
+      // The page drops the box only on {ok: true}.
+      if (!acceptPageSender(sender, chrome.runtime.id) || !Number.isInteger(msg.index) || msg.index < 0) {
+        sendResponse({ ok: false });
+        return false;
+      }
+      handleOverlayRemove(msg.index, sender.tab)
+        .then((ok) => sendResponse({ ok }))
+        .catch((err) => { console.error("[BG] overlayRemove failed", err?.message || err); sendResponse({ ok: false }); });
+      return true;
+
     case "newCardsDetected":
       // Content script saw new card-shaped images load (lazy/infinite scroll).
       // Re-scan only when the popup is open, models are ready, and no scan is running.
@@ -398,6 +512,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (Object.hasOwn(_ownPageActions, msg.action)) return handleOwnPageMessage(msg, sender, sendResponse);
   }
 });
+
+async function handleOverlayRemove(index, tab) {
+  const open = await chrome.runtime.getContexts({ contextTypes: ["TAB"], documentUrls: [chrome.runtime.getURL("popup.html")] });
+  if (open.length && tab.id === _targetTabId) {
+    // The open window owns the list: it takes the removal or the page keeps the box (never a change behind its back).
+    const reply = await chrome.runtime.sendMessage({ action: "applyOverlayRemove", index, tabId: tab.id, tabUrl: tab.url }).catch(() => null);
+    const popupHandled = reply?.handled === true;
+    return removalStored({ popupHandled, popupDeclined: !popupHandled });
+  }
+  if (Boolean(_held?.running) && tab.id === _targetTabId) return removalStored({ running: true });
+  const saved = await loadLot(chrome.storage.session, tab.url);
+  const gone = saved?.state?.cards?.[index];
+  const next = saved ? removeFromLot(saved.state, index) : null;
+  if (next) {
+    await saveLot(chrome.storage.session, tab.url, next);
+    // Fire-and-forget: the page's box goes whether or not the signal is sent.
+    contributeBoxSignal({ source: "removed", scanId: saved.state.bgScanId, index, ...(gone?.drawn ? { drawn: true, share: gone.share ?? null, crop: gone.crop ?? null } : {}) });
+  }
+  let heldChanged = false;
+  if (_held?.data && isSamePage(_held.url, tab.url)) {
+    const held = removeFromLot(_held.data, index);
+    if (held) { _held.data = held; heldChanged = true; }
+  }
+  return removalStored({ savedChanged: Boolean(next), heldChanged });
+}
 
 // ─── setup ───────────────────────────────────────────────────────────────────
 
@@ -426,6 +565,42 @@ function readBitmap(bitmap) {
 // A rescan nobody clicked for (pictures that loaded later): the open popup gets its result like a scan it started.
 function sendRescanResult(data) {
   if (data && !data.error) chrome.runtime.sendMessage({ action: "rescanResult", data }).catch(() => {});
+}
+
+// The newest scan the popup asked for, kept in memory so a window closed mid-scan (or just after it) loses nothing:
+// the reopened popup asks scanState, then awaitScan, and gets the result or the wait for it.
+let _held = null;
+
+function runHeldScan(sendResponse, era) {
+  const held = { running: true, startedAt: Date.now(), progress: null, data: null, url: null, finishedAt: null, waiters: [] };
+  _held = held;
+  handleScanPage(async (data) => {
+    held.running = false;
+    held.finishedAt = Date.now();
+    held.data = data && !data.error ? data : null;
+    if (held.data?.targetTabId != null) held.url = (await chrome.tabs.get(held.data.targetTabId).catch(() => null))?.url ?? null;
+    if (held.data) { held.data = { ...held.data, tabUrl: held.url }; data = held.data; }
+    const reply = { data: held.data, url: held.url, finishedAt: held.finishedAt, error: data?.error };
+    try { sendResponse(data); } catch { /* the popup is gone: the held copy is what the next one reads */ }
+    for (const waiter of held.waiters.splice(0)) { try { waiter(reply); } catch { /* closed too */ } }
+  }, era);
+}
+
+async function scanState() {
+  let tab = null;
+  if (_targetTabId !== null) tab = await chrome.tabs.get(_targetTabId).catch(() => null);
+  if (!tab || _isInternalUrl(tab.url)) {
+    const open = await chrome.tabs.query({ active: true, windowType: "normal" }).catch(() => []);
+    tab = chooseFallbackTab(open, _popupWinId).tab;
+  }
+  return {
+    tabUrl: tab?.url ?? null,
+    tabId: tab?.id ?? null,
+    running: Boolean(_held?.running),
+    progress: _held?.running ? _held.progress : null,
+    finishedAt: _held && !_held.running && _held.data ? _held.finishedAt : null,
+    heldUrl: _held && !_held.running && _held.data ? _held.url : null,
+  };
 }
 
 async function handleScanPage(sendResponse, era) {
@@ -467,6 +642,7 @@ async function handleScanPage(sendResponse, era) {
     return;
   }
   const scanTabId = targetTab.id;
+  clearScanPriceCache();
 
   try {
     // Ask the page which images look like cards; sendToTab injects the content script if it is not there yet.
@@ -488,6 +664,18 @@ async function handleScanPage(sendResponse, era) {
     }
     console.log("[BG] DOM finder returned", (domResp?.cards || []).length, "card-shaped images");
 
+    // A Facebook item page whose own og:image is gone: the page fetched without cookies still names the cover photo's
+    // upload. Read once per scan by the page itself (same origin, no permission); only its image URLs are kept, and
+    // only the full-size reads use them.
+    let fullSizeOg = domResp?.page?.ogImages || [];
+    const sharePage = needsShareImages(targetTab.url, domResp?.page?.ogImages);
+    if (sharePage) {
+      const shared = await sendToTab(chrome, targetTab.id, { action: "sharePageHead", url: sharePage }).catch(() => null);
+      const found = shareImagesFromHtml(shared?.html);
+      console.log("[BG] Facebook share page:", found.length, "image URL(s)");
+      fullSizeOg = [...fullSizeOg, ...found];
+    }
+
     // A listing has one photo worth scanning; thumbnails and "similar items" belong to other cards.
     const pageFocus = choosePageFocus({
       viewport: { w: domResp.viewportWidth, h: domResp.viewportHeight },
@@ -495,6 +683,8 @@ async function handleScanPage(sendResponse, era) {
       cards: domResp?.cards || [],
       ogImages: domResp?.page?.ogImages || [],
       headings: domResp?.page?.headings || [],
+      pageUrl: targetTab.url,
+      pageLinks: domResp?.page?.imageLinks || [],
     });
     const sealed = pageFocus.kind === "listing" && isSealedListing({
       titles: [domResp?.page?.title, domResp?.page?.ogTitle, domResp?.page?.h1],
@@ -528,10 +718,12 @@ async function handleScanPage(sendResponse, era) {
     let screenNo = 0;
     let offset = { x: 0, y: 0 };
     let capped = false;
-    const claim = (box, anchor, area) => {
-      const slot = { docBox: toDocBox(box, offset), anchor, area, screen: screenNo };
+    // Boxes the card check rejected that were read in full this scan (capped: see HIDDEN_READ_CAP).
+    let hiddenReads = 0;
+    const claim = (box, anchor, area, hidden = false) => {
+      const slot = { docBox: toDocBox(box, offset), anchor, area, screen: screenNo, ...(hidden ? { hidden: true } : {}) };
       if (pageFocus.kind === "listing") return slot;
-      const judged = claimSlot(slots, dropped, slot, cards.length - dropped.size);
+      const judged = claimSlot(slots, dropped, slot, keptRealCount(cards, dropped));
       if (judged.verdict === "skip") return null;
       if (judged.verdict === "full") { capped = true; return null; }
       // The earlier card is only given up once this one has been read and kept (see pushCard).
@@ -539,7 +731,10 @@ async function handleScanPage(sendResponse, era) {
     };
     const pushCard = (card, cardCanvas, share = null, slot = null, hint = null) => {
       if (slot?.replaces != null) dropped.add(slot.replaces);
-      cards.push(wholePage && slot ? { ...card, docBox: slot.docBox } : card);
+      // Document box for every on-page card: a whole-page scan's slot box, else the viewport box plus the scroll the scan
+      // was taken at (what content.js renderOverlay computes), so a later drawn box compares in the same space.
+      const docBox = docBoxFor(card, slot, wholePage, origin);
+      cards.push(docBox ? { ...card, docBox } : card);
       crops.push(encodeCrop(cardCanvas));
       shares.push(share);
       slots.push(slot);
@@ -570,7 +765,7 @@ async function handleScanPage(sendResponse, era) {
         let bitmap = null;
         try {
           if (!(await canReadPhotoSource(tileHints[i].src))) { failures = REFINE_MAX_FAILURES; break; }
-          bitmap = await loadPhotoSource(tileHints[i].src, { allowedHosts: pageImageHosts, budget, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE });
+          bitmap = await loadTileSource(tileHints[i].src, { allowedHosts: pageImageHosts, budget, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE });
           if (!bitmap || !looksLikeCard(bitmap.width, bitmap.height)) { if (!bitmap) failures++; continue; }
           const tileCanvas = rectifyCard(bitmap, [0, 0, bitmap.width, bitmap.height]);
           const read = await identifyCard(tileCanvas, era, bitmap.height, null, bitmap.height);
@@ -616,8 +811,8 @@ async function handleScanPage(sendResponse, era) {
         let focus = pageFocus;
         let domCards = sealed ? [] : pageFocus.cards;
         if (wholePage) {
-          if (cardRoom(cards.length - dropped.size) <= 0) { capped = true; break; }
-          chrome.runtime.sendMessage({ action: "scanProgress", screen: stop + 1, screens: stops.length }).catch(() => {});
+          if (cardRoom(keptRealCount(cards, dropped)) <= 0) { capped = true; break; }
+          (_held && (_held.progress = { screen: stop + 1, screens: stops.length }), chrome.runtime.sendMessage({ action: "scanProgress", screen: stop + 1, screens: stops.length })).catch(() => {});
           scrolled = true;
           await sendToTab(chrome, targetTab.id, { action: "scrollTo", x: origin.x, y });
           await stayOnPage();
@@ -630,6 +825,8 @@ async function handleScanPage(sendResponse, era) {
             cards: screenResp.cards || [],
             ogImages: domResp?.page?.ogImages || [],
             headings: screenResp?.page?.headings || [],
+            pageUrl: targetTab.url,
+            pageLinks: domResp?.page?.imageLinks || [],
           });
           // One big picture lower down is still a tile of this page, not a listing's photo.
           focus = found.kind === "listing" ? { ...found, kind: pageFocus.kind, photos: screenResp.photos || [], cards: screenResp.cards || [] } : found;
@@ -641,21 +838,22 @@ async function handleScanPage(sendResponse, era) {
         // small by design, so no size cap there.
         const capFor = (fed, naturalPerFed) => capHeightFor(focus.kind, informationHeight(fed, naturalPerFed));
 
-        await sendToTab(chrome, targetTab.id, { action: "hideOverlay" }).catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, captureWait(_lastCaptureAt, Date.now())));
-        await stayOnPage();
-        if (wholePage) {
-          const current = await chrome.tabs.get(targetTab.id).catch(() => null);
-          if (!current?.active || current.windowId !== targetTab.windowId) throw new Error("That tab is no longer in front. Scan again.");
-        }
-        let dataUrl;
-        try {
-          dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
-        } catch (err) {
-          if (!isCaptureQuotaError(err)) throw err;
-          await new Promise((resolve) => setTimeout(resolve, 600));
-          dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
-        }
+        // The overlay is hidden for this screenshot only; the user's boxes are back as soon as it is taken.
+        const dataUrl = await captureWithoutOverlay(chrome, targetTab.id, async () => {
+          await new Promise((resolve) => setTimeout(resolve, captureWait(_lastCaptureAt, Date.now())));
+          await stayOnPage();
+          if (wholePage) {
+            const current = await chrome.tabs.get(targetTab.id).catch(() => null);
+            if (!current?.active || current.windowId !== targetTab.windowId) throw new Error("That tab is no longer in front. Scan again.");
+          }
+          try {
+            return await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
+          } catch (err) {
+            if (!isCaptureQuotaError(err)) throw err;
+            await new Promise((resolve) => setTimeout(resolve, 600));
+            return chrome.tabs.captureVisibleTab(targetTab.windowId, { format: "jpeg", quality: 92 });
+          }
+        });
         _lastCaptureAt = Date.now();
         const b64 = dataUrl.split(",")[1];
         const bitmap = await b64ToBitmap(b64);
@@ -705,7 +903,7 @@ async function handleScanPage(sendResponse, era) {
               }
               // The page shows a thumbnail; a larger rendition of the same picture lets small cards be read.
               const fetchLimits = { allowedHosts: pageImageHosts, budget: createBudget(Math.min(PHOTO_BUDGET_MS, gallery ? gallery.budget.remaining() : Infinity)) };
-              upgrade = sourceReadable ? await loadUpgradedSource(ph, domResp?.page?.ogImages, targetTab.url, fetchLimits) : null;
+              upgrade = sourceReadable ? await loadUpgradedSource(ph, fullSizeOg, targetTab.url, fetchLimits) : null;
               photoBitmap = upgrade ? upgrade.bitmap
                 : sourceReadable ? await loadPhotoSource(ph.src, { ...fetchLimits, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE }) : null;
               if (!photoBitmap && sourceOnly) continue;
@@ -779,13 +977,16 @@ async function handleScanPage(sendResponse, era) {
                   }
                 }
               }
-              const naturalPerFed = fromSource ? upgrade?.naturalPerFed ?? 1
-                : ph.naturalHeight > 0 && sourceTransform === null
+              // A fetched picture (including a Facebook original) is judged on its own pixels; a screenshot crop at the shown scale.
+              const naturalPerFed = naturalPerFedFor({
+                fromSource,
+                shownNaturalPerFed: ph.naturalHeight > 0 && sourceTransform === null
                   ? (() => {
                     const shown = imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {});
                     return shown ? 1 / (shown.scaleY * dpr) : undefined;
                   })()
-                  : undefined;
+                  : undefined,
+              });
               console.log("[BG]   photo", (ph.rect.x | 0) + "," + (ph.rect.y | 0),
                           imageW + "x" + imageH,
                           fromSource ? upgrade ? "(source image, upgraded " + imageW + "x" + imageH + " from " + ph.naturalWidth + "x" + ph.naturalHeight + ")" : "(source image)" : "(viewport crop)", "→ YOLO returned", detectedBoxes.length,
@@ -800,23 +1001,61 @@ async function handleScanPage(sendResponse, era) {
               const photoFirst = cards.length;
               for (const { box, score } of boxes) {
                 const [bx1, by1, bx2, by2] = box;
-                if ((bx2 - bx1) < 40 || (by2 - by1) < 60) continue;
+                const tooSmall = isTooSmallBox(box);
                 const cardBox = extendClippedBottom(photoPixels.data, photoPixels.width, photoPixels.height, box);
                 let viewportBox;
+                let mappedBox;
                 if (fromSource) {
                   // A card in a gallery thumbnail may lie outside its cropped view: the thumbnail stands for it.
-                  viewportBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect)
+                  mappedBox = mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
+                  viewportBox = mappedBox
                     || (gallery ? [ph.rect.x, ph.rect.y, ph.rect.x + ph.rect.w, ph.rect.y + ph.rect.h] : null);
                   if (!viewportBox) continue;
                 } else {
                   viewportBox = [sx + bx1, sy + by1, sx + bx2, sy + by2].map((v) => v / dpr);
+                  mappedBox = viewportBox;
                 }
+                // A too-small entry is never framed around the whole thumbnail; skip before it can claim a slot.
+                if (tooSmall && !canFrameTooSmall({ mappedBox, gallery })) continue;
                 const rectify = (rect) => fromSource
                   ? rectifyCard(photoBitmap, rect)
                   : rectifyCard(bitmap, [sx + rect[0], sy + rect[1], sx + rect[2], sy + rect[3]]);
-                const cardCanvas = rectify(box);
+                // A box too small to read is rectified plainly (no corner model) and never identified.
+                const cardCanvas = await (tooSmall
+                  ? rectify(box)
+                  : fromSource
+                    ? cardCanvasFor(photoBitmap, box)
+                    : cardCanvasFor(bitmap, [sx + box[0], sy + box[1], sx + box[2], sy + box[3]]));
                 // The hero fallback is never checked: it may be the listing's only card.
-                if (!hero && !(await boxLooksLikeCard(cardCanvas))) continue;
+                if (!hero && !(await boxLooksLikeCard(cardCanvas, { detConf: score, aspect: (bx2 - bx1) / (by2 - by1) }))) {
+                  // Hidden, not dropped: the popup lists it under "Hidden: not a card" and can bring it back. Never drawn, priced,
+                  // totalled, shared or remembered; a box big enough to read keeps its read for "Show it".
+                  const claimedHidden = claim(viewportBox, undefined, (viewportBox[2] - viewportBox[0]) * (viewportBox[3] - viewportBox[1]), true);
+                  if (!keepHidden({ tooSmall, claimed: claimedHidden, mappedBox, gallery })) continue;
+                  let hiddenRead = null;
+                  const unread = !tooSmall && !canReadHidden(hiddenReads);
+                  if (!tooSmall && !unread) {
+                    hiddenReads++;
+                    try {
+                      hiddenRead = await identifyCard(cardCanvas, era, by2 - by1, cardBox[3] === box[3] ? null : rectify(cardBox), capFor(by2 - by1, naturalPerFed), { bitmap: photoBitmap, box });
+                    } catch (err) {
+                      console.error("[BG] hidden card read failed:", err?.message || err);
+                    }
+                  }
+                  if (photoNo !== undefined) photoMeta[cards.length] = { photo: photoNo, height: by2 - by1, embedding: null };
+                  pushCard(notCardEntry({ box: viewportBox, score, read: hiddenRead, tooSmall, unread, readHeight: Math.round(informationHeight(by2 - by1, naturalPerFed)), via: "yolo-in-photo", photoBoxes: boxes.length,
+                    ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }), cardCanvas, null, claimedHidden);
+                  continue;
+                }
+                if (tooSmall) {
+                  const claimedSmall = claim(viewportBox, undefined, (viewportBox[2] - viewportBox[0]) * (viewportBox[3] - viewportBox[1]));
+                  if (!keepTooSmall({ claimed: claimedSmall, mappedBox, gallery })) continue;
+                  if (photoNo !== undefined) photoMeta[cards.length] = { photo: photoNo, height: by2 - by1, embedding: null };
+                  pushCard(tooSmallCard({ box: viewportBox, score, readHeight: Math.round(informationHeight(by2 - by1, naturalPerFed)), via: "yolo-in-photo", photoBoxes: boxes.length,
+                    ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }), cardCanvas,
+                    null, claimedSmall);
+                  continue;
+                }
                 // The number is read from the detector box. The stamp is scored on the
                 // box after a clipped yellow border is included, so the card is not stretched.
                 const stampCanvas = cardBox[3] === box[3] ? null : rectify(cardBox);
@@ -848,18 +1087,18 @@ async function handleScanPage(sendResponse, era) {
                 pushCard({ box: viewportBox, score, ...read, via: hero ? "hero-" + hero : "yolo-in-photo", photoBoxes: boxes.length,
                   readHeight: Math.round(informationHeight(by2 - by1, naturalPerFed)),
                   ...(photoNo !== undefined ? { photo: photoNo } : {}), ...(gallery ? { inGallery: true } : {}) }, cardCanvas,
-                  shareOf(photoId, box, imageW, imageH, read), claimed);
+                  shareOf(photoId, box, imageW, imageH, { ...read, score }), claimed);
               }
               cards.splice(photoFirst, cards.length - photoFirst, ...await withBestGuesses(cards.slice(photoFirst), setHint));
               {
                 // Small cards and a larger picture the scan could not read itself: the user can open that one.
-                const read = cards.slice(photoFirst).filter((c) => !c.cardBack);
-                const small = read.filter((c) => c.readHeight > 0 && c.readHeight < FULL_SIZE_SMALL_PX).length;
+                const read = cards.slice(photoFirst).filter((c) => !c.notCard && (!c.cardBack || c.tooSmall));
+                const small = smallPhotoCounts(read, FULL_SIZE_SMALL_PX).small;
                 if (read.length && small >= Math.max(2, read.length / 2)) {
-                  if (upgrade) console.log("[BG]   cards small (" + small + "/" + read.length + " under " + FULL_SIZE_SMALL_PX + " px) even in the full-size photo");
+                  if (upgrade) console.log("[BG]   cards small (" + small + "/" + read.length + " under " + FULL_SIZE_SMALL_PX + " px, median fed " + (read.map((c) => c.readHeight).sort((a, b) => a - b)[read.length >> 1] ?? 0) + " px) even in the full-size photo");
                   else {
                     const larger = largerRendition({ src: ph.src, naturalWidth: ph.naturalWidth, naturalHeight: ph.naturalHeight,
-                      srcset: ph.sources?.srcset || "", ogImages: domResp?.page?.ogImages, base: targetTab.url });
+                      srcset: ph.sources?.srcset || "", ogImages: fullSizeOg, base: targetTab.url });
                     if (larger) {
                       fullSizeOffers.push({ ...larger, shown: [ph.naturalWidth, ph.naturalHeight], small, cards: read.length, ...(photoNo !== undefined ? { photo: photoNo } : {}) });
                       console.log("[BG]   cards small (" + small + "/" + read.length + "); a larger photo is available but unread:", larger.side ? larger.side + " px" : "original upload");
@@ -880,7 +1119,7 @@ async function handleScanPage(sendResponse, era) {
           await scanPhotos(photos);
           // The main photo held no card: the listing may be a lot photographed in the gallery's other pictures.
           // Related-item carousels are never part of this.
-          const triedFallback = !cards.length && !sealed && focus.kind === "listing" && focus.fallback?.length ? focus.fallback : [];
+          const triedFallback = !realCards(cards).length && !sealed && focus.kind === "listing" && focus.fallback?.length ? focus.fallback : [];
           if (triedFallback.length) {
             console.log("[BG] main photo held no card — trying", triedFallback.length, "other gallery photos");
             await scanPhotos(triedFallback, { firstPhoto: 2 });
@@ -946,7 +1185,7 @@ async function handleScanPage(sendResponse, era) {
           // Last resort — a page with no <img> cards and no photo candidates
           // (CSS backgrounds, canvas renders, lightbox overlays).
           // Not on a listing: the other pictures on that page are other people's cards.
-          if (cards.length === 0 && focus.kind !== "listing") {
+          if (!realCards(cards).length && focus.kind !== "listing") {
             try {
               console.log("[BG] still nothing — running YOLO over whole viewport");
               const yoloBoxes = await detectCards(bitmap);
@@ -957,7 +1196,7 @@ async function handleScanPage(sendResponse, era) {
                 if ((x2 - x1) < 40 || (y2 - y1) < 60) continue;
                 const claimed = claim([x1 / dpr, y1 / dpr, x2 / dpr, y2 / dpr], undefined, (x2 - x1) * (y2 - y1) / (dpr * dpr));
                 if (!claimed) continue;
-                const cardCanvas = rectifyCard(bitmap, box);
+                const cardCanvas = await cardCanvasFor(bitmap, box);
                 const read = await identifyCard(cardCanvas, era, y2 - y1, null, capFor(y2 - y1));
                 viewportId ??= photoIdOf(readBitmap(bitmap));
                 pushCard({
@@ -965,7 +1204,7 @@ async function handleScanPage(sendResponse, era) {
                   score,
                   ...read,
                   via: "yolo-viewport",
-                }, cardCanvas, shareOf(viewportId, box, bitmap.width, bitmap.height, read), claimed);
+                }, cardCanvas, shareOf(viewportId, box, bitmap.width, bitmap.height, { ...read, score }), claimed);
               }
             } catch (err) {
               console.error("[BG] YOLO viewport fallback failed:", err?.message || err);
@@ -1011,13 +1250,21 @@ async function handleScanPage(sendResponse, era) {
       if (shares.size) console.log("[BG] set prior", JSON.stringify([...shares].map(([k, v]) => [k, Math.round(v * 100) / 100])), "moved", moved, "best guesses");
     }
     cards.splice(0, cards.length, ...await withBestGuesses(cards, setHint));
-    if (shouldSuppressCards({ sealed, detectedCards: cards.length })) console.log("[BG] sealed product and no cards detected: nothing to report");
+    if (shouldSuppressCards({ sealed, detectedCards: realCards(cards).length })) console.log("[BG] sealed product and no cards detected: nothing to report");
     const identified = cards.filter((c) => !c.abstain).length;
     console.log("[BG] identified", identified, "/", cards.length, "cards");
     const guessed = cards.filter((c) => c.lowCertainty).length;
     if (guessed) console.log("[BG] best guesses (low certainty, user picks)", guessed, "of those", identified);
 
-    await relayToTab({ action: "relayOverlay", cards, srcWidth, srcHeight }, targetTab.id);
+    // Batch fetch prices for all unique card IDs (including versionChoices and setChoices).
+    const allCardIds = collectBatchIds(cards);
+    if (allCardIds.size) {
+      console.log("[BG] batch pricing", allCardIds.size, "unique cards");
+      const priceMap = await batchPriceCards([...allCardIds]);
+      applyBatchedPrices(cards, priceMap);
+    }
+
+    await relayToTab({ action: "relayOverlay", cards: overlayCards(cards), srcWidth, srcHeight, shown: await loadOverlayShown(chrome.storage.local) }, targetTab.id);
     console.log("[BG] overlay relayed");
 
     // Ask the content script to start watching for lazy-loaded card images.
@@ -1027,9 +1274,18 @@ async function handleScanPage(sendResponse, era) {
     await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded, shares })
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
     // An asked card carries the picture it was read from, so the user can see which card the question is about.
-    const withCandidates = cards.map((card, i) => (isUnsure(card)
-      ? { ...card, candidates: candidatesFor(card, _meta, 5, era), crop: encoded[i] ?? null }
+    // `ranked` (id, rank, cosine score) rides along so the popup can judge how far the first candidate leads; the set prior ran before.
+    const withCandidates = cards.map(({ rankedScores, ...card }, i) => (card.notCard && card.hiddenRead
+      // A hidden card keeps its read with the same candidates a Choose row gets, for "Show it". No price is fetched for it.
+      ? { ...card, hiddenRead: hiddenReadWithCandidates(card.hiddenRead), crop: encoded[i] ?? null }
+      : card.notCard ? { ...card, crop: encoded[i] ?? null }
+      : isUnsure(card)
+      ? { ...card, candidates: candidatesFor(card, _meta, 5, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
       : card));
+    function hiddenReadWithCandidates({ rankedScores, ...read }) {
+      const asChoose = { ...read, unsure: true };
+      return { ...read, candidates: candidatesFor(asChoose, _meta, 5, era), ...(read.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) };
+    }
     const asked = applyTitlePrior(withCandidates, {
       kind: pageFocus.kind,
       page: domResp?.page,
@@ -1053,6 +1309,184 @@ async function handleScanPage(sendResponse, era) {
   }
 }
 
+// ─── draw a box ──────────────────────────────────────────────────────────────
+
+// The era the popup had picked when the user pressed "Draw a box": the drawn card is read with it like a scanned one.
+let _drawEra = null;
+// The tab draw mode is on, until it sends its one box or is cancelled; a drawnBox from anywhere else is ignored.
+let _drawTabId = null;
+
+function cancelDrawBox() {
+  const tabId = _drawTabId;
+  _drawTabId = null;
+  if (tabId !== null) sendToTab(chrome, tabId, { action: "cancelDraw" }).catch(() => {});
+}
+
+async function startDrawBox(msg) {
+  try {
+    let tab = _targetTabId !== null ? await chrome.tabs.get(_targetTabId).catch(() => null) : null;
+    if (!tab || _isInternalUrl(tab.url) || tab.windowId === _popupWinId) {
+      const open = await chrome.tabs.query({ active: true, windowType: "normal" }).catch(() => []);
+      tab = chooseFallbackTab(open, _popupWinId).tab;
+      if (tab) _setTargetTabId(tab.id);
+    }
+    if (!tab) return { error: "No scannable tab. Open a webpage first." };
+    _drawEra = eraById(msg.era);
+    _drawTabId = tab.id;
+    await sendToTab(chrome, tab.id, { action: "startDraw" });
+    // The page may be in another window than the popup: bring it forward so the user can draw on it.
+    chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    return { ok: true };
+  } catch (err) {
+    _drawTabId = null;
+    console.error("[BG] draw mode failed:", err?.message || err);
+    return { error: "Card Scanner cannot draw on this tab." };
+  }
+}
+
+async function handleDrawnBox(raw, tab) {
+  const tell = (message) => chrome.runtime.sendMessage(message).catch(() => {});
+  const msg = normalizeDrawnMessage(raw);
+  if (!msg) return;
+  _setTargetTabId(tab.id);
+  try {
+    if (!_ready) await tryAutoLoad();
+    if (!_ready) throw new Error("The models are not loaded yet.");
+    await numberReaderReady();
+    // dev-only:start
+    const capture = {};
+    // dev-only:end
+    const card = await readDrawnBox(msg, tab, _drawEra, capture);
+    const message = { action: "drawnCard", card, srcWidth: msg.viewportWidth, srcHeight: msg.viewportHeight, tabUrl: tab.url, tabId: tab.id };
+    // dev-only:start
+    if (capture.canvas) message.exampleId = newExampleId(Date.now());
+    // dev-only:end
+    tell(message);
+    // dev-only:start
+    if (message.exampleId) recordDrawnExample(message.exampleId, card, tab, capture);
+    // dev-only:end
+  } catch (err) {
+    console.error("[BG] reading a drawn box failed:", err?.message || err);
+    tell({ action: "drawnFailed", error: explainDrawError(err) });
+  }
+}
+
+const DRAW_OFF_PHOTO = "That box is not on the photo. Draw it over the card.";
+const explainDrawError = (err) => (err?.message === DRAW_OFF_PHOTO ? err.message : "Could not read that box. Try again.");
+
+// The same screenshot the scan takes when a photo's source cannot be read.
+async function captureDrawnViewport(tab) {
+  const dataUrl = await captureWithoutOverlay(chrome, tab.id, async () => {
+    await new Promise((resolve) => setTimeout(resolve, captureWait(_lastCaptureAt, Date.now())));
+    const current = await chrome.tabs.get(tab.id).catch(() => null);
+    if (!current?.active) throw new Error("That tab is no longer in front. Draw again.");
+    try {
+      return await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 92 });
+    } catch (err) {
+      if (!isCaptureQuotaError(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      return chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 92 });
+    }
+  });
+  _lastCaptureAt = Date.now();
+  return b64ToBitmap(dataUrl.split(",")[1]);
+}
+
+/**
+ * The card in the box the user drew: the photo is loaded the way the scan loads it (its source, a larger rendition
+ * when the site allows, else the screenshot), the viewport rectangle is mapped back to photo pixels, and a box big
+ * enough is read like a detector box, minus the "is this a card" check (the user says it is). It carries a share (the
+ * box signal the popup sends), but is never shared as an exam row and never
+ * confirmed because it was drawn. Resolves the entry the popup adds to its list.
+ */
+async function readDrawnBox(msg, tab, era, capture = null) {
+  const ph = msg.photo;
+  let photoBitmap = null;
+  let upgrade = null;
+  try {
+    let sourceTransform = null;
+    const sourceCanMap = ph.render?.fit !== "background" || ph.render?.repeat === "no-repeat";
+    if (sourceCanMap && await canReadPhotoSource(ph.src)) {
+      const allowedHosts = new Set((msg.page.imageHosts || []).map((host) => String(host).toLowerCase()));
+      const limits = { allowedHosts, budget: createBudget(PHOTO_BUDGET_MS) };
+      upgrade = await loadUpgradedSource(ph, msg.page.ogImages || [], tab.url, limits);
+      photoBitmap = upgrade ? upgrade.bitmap : await loadPhotoSource(ph.src, { ...limits, timeoutMs: PHOTO_TIMEOUT_MS, maxSide: PHOTO_MAX_SIDE });
+    }
+    if (photoBitmap) {
+      sourceTransform = upgrade
+        ? rescaleTransform(imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {}),
+          ph.naturalWidth / photoBitmap.width, ph.naturalHeight / photoBitmap.height)
+        : imageToViewportTransform(ph.rect, photoBitmap.width, photoBitmap.height, ph.render || {});
+      if (!sourceTransform) { photoBitmap.close(); photoBitmap = null; }
+    }
+    let box;
+    let viewportBox;
+    let fedPerCssPx = 1;
+    if (sourceTransform) {
+      box = viewportToPhotoBox(msg.drawn, sourceTransform, { width: photoBitmap.width, height: photoBitmap.height });
+      viewportBox = box && mapPhotoBoxToViewport(box, sourceTransform, ph.rect);
+    } else {
+      // Unreadable source: the screenshot, cut where the picture is drawn (not the letterbox bars around it).
+      photoBitmap = await captureDrawnViewport(tab);
+      fedPerCssPx = photoBitmap.width / (msg.viewportWidth || photoBitmap.width / msg.devicePixelRatio);
+      const shown = ph.naturalHeight > 0 ? imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {}) : null;
+      const picture = (shown && mapPhotoBoxToViewport([0, 0, ph.naturalWidth, ph.naturalHeight], shown, ph.rect)) || [ph.rect.x, ph.rect.y, ph.rect.x + ph.rect.w, ph.rect.y + ph.rect.h];
+      viewportBox = [Math.max(msg.drawn[0], picture[0]), Math.max(msg.drawn[1], picture[1]), Math.min(msg.drawn[2], picture[2]), Math.min(msg.drawn[3], picture[3])];
+      box = viewportBox[2] > viewportBox[0] && viewportBox[3] > viewportBox[1]
+        ? viewportRectToBitmapBox(viewportBox, fedPerCssPx, { width: photoBitmap.width, height: photoBitmap.height }) : null;
+    }
+    if (!box || !viewportBox) throw new Error(DRAW_OFF_PHOTO);
+    const fromSource = sourceTransform !== null;
+    // dev-only:start
+    if (capture) drawnPhotoCopy(capture, photoBitmap, box, fromSource);
+    // dev-only:end
+    console.log("[BG] drawn box", fromSource ? (upgrade ? "(source image, upgraded)" : "(source image)") : "(viewport crop)", box.map(Math.round).join(","), "->", viewportBox.map(Math.round).join(","));
+    // A fetched picture is judged on its own pixels; a screenshot at the shown scale (same rule as the scan).
+    const naturalPerFed = naturalPerFedFor({
+      fromSource,
+      shownNaturalPerFed: !fromSource && ph.naturalHeight > 0
+        ? (() => {
+          const shown = imageToViewportTransform(ph.rect, ph.naturalWidth, ph.naturalHeight, ph.render || {});
+          return shown ? 1 / (shown.scaleY * fedPerCssPx) : undefined;
+        })()
+        : undefined,
+    });
+    const fedHeight = box[3] - box[1];
+    const readHeight = Math.round(informationHeight(fedHeight, naturalPerFed));
+    const place = { docBox: toDocBox(viewportBox, msg.scroll), readHeight };
+    // The photo id comes from the picture the box is measured on, as the scan does; the popup sets the real kind.
+    const photoId = photoIdOf(readBitmap(photoBitmap));
+    const shareOfDrawn = (card) => shareOf(photoId, box, photoBitmap.width, photoBitmap.height, card, "missed");
+    if (isTooSmallBox(box)) {
+      const cardCanvas = rectifyCard(photoBitmap, box);
+      return drawnCardEntry({ box: viewportBox, tooSmall: true, crop: await encodeCrop(cardCanvas), share: shareOfDrawn(null), ...place });
+    }
+    const pixels = readBitmap(photoBitmap);
+    const cardBox = extendClippedBottom(pixels.data, pixels.width, pixels.height, box);
+    const cardCanvas = await cardCanvasFor(photoBitmap, box);
+    const stampCanvas = cardBox[3] === box[3] ? null : rectifyCard(photoBitmap, cardBox);
+    let read;
+    try {
+      read = await identifyCard(cardCanvas, era, fedHeight, stampCanvas, informationHeight(fedHeight, naturalPerFed), { bitmap: photoBitmap, box });
+    } catch (err) {
+      console.error("[BG] drawn card read failed:", err?.message || err);
+      read = { identity: null, confidence: 0, abstain: true, market_price: null, price_variant: null, price_grid: null };
+    }
+    [read] = await withBestGuesses([read], null);
+    const crop = await encodeCrop(cardCanvas);
+    let entry = drawnCardEntry({ box: viewportBox, read, crop, share: shareOfDrawn(read), ...place });
+    // The usual price path: batch pricing for the ids the row can show, then the candidates a Choose row lists.
+    const ids = collectBatchIds([entry]);
+    if (ids.size) applyBatchedPrices([entry], await batchPriceCards([...ids]));
+    const { rankedScores, ...rest } = entry;
+    return isUnsure(entry)
+      ? { ...rest, candidates: candidatesFor(entry, _meta, 5, era), ...(entry.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) }
+      : rest;
+  } finally {
+    photoBitmap?.close?.();
+  }
+}
+
 // ─── corrections ─────────────────────────────────────────────────────────────
 
 function photoIdOf(pixels) {
@@ -1064,13 +1498,15 @@ function photoIdOf(pixels) {
   }
 }
 
-const shareOf = (photoId, box, width, height, card) => (photoId ? shareFor({ photoId, box, width, height, card }) : null);
+const shareOf = (photoId, box, width, height, card, kind = "found") => (photoId ? shareFor({ photoId, box, width, height, card, kind }) : null);
 
 // A scan keeps its pictures at 375x525; the relay gets them smaller (docs/plans/shared-learning.md). Null when none fits.
 async function shareCrop(cropDataUrl) {
   if (typeof cropDataUrl !== "string") return null;
   const bitmap = await b64ToBitmap(cropDataUrl.replace(/^data:image\/jpeg;base64,/, ""));
   try {
+    // Scan crops are 375x525, so they are never too small; a drawn card restored from the saved session keeps only a 160 pixel thumbnail, which must not be upscaled.
+    if (cropTooSmall(bitmap.width, bitmap.height)) return null;
     const { width, height } = cropSize(bitmap.width, bitmap.height);
     for (const quality of [CROP_QUALITY, 0.6, 0.45]) {
       const text = (await jpegDataUrl(bitmap, width, height, quality)).replace(/^data:image\/jpeg;base64,/, "");
@@ -1085,14 +1521,28 @@ async function shareCrop(cropDataUrl) {
 // Never lets sharing break the pick the user made.
 async function contributeTeachPick(scan, msg) {
   try {
-    const share = scan?.shares?.[msg.index];
+    const { share, crop: scanCrop } = correctionSource(scan, msg);
     if (!share || share.split !== "teach" || !(await _sharing.enabled())) return;
-    const crop = await shareCrop(scan.crops?.[msg.index]);
+    const crop = await shareCrop(scanCrop);
     if (!crop) return;
-    await _sharing.contribute({ photoId: share.photoId, cards: [teachRow({ share, crop, pickedId: msg.pickedId, via: msg.via })] });
+    // A drawn box is a box signal (the user marked it), never a plain pick.
+    const row = msg.drawn === true ? signalRow({ share, crop, source: "drawn", pickedId: msg.pickedId }) : teachRow({ share, crop, pickedId: msg.pickedId, via: msg.via });
+    if (!row) return;
+    await _sharing.contribute({ photoId: share.photoId, cards: [row] });
   } catch (err) {
     console.error("[BG] sharing a pick failed:", err?.message || err);
   }
+}
+
+// A drawn, removed or put-back box as its own one-card contribution. Never lets sharing break what the user did.
+async function contributeBoxSignal(msg) {
+  try {
+    const scan = () => (typeof msg.scanId === "string" ? _corrections.getScan(msg.scanId).catch(() => null) : null);
+    await contributeSignal({ sharing: _sharing, scan, msg, shrink: shareCrop });
+  } catch (err) {
+    console.error("[BG] sharing a box signal failed:", err?.message || err);
+  }
+  return { ok: true };
 }
 
 async function confirmExam(msg) {
@@ -1107,7 +1557,9 @@ async function confirmExam(msg) {
   const crops = await Promise.all(scan.crops.map((crop) => shareCrop(crop).catch(() => null)));
   const known = (id) => Boolean(catalogCard(id));
   let sent = 0;
+  const drawn = Array.isArray(msg.drawnIndices) ? msg.drawnIndices.filter(Number.isInteger) : [];
   for (const [photoId, indices] of examGroups(scan.shares)) {
+    if (!examGroupAllowed(indices, drawn)) continue;
     const cards = examRows({ shares: scan.shares, indices, crops, picks: scan.examPicks || {}, displayed, known });
     if (!cards) continue;
     try {
@@ -1174,8 +1626,60 @@ async function collectTestPhoto(bitmap, detections, pageUrl) {
 }
 // dev-only:end
 
+// dev-only:start
+// ─── drawn-box training log ──────────────────────────────────────────────────
+
+const DRAWN_PHOTO_MAX_SIDE = 1600;
+const DRAWN_PHOTO_QUALITY = 0.85;
+const DRAWN_EXPORT_CHUNK = 10;
+
+// A small copy of the picture the box was read from, made while the bitmap is still open (it is closed when the read
+// ends). Only drawing it happens here; the JPEG is encoded after the card has been sent.
+function drawnPhotoCopy(capture, bitmap, box, fromSource) {
+  try {
+    const scale = Math.min(1, DRAWN_PHOTO_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = new OffscreenCanvas(width, height);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+    Object.assign(capture, { canvas, width, height, box: box.map((v) => Math.round(v * scale * 10) / 10), source: fromSource ? "photo" : "screenshot" });
+  } catch (err) {
+    console.error("[BG] copying the drawn photo failed:", err?.message || err);
+  }
+}
+
+// Runs after the drawn card has been sent and never throws: a failure here only costs the example.
+function recordDrawnExample(id, card, tab, capture) {
+  const write = (async () => {
+    const photo = await jpegDataUrl(capture.canvas, capture.width, capture.height, DRAWN_PHOTO_QUALITY);
+    await _drawnExamples.add({
+      id,
+      ts: Date.now(),
+      extVersion: chrome.runtime.getManifest().version,
+      modelTag: _photoCheck?.model ?? null,
+      pageUrl: String(tab.url ?? "").split("#")[0],
+      source: capture.source,
+      photo,
+      photoWidth: capture.width,
+      photoHeight: capture.height,
+      box: capture.box,
+      crop: card.crop ?? null,
+      readHeight: card.readHeight ?? null,
+      tooSmall: card.tooSmall === true,
+      kind: null,
+    });
+  })().catch((err) => {
+    console.error("[BG] saving a drawn example failed:", err?.message || err);
+    return null;
+  });
+  _drawnExampleWrites.set(id, write);
+  write.finally(() => { if (_drawnExampleWrites.get(id) === write) _drawnExampleWrites.delete(id); });
+}
+// dev-only:end
+
 // Only the extension's own pages may read or write corrections; a web page's content script may not.
 const _ownPageActions = {
+  shareBoxSignal: (msg) => contributeBoxSignal(msg),
   findCards: async (msg) => {
     await _ensureCatalog();
     return { cards: findCards(_meta, msg.query, { era: eraById(msg.era) }) };
@@ -1185,13 +1689,19 @@ const _ownPageActions = {
     if (!catalogCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
     // A scan older than the last two has lost its pictures; the answer is still worth keeping.
     const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
-    // An exam photo's answers are held out: nothing learns from them here, and they leave only as a whole when the user confirms the photo.
-    if (scan?.shares?.[msg.index]?.split === "exam") {
-      const source = msg.via === "wrong-card" ? "wrong-card" : "pick";
-      await _corrections.saveScan({ ...scan, examPicks: { ...scan.examPicks, [msg.index]: { cardId: msg.pickedId, source } } });
-      return { ok: true };
+    // An exam photo's answers leave only as a whole, when sharing is on and the user confirms the photo; they never enter
+    // the shared training queue. That is the only thing the exam split decides: the correction itself is always kept here.
+    if (examHoldAllowed(msg)) await holdExamPick(_corrections, scan, msg, await _sharing.enabled().catch(() => false));
+    // The same card the user corrected before, confirmed again from a different crop: that counts as "x2" on the earlier
+    // correction instead of storing a near-duplicate picture.
+    const agreed = await agreeWithReference(_corrections, msg);
+    if (agreed) {
+      referencesChanged();
+      contributeTeachPick(scan, msg);
+      return { ok: true, count: agreed.count, agreed: true, remembered: await referencesInUse() };
     }
-    const record = correctionRecord({
+    const wrongId = wrongIdOf(msg.guess?.id, msg.pickedId, (id) => catalogCard(id)?.name);
+    const draft = correctionRecord({
       ts: Date.now(),
       scanId: msg.scanId,
       index: msg.index,
@@ -1199,17 +1709,41 @@ const _ownPageActions = {
       guess: msg.guess,
       pickedId: msg.pickedId,
       via: msg.via,
-      crop: scan?.crops?.[msg.index],
+      crop: correctionSource(scan, msg).crop,
       extVersion: chrome.runtime.getManifest().version,
+      why: msg.guess?.why,
+      wrongId,
     });
-    // The old answer's vector must not outlive it; a failed delete is caught by the ts check in correctionsToEmbed.
-    if (record.id) {
-      await _corrections.deleteReference(record.id).catch((err) => console.error("[BG] dropping the old reference failed:", err?.message || err));
-      referencesChanged();
-    }
-    await _corrections.save(record);
+    // History, the x2 count, the cap and a full disk are handled in lib/correction-save.js.
+    const record = await storeCorrection(_corrections, draft);
+    referencesChanged();
     if (_ready) embedPendingReferences();
     contributeTeachPick(scan, msg);
+    return { ok: true, count: record.count, remembered: await referencesInUse() };
+  },
+  // "Can't price this": a local correction row of type skip. Never shared: nothing here reaches _sharing.
+  saveSkip: async (msg) => {
+    const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+    const draft = skipDraft({
+      ts: Date.now(),
+      scanId: msg.scanId,
+      index: msg.index,
+      pageUrl: scan?.pageUrl,
+      guess: msg.guess,
+      crop: correctionSource(scan, msg).crop,
+      extVersion: chrome.runtime.getManifest().version,
+      why: msg.guess?.why,
+    });
+    const record = await storeCorrection(_corrections, draft);
+    referencesChanged();
+    if (_ready) embedPendingReferences();
+    return { ok: true, count: record.count, remembered: await referencesInUse() };
+  },
+  // Put back: the skip is superseded on the same crop (it stays in the row's history) and its reference goes.
+  unskip: async (msg) => {
+    const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+    await storeCorrection(_corrections, unskipDraft({ ts: Date.now(), scanId: msg.scanId, index: msg.index, pageUrl: scan?.pageUrl, extVersion: chrome.runtime.getManifest().version }));
+    referencesChanged();
     return { ok: true };
   },
   confirmExam: (msg) => confirmExam(msg),
@@ -1259,6 +1793,23 @@ const _ownPageActions = {
     await _corrections.clearPhotos();
     return { ok: true };
   },
+  // The popup reports what its drawn box turned out to be once it has placed it.
+  drawnPlaced: async (msg) => {
+    if (typeof msg.exampleId !== "string" || !DRAWN_KINDS.includes(msg.kind)) return { error: "Not allowed." };
+    await _drawnExampleWrites.get(msg.exampleId);
+    return { ok: await _drawnExamples.setKind(msg.exampleId, msg.kind) };
+  },
+  drawnExamplesCount: async () => ({ count: await _drawnExamples.count() }),
+  // A chunk at a time, oldest first: all of them in one message would be over the message size limit.
+  exportDrawnExamples: async (msg) => {
+    const all = await _drawnExamples.list();
+    const from = Number.isInteger(msg.from) && msg.from > 0 ? msg.from : 0;
+    return { total: all.length, examples: all.slice(from, from + DRAWN_EXPORT_CHUNK) };
+  },
+  clearDrawnExamples: async () => {
+    await _drawnExamples.clear();
+    return { ok: true };
+  },
   // dev-only:end
 };
 
@@ -1303,6 +1854,24 @@ async function loadedReferences() {
 let _packRows = [];
 let _photoCheck = null;
 
+// The check that ships inside the extension, used when the signed bundle has none. Read once; a missing or
+// unreadable file leaves the check off, as before.
+const PACKAGED_CHECK_PATHS = ["assets/check.bin", "assets/check.json"];
+let _packagedCheck;
+
+async function loadPackagedCheck() {
+  try {
+    const [bin, meta] = await Promise.all(PACKAGED_CHECK_PATHS.map((path) => fetch(chrome.runtime.getURL(path)).then((res) => {
+      if (!res.ok) throw new Error(`${path} answered ${res.status}`);
+      return path.endsWith(".json") ? res.json() : res.arrayBuffer();
+    })));
+    return parsePackagedCheck(new Uint8Array(bin), meta);
+  } catch (err) {
+    console.log("[BG] packaged card check not available:", err?.message || err);
+    return null;
+  }
+}
+
 const packBuild = () => {
   const { clip, crop } = modelTags();
   return { model: clip, crop };
@@ -1320,6 +1889,7 @@ function applyBundle() {
 
 async function applyBundleOnce() {
   if (!_metaBase) return;
+  if (_packagedCheck === undefined) _packagedCheck = await loadPackagedCheck();
   const stored = await loadStoredBundle(_shareStore, packBuild());
   const merged = stored?.extra ? mergeExtra(_metaBase, stored.extra) : null;
   let adapter = null;
@@ -1338,8 +1908,8 @@ async function applyBundleOnce() {
   _meta = merged ? _metaBase.concat(merged.meta) : _metaBase;
   _catalogNames = _indicesByName = _setSizes = _metaById = _catalogSets = _metaRank = null;
   _packRows = stored?.memory ?? [];
-  _photoCheck = stored?.check ?? null;
-  console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }));
+  _photoCheck = pickCheck(stored, _packagedCheck, packBuild());
+  console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }), "| card check:", _photoCheck ? (stored?.check ? "bundle" : "packaged") : "off");
   if (adapter) console.log("[BG] photo adapter in use: rank", adapter.rank, "sha", stored.manifest.assets.adapter.sha256.slice(0, 8), "seq", stored.manifest.seq);
   else console.log("[BG] photo adapter not in use:", stored ? "the bundle has none" : "no bundle stored yet");
 }
@@ -1384,7 +1954,8 @@ async function lookalikePenaltyInUse() {
 
 async function referencesInUse() {
   try {
-    return (await chrome.storage.local.get("useReferences")).useReferences === true;
+    // On unless the user switched it off.
+    return (await chrome.storage.local.get("useReferences")).useReferences !== false;
   } catch {
     return false;
   }
@@ -1403,12 +1974,14 @@ function embedSerial(canvas) {
   return run;
 }
 
-// The pipeline's "is this a card" check, on the raw embedding of a detected box. A failure keeps the box.
-async function boxLooksLikeCard(canvas) {
+// The pipeline's "is this a card" check, on the raw embedding of a detected box and, for a v2 check, the detector's
+// own confidence and the box's w/h (`extras`). A failure, or a check that cannot run, keeps the box.
+async function boxLooksLikeCard(canvas, extras) {
   if (!_photoCheck) return true;
   try {
-    const p = cardProbability(await embedSerial(canvas), _photoCheck);
-    if (p >= _photoCheck.threshold) return true;
+    const { keep, p } = checkKeepsBox(await embedSerial(canvas), _photoCheck, extras);
+    if (p === null) console.log("[BG]   card check could not run (missing detector confidence or aspect); box kept");
+    if (keep) return true;
     console.log("[BG]   box dropped by the card check, p=" + p.toFixed(2));
     return false;
   } catch (err) {
@@ -1419,16 +1992,16 @@ async function boxLooksLikeCard(canvas) {
 
 // A reference only reorders cards the catalog already returned, at the catalog's own top score, so a
 // reprint of a corrected card is not made certain. Any failure leaves the catalog hits as they were.
-async function withReferenceHit(embedding, hits, rawTop = hits[0]?.score ?? 0) {
+async function withReferenceHit(embedding, hits, rawTop = hits[0]?.score ?? 0, height = 0) {
   try {
     // The community pack is in use only after it passed the exam gate (lib/bundle.js); the user's own rows need their setting.
     const own = (await referencesInUse()) ? await loadedReferences() : [];
     const pack = _packRows;
     // Same as pipeline/gate.py: the raw embedding against the rows, beaten against the raw catalog top score.
-    return applyMemory(embedding, pack.length ? own.concat(pack) : own, hits, rawTop, _meta);
+    return applyMemory(embedding, own, hits, rawTop, _meta, { height, pack });
   } catch (err) {
     console.error("[BG] reference lookup failed:", err?.message || err);
-    return { hits, referencedId: null };
+    return { hits, referencedId: null, memory: null };
   }
 }
 
@@ -1521,7 +2094,7 @@ async function handleDetect(imageB64, sendResponse) {
     // Sequential — single-threaded WASM cannot handle concurrent session.run() calls
     const cards = [];
     for (const { box, score } of rawBoxes) {
-      const cardCanvas = rectifyCard(bitmap, box);
+      const cardCanvas = await cardCanvasFor(bitmap, box);
       const embedding  = await embedSerial(cardCanvas);
       const { hits: catalogHits, rawHits } = await searchBoth(embedding);
       if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
@@ -1555,13 +2128,8 @@ async function relayToTab(msg, tabId = null) {
     if (candidate) _setTargetTabId(candidate.id);
   }
   if (_targetTabId === null) return;
-  const relayMsg = msg.action === "relayOverlay"
-    ? { action: "showOverlay", cards: msg.cards, srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, ...(msg.fullSize ? { fullSize: msg.fullSize } : {}) }
-    : msg.action === "relayHighlight"
-      ? { action: "highlightCard", index: msg.index, scroll: msg.scroll }
-      : { action: "clearOverlay" };
   // A page the extension may not touch (no access granted, or a browser page) just gets no overlay.
-  await sendToTab(chrome, _targetTabId, relayMsg).catch(() => {});
+  await sendToTab(chrome, _targetTabId, tabMessageFor(msg)).catch(() => {});
 }
 
 // Stable key for a photo/image rect so the multi-card preemption set can
@@ -1604,7 +2172,9 @@ async function settleFromCorners(result, numberSource) {
       result.abstain = false;
       result.setEvidence = hit.via === "code" ? "code" : "number";
       result.numberRead = read.total ? `${read.number}/${read.total}` : read.number;
-      Object.assign(result, await priceIdentity(identity));
+      result.market_price = null;
+      result.price_variant = null;
+      result.price_grid = null;
       return;
     }
   }
@@ -1621,24 +2191,27 @@ const STAMP_CARD_H = 525;
  * A stamp rules out the set choices that never had a 1st Edition.
  */
 async function identifyCard(cardCanvas, era = null, sourceHeight = 0, stampCanvas = null, capHeight = sourceHeight, numberSource = null) {
-  const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource);
+  const read = await identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource, capHeight);
   console.log("[BG]   card h=" + Math.round(sourceHeight), "info=" + Math.round(capHeight), "conf=" + (read.confidence ?? 0).toFixed?.(2), read.abstain ? "abstain" : "named", read.identity?.name ?? "-", "top=" + (read.catalogTop?.toFixed?.(2) ?? "-"));
   // A set that is still open (several printings of the same art) is never shown as high; a number, symbol or stamp read has already settled it by now.
-  const settled = capUnconfirmedSet(await withSetRange(read));
-  return checkTitle(capSmallSource(settled, capHeight), settled, cardCanvas, capHeight, era);
+  const settled = capUnconfirmedSet(read);
+  const checked = await checkTitle(markChoose(settled, capHeight), cardCanvas, capHeight, era);
+  // The title verdict, the stripe and a number read are only known now: they complete the why-record.
+  return checked?.why ? { ...checked, why: withVerdicts(checked.why, checked) } : checked;
 }
 
-// The title line is read from crops this tall up (none below 150 px was legible on the 11 Facebook photos).
-const TITLE_MIN_HEIGHT = 150;
+// The title line is read from crops this tall up: the confirm rule (lib/fusion.js) uses it before it decides, and
+// nothing below the rule's own minimum height can confirm.
+const TITLE_MIN_HEIGHT = CONFIRM_MIN_HEIGHT;
 const TITLE_RERANK_DEPTH = 20;
 
 /**
  * The card's own title line as a second opinion on the picture match (lib/set-choice.js titleVerdict).
- * Agreeing, a name the small-crop cap left unsure may show as identified. Naming another catalog card, that card
+ * Its demotion already acted inside the confirm rule (recognizeWith). Naming another catalog card, that card
  * becomes the guess when it is among the closest matches, else the picture's name is only asked about.
  * Silent, nothing changes. A changed name is always asked about, never shown as identified.
  */
-async function checkTitle(result, uncapped, cardCanvas, height, era) {
+async function checkTitle(result, cardCanvas, height, era) {
   if (!result || result.cardBack || result.numberRead || !(height >= TITLE_MIN_HEIGHT)) return result;
   const name = result.abstain ? null : result.identity?.name || null;
   let text = "";
@@ -1650,12 +2223,8 @@ async function checkTitle(result, uncapped, cardCanvas, height, era) {
   }
   const verdict = titleVerdict(name, text, catalogNames());
   if (verdict.kind === "silent") return result;
-  if (verdict.kind === "agree") {
-    const capped = result.unsure && result.smallSource && !uncapped.unsure && !uncapped.abstain && uncapped.confidence > SMALL_SOURCE_CONFIDENCE_CAP;
-    if (!capped) return { ...result, titleConfirmed: true };
-    console.log("[BG]   title confirms", JSON.stringify(name), "- shown as identified");
-    return { ...uncapped, confidence: Math.min(uncapped.confidence, BELOW_HIGH_CONFIDENCE), smallSource: true, titleConfirmed: true };
-  }
+  // Agreeing adds nothing to the confirm rule (no bonus), so a CHOOSE stays one.
+  if (verdict.kind === "agree") return { ...result, titleConfirmed: true };
   const { hits } = await searchBoth(await embedSerial(cardCanvas));
   const wanted = choiceName(verdict.titleName);
   const hit = hits.slice(0, TITLE_RERANK_DEPTH).find((h) => {
@@ -1686,22 +2255,22 @@ async function guessFromTitle(card, hits, before) {
   };
   const choices = setChoices(card, hits, _meta);
   if (choices.length > 1) {
-    return withSetRange({
+    return {
       ...base,
       identity: { name: card.name },
-      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number, score: hitScore(hits, id) })),
+      setChoices: choices.map((row) => ({ ...choiceSummary(row), score: hitScore(hits, row.id) })),
       market_price: null, price_variant: null, price_grid: null,
-    });
+    };
   }
-  return { ...base, identity: card, ...(await priceIdentity(card)) };
+  return { ...base, identity: card, market_price: null, price_variant: null, price_grid: null };
 }
 
-// The closest cards with the score they were ranked by, for the page's set prior to re-order (lib/set-prior.js).
+// The closest cards with the rank they were ordered by and their cosine score, for the page's set prior to re-order (lib/set-prior.js).
 function rankedIds(hits, limit = 10) {
   const out = [];
   for (const hit of hits || []) {
     const id = _meta[hit?.index]?.id;
-    if (id && !out.some((o) => o.id === id)) out.push({ id, rank: Math.round((hit.rank ?? hit.score) * 10000) / 10000 });
+    if (id && !out.some((o) => o.id === id)) out.push({ id, rank: Math.round((hit.rank ?? hit.score) * 10000) / 10000, score: Math.round(hit.score * 10000) / 10000 });
     if (out.length >= limit) break;
   }
   return out;
@@ -1719,44 +2288,16 @@ async function withBestGuesses(reads, setHint = null) {
       out.push(reads[i]);
       continue;
     }
-    let priced = { market_price: null, price_variant: null, price_grid: null };
-    try {
-      priced = await priceIdentity(card);
-    } catch (err) {
-      console.log("[BG] no price for", card.id, err?.message || err);
-    }
+    // Price will be filled in by batch pricing at the end of the scan.
+    const emptyPrice = { market_price: null, price_variant: null, price_grid: null };
     console.log("[BG] best guess", card.id, decision.source);
-    out.push(withGuess(reads[i], decision, card, priced));
+    out.push(withGuess(reads[i], decision, card, emptyPrice));
   }
   return out;
 }
 
-// A name whose set is still open is shown with what the candidate printings sell for, so the row is useful before anyone picks.
-async function withSetRange(read) {
-  const choices = read.setChoices || [];
-  if (read.abstain || choices.length < 2 || read.setRange) return read;
-  const setRange = await rangeOfChoices(choices);
-  return setRange ? { ...read, setRange } : read;
-}
-
-// Every candidate counts toward "N of M sets priced", including one whose price could not be fetched.
-async function rangeOfChoices(choices) {
-  const priced = [];
-  for (const choice of choices) {
-    const card = catalogCard(choice.id);
-    let price = {};
-    try {
-      if (card) price = await priceIdentity(card);
-    } catch (err) {
-      console.log("[BG] no price for", choice.id, err?.message || err);
-    }
-    priced.push(price);
-  }
-  return setRangeSummary(priced);
-}
-
-async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource = null) {
-  const result = await recognizeCard(cardCanvas, era, sourceHeight);
+async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberSource = null, capHeight = sourceHeight) {
+  const result = await recognizeCard(cardCanvas, era, sourceHeight, capHeight);
   if (result.numberRead && result.identity?.id && !result.setChoices) result.setEvidence = "number";
   await settleFromCorners(result, numberSource);
   const setCodes = result.setChoices ? result.setChoices.map((c) => c.setCode) : [result.identity?.setCode];
@@ -1784,6 +2325,8 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
   const readTotal = Number(String(result.numberRead ?? "").split("/")[1]);
   const numberedFinish = finishFromNumber(result.identity?.setCode, result.identity?.number, readTotal) || result.agreedFinish || null;
   if (numberedFinish) {
+    // Read from the printed number, not the picture, so it may price without the user's confirmation.
+    result.finishSure = numberedFinish;
     result.variant = {
       edition: result.variant?.edition ?? null,
       finish: numberedFinish,
@@ -1807,18 +2350,8 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
       console.log("[BG] wizards copyright");
     }
   }
-  if (setUncertain && !result.identity?.id) {
-    const stamped = choiceForStamp(result.setChoices, artText);
-    const stampedCard = stamped ? catalogCard(stamped.id) : null;
-    if (stampedCard) {
-      console.log("[BG] set stamp", stampedCard.id);
-      result.setEvidence = "stamp";
-      result.identity = stampedCard;
-      result.setChoices = undefined;
-      result.abstain = false;
-      Object.assign(result, await priceIdentity(stampedCard));
-    }
-  }
+  await applySetStamp(result, artText, { cardsInSet: catalogCardsInSet, catalogCard, priceIdentity });
+  if (result.setEvidence === "stamp") console.log("[BG] set stamp", result.identity?.id, result.finishSure === "reverse" ? "reverse holo" : "no reverse holo price");
   if (setUncertain && result.setChoices?.length > 1) {
     const full = cardGrayFull(cardCanvas);
     const symbol = symbolFromScores(symbolScores(full.gray, full.width, full.height));
@@ -1831,7 +2364,9 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
         result.identity = identity;
         result.setChoices = undefined;
         result.abstain = false;
-        Object.assign(result, await priceIdentity(identity));
+        result.market_price = null;
+        result.price_variant = null;
+        result.price_grid = null;
       } else {
         result.setChoices = kept;
       }
@@ -1861,7 +2396,9 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
         result.setUnconfirmed = false;
         result.setChoices = undefined;
         result.abstain = false;
-        Object.assign(result, await priceIdentity(identity));
+        result.market_price = null;
+        result.price_variant = null;
+        result.price_grid = null;
       }
     }
   }
@@ -1874,7 +2411,9 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
       result.identity = identity;
       result.setChoices = undefined;
       result.abstain = false;
-      Object.assign(result, await priceIdentity(identity));
+      result.market_price = null;
+      result.price_variant = null;
+      result.price_grid = null;
     }
   }
   // A Black Star promo number is only one finish. Other sets stay with the
@@ -1882,6 +2421,7 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
   if (result.identity?.setCode === "basep" && !numberedFinish) {
     const finish = finishFromVariants((await getTcgdexCard(result.identity.id))?.variants);
     if (finish) {
+      result.finishSure = finish;
       result.variant = {
         edition: result.variant?.edition ?? null,
         finish,
@@ -1933,9 +2473,9 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
   if (!result.firstEdition || !result.setChoices) return result;
   const stamped = result.setChoices.filter((c) => hasFirstEdition(c.setCode));
   if (stamped.length !== 1) return { ...result, setChoices: stamped.length ? stamped : result.setChoices };
-  const identity = catalogCard(stamped[0].id);
-  if (!identity) return { ...result, setChoices: stamped };
-  return { ...result, identity, setChoices: undefined, ...(await priceIdentity(identity)) };
+  // The stamp is a template score on pixels, not text: it points at the one 1st Edition set but only preselects it.
+  // The choices stay open (a range) until the user confirms with the "?" control.
+  return { ...result, suggestedSetId: stamped[0].id };
 }
 
 /** Card boxes from running the detector over overlapping tiles of a photo (2x2 and 3x3), in photo pixels. */
@@ -1996,14 +2536,32 @@ function cardGrayFull(cardCanvas) {
  */
 const closestIds = (hits) => closestMatches(hits, _meta).map((row) => row.id);
 
-async function recognizeCard(cardCanvas, era = null, sourceHeight = 0) {
+async function recognizeCard(cardCanvas, era = null, sourceHeight = 0, capHeight = sourceHeight) {
   const seen = {};
-  const result = await recognizeWith(cardCanvas, era, sourceHeight, seen);
+  const result = await recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight);
   // catalogTop is saved with a correction so the margin can be measured later; referencedId puts that card first among the candidates.
-  return { ...result, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}) };
+  return { ...result, rankedScores: seen.ranked, catalogTop: seen.catalogTop ?? null, ...(seen.referencedId ? { referencedId: seen.referencedId } : {}), ...(seen.memory ? { memory: seen.memory } : {}), ...(seen.skippedBefore ? { skippedBefore: true } : {}),
+    ...(seen.confirmedBy ? { confirmedBy: seen.confirmedBy } : {}), ...(seen.why && !result.abstain ? { why: seen.why } : {}), ...(seen.choose && !result.numberRead ? { choose: true } : {}),
+    ...(seen.smallRowCos != null && !result.numberRead ? { smallRow: true, smallRowCos: seen.smallRowCos } : {}) };
 }
 
-async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
+// What the confirm rule (lib/fusion.js) needs besides the matches: the card's read height and, from crops tall
+// enough to read, whether the title line spells another catalog name than a candidate's. A failed read is silent.
+async function confirmContext(cardCanvas, capHeight) {
+  const options = { height: capHeight };
+  if (!(capHeight >= TITLE_MIN_HEIGHT)) return options;
+  let text = "";
+  try {
+    text = await readOnce(cardCanvas, "name", readCardName);
+  } catch (err) {
+    console.log("[BG]   title read failed:", err?.message || err);
+    return options;
+  }
+  const known = catalogNames();
+  return { ...options, contradicts: (name) => Boolean(name) && titleVerdict(name, text, known).kind === "contradict" };
+}
+
+async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = sourceHeight) {
   const embedding = await embedSerial(cardCanvas);
   const { hits: catalogHits, rawHits } = await searchBoth(embedding);
   seen.catalogTop = rawHits[0]?.score ?? null;
@@ -2013,20 +2571,38 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
   // The user said when these cards are from: the name, the set choices and the closest cards offered all come from that era's rows,
   // so a modern card that outscores every printing from the era can neither name the card nor be suggested for it.
   const inEraHits = era ? eraHits(embedding, _meta, era) : null;
-  const { hits, referencedId } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0);
+  const { hits, referencedId, memory, skip } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0, capHeight);
   seen.referencedId = referencedId;
-  const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, inEraHits ? hits : rawHits, _meta);
+  seen.skippedBefore = Boolean(skip);
+  seen.memory = memory;
+  seen.ranked = rankedIds(hits);
+  const confirm = await confirmContext(cardCanvas, capHeight);
+  const pictureRead = capAdapterChange(fuseResults(hits, null, _meta, _idMap, confirm), hits, inEraHits ? hits : rawHits, _meta, confirm);
+  // The user's own earlier correction may confirm the card (source "your correction"), or stop a card they called wrong.
+  // A crop like one the user skipped is never confirmed on its own, whatever read it (picture or correction).
+  const verdict = skip ? skipVerdict(memoryVerdict(pictureRead, memory, { hits, meta: _meta })) : memoryVerdict(pictureRead, memory, { hits, meta: _meta });
+  const fused = verdict.fused;
+  seen.confirmedBy = verdict.confirmedBy;
+  const whyFor = (src) => whyOf({
+    src,
+    hits, ranked: seen.ranked, meta: _meta, height: capHeight, tags: modelTags(),
+    ref: memory && !memory.pack ? { id: memory.refId, cos: memory.cos, n: memory.n, ts: memory.ts, bar: referenceBar(capHeight)?.confirm } : undefined,
+  });
+  seen.why = whyFor(verdict.confirmedBy ? "correction" : "picture");
+  const { identity, confidence, abstain } = fused;
+  seen.choose = fused.choose === true;
+  seen.smallRowCos = fused.smallRow === true ? fused.smallRowCos : null;
   const unpriced = { market_price: null, price_variant: null, price_grid: null };
   const named = abstain || !identity ? null : identity.name;
   const numbered = sourceHeight >= NUMBER_MIN_HEIGHT ? await printingFromNumber(cardCanvas, named, hits, era) : null;
   const ocrText = numbered?.text || "";
   if (numbered?.card) {
-    return { identity: numbered.card, confidence, abstain: false, numberRead: numbered.read, ocrText, ...(await priceIdentity(numbered.card)) };
+    return { identity: numbered.card, confidence, abstain: false, numberRead: numbered.read, ocrText, ...unpriced };
   }
   if (!named) {
     const fromRules = era ? await cardFromNameAndRules(cardCanvas, era, null) : null;
     if (fromRules) {
-      return { identity: fromRules, confidence, abstain: false, ocrText, ...(await priceIdentity(fromRules)) };
+      return { identity: fromRules, confidence, abstain: false, ocrText, ...unpriced };
     }
     return {
       identity,
@@ -2048,21 +2624,28 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
   const inPeriod = eraRows ? eraPrintings(scoreIndices(embedding, eraRows)) : null;
   if (inPeriod?.pick != null) {
     const picked = _meta[inPeriod.pick];
-    return { identity: picked, confidence, abstain, ocrText, ...(await priceIdentity(picked)) };
+    return { identity: picked, confidence, abstain, ocrText, ...unpriced };
   }
   const choices = inPeriod?.choices
     ? inPeriod.choices.map((index) => _meta[index])
     : setChoices(identity, hits, _meta);
+  // A near-duplicate of the corrected crop (PRINT_C) settles the exact printing the user picked; the evidence is their label.
+  const setOpen = choices.length > 1 || physicalHits(printingsOf(identity.name).map((index) => ({ index })), _meta).length > 1;
+  if (verdict.printingExact && memory?.cardId === identity.id && setOpen) {
+    seen.confirmedBy = "correction";
+    seen.why = whyFor("correction");
+    return { identity, confidence: Math.min(confidence, BELOW_HIGH_CONFIDENCE), abstain, ocrText, ...unpriced, ...(await versionsAlongside(identity, hits, abstain)) };
+  }
   if (choices.length > 1) {
     const fromRules = era ? await cardFromNameAndRules(cardCanvas, era, identity.name) : null;
     if (fromRules) {
-      return { identity: fromRules, confidence, abstain: false, ocrText, ...(await priceIdentity(fromRules)) };
+      return { identity: fromRules, confidence, abstain: false, ocrText, ...unpriced };
     }
     return {
       identity: { name: identity.name },
       confidence,
       abstain,
-      setChoices: choices.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number, score: hitScore(hits, id) })),
+      setChoices: choices.map((row) => ({ ...choiceSummary(row), score: hitScore(hits, row.id) })),
       ocrText,
       ...unpriced,
       ...(await versionsAlongside(identity, hits, abstain)),
@@ -2070,26 +2653,28 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen) {
   }
   // Other sets print this name: the printing rests on the picture alone until a number, symbol, stamp or title confirms it.
   const setUnconfirmed = physicalHits(printingsOf(identity.name).map((index) => ({ index })), _meta).length > 1;
-  return { identity, confidence, abstain, ocrText, ...(setUnconfirmed ? { setUnconfirmed } : {}), ...(await priceIdentity(identity)), ...(await versionsAlongside(identity, hits, abstain)) };
+  return { identity, confidence, abstain, ocrText, ...(setUnconfirmed ? { setUnconfirmed } : {}), ...unpriced, ...(await versionsAlongside(identity, hits, abstain)) };
 }
 
 // Pikachu ex and Pikachu V can score alike on art. The row keeps the best hit's own price; the lookalikes
 // ride along with theirs so the popup can offer "Other version?" without another round trip.
 async function versionsAlongside(identity, hits, abstain) {
   if (abstain || !identity?.name) return {};
-  const entries = [];
-  for (const card of versionChoices(identity, hits, _meta)) {
-    let priced = { market_price: null, price_variant: null, price_grid: null };
-    let priceError = null;
-    try {
-      priced = await priceIdentity(card);
-    } catch (err) {
-      console.log("[BG] no price for", card.id, err?.message || err);
-      priceError = "Couldn't get a price. Try again.";
-    }
-    entries.push({ id: card.id, name: card.name, set: card.set, setCode: card.setCode, number: card.number, ...priced, ...(priceError ? { priceError } : {}), ...(await ownSetState(card, hits)) });
-  }
-  return entries.length ? { versionChoices: entries } : {};
+  const versionCards = versionChoices(identity, hits, _meta);
+  if (!versionCards.length) return {};
+
+  // Fetch prices and set states for all versions in parallel.
+  // Price will be filled in by batch pricing at the end of the scan.
+  const emptyPrice = { market_price: null, price_variant: null, price_grid: null };
+  const setStates = await Promise.all(versionCards.map((card) => ownSetState(card, hits)));
+
+  const entries = versionCards.map((card, i) => ({
+    ...choiceSummary(card),
+    ...emptyPrice,
+    ...setStates[i],
+  }));
+
+  return { versionChoices: entries };
 }
 
 // How well the picture matched this card, so a best guess among the set choices can follow the picture.
@@ -2102,11 +2687,8 @@ function hitScore(hits, id) {
 async function ownSetState(card, hits) {
   const own = setChoices(card, hits, _meta);
   if (own.length < 2) return {};
-  const setRange = await rangeOfChoices(own);
-  return {
-    setChoices: own.map(({ id, name, set, setCode, number }) => ({ id, name, set, setCode, number })),
-    ...(setRange ? { setRange } : {}),
-  };
+  // setRange will be computed after batch pricing at the end of the scan.
+  return { setChoices: own.map(choiceSummary) };
 }
 
 let _catalogNames = null;
@@ -2282,23 +2864,58 @@ async function printingFromNumber(cardCanvas, name, hits, era) {
 }
 
 /** Price exactly this catalog card. Never substitutes another printing. */
+// Scan-level price cache to avoid duplicate fetches within one scan.
+const _scanPriceCache = new Map();
+
+function clearScanPriceCache() {
+  _scanPriceCache.clear();
+}
+
 async function priceIdentity(identity) {
+  const cacheKey = identity.id;
+  if (_scanPriceCache.has(cacheKey)) {
+    return _scanPriceCache.get(cacheKey);
+  }
+
   // TCGdex is keyed by our catalog id and answers when pokemontcg.io's keyless tier times out.
-  const tcgdex = await getTcgdexCard(identity.id);
+  // Run independent fetches in parallel.
+  const [tcgdex, full, snapshot] = await Promise.all([
+    getTcgdexCard(identity.id),
+    getFullCardPayload(identity.id),
+    currentSnapshot(),
+  ]);
+
   const tcgdexGrid = fromTcgdexPayload(tcgdex, identity);
-  const full = tcgdexGrid ? null : await getFullCardPayload(identity.id);
   const prices = full?.tcgplayer?.prices;
   const tcgPlayerId = tcgPlayerIdFromTcgdex(tcgdex) ?? extractTcgPlayerId(full?.tcgplayer?.url);
-  // Prefer the richer grid from condition-pricing (backend/PPT), then the shared daily snapshot, then TCGdex, then pokemontcg.io.
-  let grid = await getConditionGrid({ ...identity, tcgPlayerId });
-  if (!grid && tcgdexGrid) grid = applySnapshot(tcgdexGrid, await currentSnapshot());
-  if (!grid) grid = tcgdexGrid || fromPokemontcgPayload(prices, full?.tcgplayer?.updatedAt);
+
+  // Prefer the richer grid from condition-pricing (backend/PPT), then TCGdex with the shared daily snapshot's prices
+  // (by product id, then by catalog id for the ex10-ex16 printings TCGdex lacks), then pokemontcg.io.
+  // getConditionGrid now runs its sources in parallel internally.
+  const grid = await getConditionGrid({ ...identity, tcgPlayerId })
+    ?? applyCatalogPrices(tcgdexGrid ? applySnapshot(tcgdexGrid, snapshot) : null, snapshot, identity)
+    ?? fromPokemontcgPayload(prices, full?.tcgplayer?.updatedAt);
+
   const legacyPrice = extractLegacyPrice(prices);
-  return {
+  const result = {
     market_price: legacyPrice?.price ?? null,
     price_variant: legacyPrice?.variant ?? null,
     price_grid: grid || null,
   };
+
+  _scanPriceCache.set(cacheKey, result);
+  return result;
+}
+
+// Persistent cross-scan price cache in chrome.storage.local (TTL: 1 hour); logic lives in lib/batch-price.js.
+const _priceCache = createPriceCache(chrome.storage.local);
+
+function batchPriceCards(cardIds) {
+  return batchPriceCardsWith(cardIds, { cache: _priceCache, catalogCard, priceIdentity, log: console.log });
+}
+
+function applyBatchedPrices(cards, priceMap) {
+  applyBatchedPricesWith(cards, priceMap, { setRangeSummary });
 }
 
 let _catalogSets = null;
@@ -2322,6 +2939,10 @@ let _metaById = null;
 function catalogCard(id) {
   _metaById ??= new Map(_meta.map((card) => [card.id, card]));
   return _metaById.get(id);
+}
+
+function catalogCardsInSet(setCode) {
+  return _meta.filter((card) => card.setCode === setCode);
 }
 
 async function handlePriceCard(id, sendResponse) {
@@ -2414,13 +3035,18 @@ async function loadUpgradedSource(ph, ogImages, pageUrl, { allowedHosts, budget 
     }).then((found) => {
       if (found && isFacebookCdn(new URL(found.url).hostname)) {
         console.log("[BG] reading the Facebook original:", found.bitmap.width + "x" + found.bitmap.height, "(shown", ph.naturalWidth + "x" + ph.naturalHeight + ")");
-        // The original sharpens the match, but how sure a card is shown stays judged on the photo the seller's
-        // buyers see: at 2048 px, 50-card lots put many crops just past the size cap, and those were the wrong ones.
-        return { ...found, naturalPerFed: ph.naturalWidth / found.bitmap.width };
       }
       return found;
     });
 }
+
+// A grid tile's own picture: the site's largest rendition first, the shown one when that is not a read of one card.
+const loadTileSource = (rawUrl, limits) => loadTileSourceWith(rawUrl, {
+  load: loadPhotoSource,
+  readable: canReadPhotoSource,
+  limits,
+  fits: (bitmap) => looksLikeCard(bitmap.width, bitmap.height),
+});
 
 function photoRejected(reason, url) {
   console.log("[BG] photo fetch rejected:", reason, url?.hostname || "");
@@ -2439,14 +3065,22 @@ async function loadPhotoSource(rawUrl, { timeoutMs = 0, maxSide = 0, allowedHost
     const response = await fetch(start.href, { credentials: "omit", redirect: "follow", cache: "force-cache", signal: controller.signal });
     const landed = finalUrlAllowed(response.url || start.href, allowedHosts);
     if (!landed) return photoRejected("ended on a disallowed host", publicHttpsUrl(response.url) || start);
-    if (!response.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) return photoRejected("not an image", landed);
+    const typeVerdict = photoTypeVerdict(response.headers.get("content-type"));
+    if (!response.ok || typeVerdict === "reject") return photoRejected("not an image", landed);
     if ((Number(response.headers.get("content-length")) || 0) > MAX_PHOTO_BYTES) return photoRejected("too large", landed);
     const read = await readCapped(response, MAX_PHOTO_BYTES);
     if (!read) return photoRejected("too large", landed);
+    let blob = read.blob;
+    if (typeVerdict === "sniff") {
+      // Declared as no type or a generic binary: only bytes that really are a picture get through.
+      const sniffed = sniffImageType(read.head);
+      if (!sniffed) return photoRejected("not an image", landed);
+      blob = read.blob.slice(0, read.blob.size, sniffed);
+    }
     // The header gives the size before any pixels are decoded.
     const plan = decodePlan(imageSize(read.head), maxSide);
     if (plan.reject) return photoRejected("dimensions too large", landed);
-    const bitmap = plan.resize ? await createImageBitmap(read.blob, plan.resize) : await createImageBitmap(read.blob);
+    const bitmap = plan.resize ? await createImageBitmap(blob, plan.resize) : await createImageBitmap(blob);
     if (bitmap.width > 10000 || bitmap.height > 10000) {
       bitmap.close();
       return photoRejected("dimensions too large", landed);

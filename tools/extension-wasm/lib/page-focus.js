@@ -155,6 +155,31 @@ export function findRelatedEntries({ entries, headings = [], candidate = null })
   return related;
 }
 
+const ID_RUN = /\d{3,}/;
+
+/**
+ * True when `link` opens another page of the same kind as `pageUrl`: same site and section, same path depth, and an id
+ * in the path that differs (/marketplace/item/123/ next to /marketplace/item/456/, /itm/slug/123 next to /itm/other/456).
+ * On a listing page such a link is another listing; a search or category page has no siblings among its results.
+ */
+export function isSiblingPage(link, pageUrl) {
+  let target;
+  let here;
+  try {
+    target = new URL(link);
+    here = new URL(pageUrl);
+  } catch {
+    return false;
+  }
+  if (target.origin !== here.origin) return false;
+  const a = here.pathname.split("/").filter(Boolean);
+  const b = target.pathname.split("/").filter(Boolean);
+  if (a.length < 2 || a.length !== b.length || a[0] !== b[0]) return false;
+  return a.some((part, i) => part !== b[i] && ID_RUN.test(part) && ID_RUN.test(b[i]));
+}
+
+const linkOf = (entry) => entry?.ctx?.link || entry?.sources?.link || "";
+
 function passThrough(kind, photos, cards, reason) {
   return { kind, main: null, photos, cards, reason };
 }
@@ -167,10 +192,16 @@ function passThrough(kind, photos, cards, reason) {
  *   unknown: neither. Everything is scanned, as before.
  * Sizes are layout sizes, so a hero that runs below the fold still counts. An og:image match only
  * lowers the size a main photo needs; it never lets one of several comparable images win.
+ * A picture that links to a sibling page of `pageUrl` (another listing: "Today's picks", "Similar items") is never
+ * scanned. A page with such links is itself a listing; when its own photo is not found (a video hero), nothing is.
  *
- * @param {{viewport: {w: number, h: number}, photos: object[], cards: object[], ogImages?: string[]}} page
+ * @param {{viewport: {w: number, h: number}, photos: object[], cards: object[], ogImages?: string[], headings?: object[],
+ *   pageUrl?: string, pageLinks?: string[]}} page  pageLinks: hrefs of the links around the page's pictures
  */
-export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = [], headings = [] }) {
+export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = [], headings = [], pageUrl = "", pageLinks = [] }) {
+  const otherListing = (entry) => Boolean(pageUrl) && isSiblingPage(linkOf(entry), pageUrl);
+  const listingPage = Boolean(pageUrl) && (pageLinks.some((link) => isSiblingPage(link, pageUrl))
+    || [...photos, ...cards].some(otherListing));
   const all = [];
   const seen = new Set();
   for (const entry of [...photos, ...cards]) {
@@ -179,7 +210,8 @@ export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = 
     seen.add(key);
     all.push(entry);
   }
-  if (!all.length) return passThrough("unknown", photos, cards, "no-candidates");
+  const noListingPhoto = (reason, fallback = []) => ({ kind: "listing", main: null, photos: [], cards: [], fallback, reason });
+  if (!all.length) return listingPage ? noListingPhoto("no-listing-photo") : passThrough("unknown", photos, cards, "no-candidates");
 
   const viewportArea = Math.max(1, (viewport?.w || 0) * (viewport?.h || 0));
   const plausible = (entry) => {
@@ -188,11 +220,11 @@ export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = 
   };
   const fraction = (entry) => area(entry) / viewportArea;
   const isOg = (entry) => entry.ctx?.ogMatch === true || ogImages.some((url) => sameImageUrl(url, entry.src));
-  const sorted = [...all].sort((a, b) => area(b) - area(a));
+  const sorted = all.filter((entry) => !otherListing(entry)).sort((a, b) => area(b) - area(a));
   const likelyMain = sorted.find((entry) => isOg(entry) && plausible(entry) && fraction(entry) >= OG_MIN_FRACTION)
     || sorted.find((entry) => plausible(entry) && fraction(entry) >= MAIN_MIN_FRACTION) || null;
   const inRelatedSection = findRelatedEntries({ entries: all, headings, candidate: likelyMain });
-  const own = all.filter((entry) => !relatedContext(entry.ctx) && !inRelatedSection.has(entry));
+  const own = all.filter((entry) => !relatedContext(entry.ctx) && !inRelatedSection.has(entry) && !otherListing(entry));
   const visible = own.filter((entry) => !isHidden(entry));
   const bySizeAll = [...visible].sort((a, b) => area(b) - area(a));
   const first = bySizeAll.find((entry) => isOg(entry) && plausible(entry) && fraction(entry) >= OG_MIN_FRACTION)
@@ -222,10 +254,14 @@ export function choosePageFocus({ viewport, photos = [], cards = [], ogImages = 
       main,
       photos: photos.filter((entry) => imageKey(entry) === mainKey),
       // Other gallery photos, tried only when the main one holds no card (a lot photo the detector missed).
-      fallback: photos.filter((entry) => imageKey(entry) !== mainKey && !relatedContext(entry.ctx) && fraction(entry) >= MAIN_MIN_FRACTION),
+      fallback: photos.filter((entry) => imageKey(entry) !== mainKey && !relatedContext(entry.ctx) && !otherListing(entry) && fraction(entry) >= MAIN_MIN_FRACTION),
       cards: cards.filter((entry) => imageKey(entry) === mainKey),
       reason,
     };
+  }
+  // No photo stands out: the listing's own large pictures are still tried, one by one, as its gallery.
+  if (listingPage) {
+    return noListingPhoto("no-listing-photo", photos.filter((entry) => own.includes(entry) && fraction(entry) >= MAIN_MIN_FRACTION));
   }
 
   const sizes = shown.map((entry) => seenArea(entry)).filter((a) => a / viewportArea >= GRID_MIN_FRACTION).sort((a, b) => b - a);

@@ -4,6 +4,7 @@ import {
   MAX_CARDS,
   MAX_SCREENS,
   cardRoom,
+  docBoxFor,
   captureWait,
   judgeDuplicate,
   claimSlot,
@@ -213,4 +214,15 @@ test('a grid tile seen as both <img> and slot is read once; the bigger view wins
   ];
   assert.deepEqual([...coveredByBetterView(views)].sort(), [0, 3]);
   assert.deepEqual([...coveredByBetterView([])], []);
+});
+
+test('docBoxFor: whole-page uses the slot box, a single screen is the box plus the scan scroll, off-page cards get none', () => {
+  const card = { box: [10, 20, 110, 160] };
+  const slot = { docBox: [10, 620, 110, 760] };
+  assert.deepEqual(docBoxFor(card, slot, true, { x: 0, y: 0 }), [10, 620, 110, 760]);
+  assert.deepEqual(docBoxFor(card, slot, false, { x: 5, y: 300 }), [15, 320, 115, 460]);
+  assert.deepEqual(docBoxFor(card, slot, false, { x: 0, y: 0 }), [10, 20, 110, 160]);
+  assert.equal(docBoxFor({ ...card, inGallery: true }, slot, false, { x: 0, y: 0 }), null);
+  assert.equal(docBoxFor(card, null, false, { x: 0, y: 0 }), null);
+  assert.equal(docBoxFor({}, slot, false, { x: 0, y: 0 }), null);
 });

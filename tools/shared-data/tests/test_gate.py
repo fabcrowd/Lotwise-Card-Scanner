@@ -34,14 +34,15 @@ def sets(n, a, b, wa, truth):
 
 
 def near_duplicates():
-    """c-1 is a close look-alike of c-0 (cosine 0.8), so a query between them scores high against both."""
-    rows = [h.unit(0), (0.8 * h.unit(0) + 0.6 * h.unit(1)).astype(np.float32), h.unit(2), h.unit(3)]
+    """c-1 is a look-alike of c-0 (cosine 0.3), close enough that a query between them scores well against both."""
+    rows = [h.unit(0), (0.3 * h.unit(0) + 0.9539 * h.unit(1)).astype(np.float32), h.unit(2), h.unit(3)]
     return Catalog(np.stack(rows), IDS)
 
 
 def between_01():
-    """Raw cosine 0.944 with c-0 and 0.953 with c-1: the catalog answers c-1 (high enough to accept), boost_c0 answers c-0."""
-    v = 0.944 * h.unit(0) + 0.329 * h.unit(1)
+    """Raw cosine 0.74 with c-0 and 0.86 with c-1 (near_duplicates): the catalog answers c-1 with a lead over the 0.03
+    the confirm rule needs, boost_c0 answers c-0 with that lead too."""
+    v = 0.74 * h.unit(0) + 0.6726 * h.unit(1)
     return (v / np.linalg.norm(v)).astype(np.float32)
 
 
@@ -88,6 +89,61 @@ class Outcomes(unittest.TestCase):
         self.assertFalse(better(acceptedRight=12, abstained=6))  # abstain rate may rise by 2 points at most: 1/20 = 5
         self.assertTrue(gate.better_outcome({**base, "n": 100, "abstained": 5}, {**base, "n": 100, "abstained": 7, "acceptedRight": 12}, 10, 12))
         self.assertFalse(gate.better_outcome(base, {**base, "acceptedRight": 12}, top1_before=10, top1_after=10))  # top-1 must rise
+
+
+class ConfirmRule(unittest.TestCase):
+    """lib/fusion.js confirmDecision: height >= 200, a_top >= T(h), margin over the best different-name card >= G(h)."""
+
+    ROWS = {200: (0.68, 0.03), 250: (0.72, 0.03), 300: (0.74, 0.02), 350: (0.76, 0.02)}
+
+    def test_below_min_height_never_confirms(self):
+        self.assertFalse(gate.confirms(0.99, 0.5, 199))
+        self.assertTrue(gate.confirms(0.99, 0.5, 200))
+
+    def test_each_height_band_uses_its_own_pair(self):
+        for height, band in ((200, 200), (249, 200), (250, 250), (299, 250), (300, 300), (349, 300), (350, 350), (900, 350)):
+            t, g = self.ROWS[band]
+            self.assertTrue(gate.confirms(t, g, height), (height, "at T and G"))
+            self.assertFalse(gate.confirms(t - 0.001, g + 1, height), (height, "just under T"))
+            if g > 0:
+                self.assertFalse(gate.confirms(t + 1, g - 0.001, height), (height, "just under G"))
+
+    def test_boundary_heights_switch_band(self):
+        self.assertTrue(gate.confirms(0.70, 0.5, 249))  # T is 0.68 up to 249 ...
+        self.assertFalse(gate.confirms(0.70, 0.5, 250))  # ... and 0.72 from 250
+        self.assertTrue(gate.confirms(0.73, 0.5, 299))  # T is still 0.72 up to 299 ...
+        self.assertFalse(gate.confirms(0.73, 0.5, 300))  # ... and 0.74 from 300
+        self.assertTrue(gate.confirms(0.75, 0.5, 349))  # T is still 0.74 up to 349 ...
+        self.assertFalse(gate.confirms(0.75, 0.5, 350))  # ... and 0.76 from 350
+        self.assertFalse(gate.confirms(0.99, 0.0, 200))  # G is 0.03 in the 200 band
+        self.assertFalse(gate.confirms(0.99, 0.01, 350))  # and 0.02 from 300 up
+
+    def test_unknown_height_uses_the_200_row(self):
+        self.assertEqual(gate.UNKNOWN_HEIGHT_ROW, (200, 0.68, 0.03))
+        self.assertFalse(gate.confirms(0.77, 0.0))  # the native row would need only a 0.02 lead; the 200 row needs 0.03
+        self.assertTrue(gate.confirms(0.70, 0.05))
+        self.assertFalse(gate.confirms(0.70, 0.01))
+        self.assertFalse(gate.confirms(0.67, 0.5))
+        self.assertTrue(gate.confirms(0.68, 0.03, 0))
+
+    def test_same_name_rival_is_ignored_different_name_counts(self):
+        ids = ["a", "b", "c", "d"]
+        names = ["pikachu", "pikachu", "raichu", "mew"]
+        # top a; b is a same-name printing at 0.99 of the top; c is the best different-name card
+        self.assertAlmostEqual(gate.rival_margin([0.90, 0.89, 0.80, 0.50], ids, names), 0.10)
+        self.assertEqual(gate.rival_margin([0.90, 0.89], ids, names), float("inf"))  # only same-name rivals
+        self.assertEqual(gate.rival_margin([0.90], ids, names), float("inf"))
+        # without names every other card is a different name
+        self.assertAlmostEqual(gate.rival_margin([0.90, 0.89, 0.80], ids, None), 0.01)
+
+    def test_catalog_names_must_line_up_with_ids(self):
+        with self.assertRaises(ValueError):
+            Catalog(np.stack([h.unit(k) for k in range(4)]), IDS, names=["a"])
+
+    def test_replay_rows_carry_no_height_so_the_200_row_applies(self):
+        # 200 row: T 0.62, G 0.03. Raw cosine 0.55 abstains, a clear 0.994 read is accepted.
+        res = gate.evaluate({}, {}, EMPTY, (np.stack([h.unit(0)] * 2), ["c-0", "c-1"]), catalog=catalog())
+        self.assertEqual(res["outcomes"]["regression"]["after"], {"acceptedRight": 1, "acceptedWrong": 1, "abstained": 0, "n": 2})
 
 
 class Gate(unittest.TestCase):

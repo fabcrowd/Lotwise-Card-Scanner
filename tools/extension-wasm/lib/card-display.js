@@ -1,5 +1,6 @@
 // What the popup and page overlay are allowed to show as a price.
-// A card with several printings is not quoted until the user picks one.
+// A price is never chosen for something the extension does not know: an unconfirmed card has no price, and a card
+// with several printings is a range until the user picks one (or confirms the printing the picture suggests).
 
 import { variantChoice } from './variant.js';
 
@@ -8,6 +9,7 @@ const SOURCE_NAMES = {
   ppt: 'Price Tracker',
   pokemontcg: 'TCGPlayer',
   tcgdex: 'TCGPlayer',
+  snapshot: 'TCGPlayer',
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -28,8 +30,21 @@ export function editionNote(card) {
   return null;
 }
 
-/** The variant the scan saw on the card itself, or null when the user has to pick. */
+/**
+ * The printing settled by something the camera cannot fool: a finish read from the printed collector number or
+ * the catalog (`finishSure`, set by the scanner). Null when the user has to pick or confirm one.
+ */
 export function detectedVariant(card) {
+  const finish = card?.finishSure;
+  if (!finish) return null;
+  return variantChoice({ edition: null, finish, stamp: null }, card.price_grid?.variants).key;
+}
+
+/**
+ * The printing the picture suggests (variant model, 1st Edition stamp template, drop shadow), or null. Glare can
+ * fake a holo or hide a reverse, so this only preselects the menu: it never prices until the user confirms it.
+ */
+export function suggestedVariant(card) {
   const names = listPrintings(card?.price_grid);
   const seen = card?.variant ? variantChoice(card.variant, card.price_grid?.variants).key : null;
   // No drop shadow can also be blur or glare, so Shadowless is named but not priced.
@@ -40,6 +55,37 @@ export function detectedVariant(card) {
   if (card?.shadow !== true) return null;
   const rest = names.filter((name) => !/^1stEdition/.test(name));
   return rest.length === 1 ? rest[0] : null;
+}
+
+const EDITION_ROW = /^(1stEdition|shadowless)/i;
+const FINISH_SUFFIX = { holofoil: 'Holofoil', reverse: 'ReverseHolofoil', normal: 'Normal' };
+
+/** The lot-level edition choices, in the order the popup offers them. */
+export const LOT_EDITIONS = [
+  { id: 'unlimited', label: 'Unlimited' },
+  { id: 'shadowless', label: 'Shadowless' },
+  { id: 'first', label: '1st Edition' },
+];
+
+/**
+ * A named, settled card whose finish was read from the printed number or catalog but whose grid also has
+ * 1stEdition / Shadowless rows: the finish is known, the edition is not, so the row stays a range until one is chosen.
+ */
+export function needsEdition(card) {
+  if (!card?.finishSure || !isIdentified(card) || !isSetConfirmed(card)) return false;
+  return listPrintings(card.price_grid).some((name) => EDITION_ROW.test(name));
+}
+
+/** The grid row for a card's number-read finish in the given lot edition, or null when the grid has no such row. */
+export function editionVariant(card, edition) {
+  const suffix = FINISH_SUFFIX[card?.finishSure];
+  if (!suffix) return null;
+  const names = listPrintings(card.price_grid);
+  const prefix = { first: '1stEdition', shadowless: 'shadowless', unlimited: 'unlimited' }[edition];
+  if (!prefix) return null;
+  const want = prefix.toLowerCase() + suffix.toLowerCase();
+  const bare = edition === 'unlimited' && card.finishSure === 'normal' ? prefix : null;
+  return names.find((name) => name.toLowerCase() === want || name === bare) ?? null;
 }
 
 export function marketRange(grid) {
@@ -201,22 +247,28 @@ export function swapVersion(card, id) {
     ...(entry.setConfirmed !== undefined ? { setConfirmed: entry.setConfirmed } : {}),
     versionChoices: [snapshotOf(card), ...choices.filter((c) => c !== entry)],
     pricing: false,
+    // Tapping a version is the user's answer: the row stays identified, however unsure the scanner was.
+    unsure: false,
+    userConfirmed: true,
     priceError: open ? null : entry.priceError ?? null,
   };
 }
 
 const hasSetRange = (card) => card?.setRange?.high > 0;
 
-// More than one possible set means the user has to pick before we quote, unless the scanner has made a
-// best guess: that row is quoted like a settled one and marked until the user confirms or changes it.
+// A best guess from the picture, or borrowed from the page's other cards, is not evidence about this card: only a
+// page heading that names the set lets a guessed set be quoted, marked until the user confirms it.
+const isPageGuess = (card) => card?.bestGuess?.source === 'hint';
+
+// More than one possible set means the user has to pick before we quote, unless the page itself names the set.
 export function isSetConfirmed(card) {
-  return (card?.setChoices?.length || 0) <= 1 || card?.setConfirmed === true || Boolean(card?.bestGuess);
+  return (card?.setChoices?.length || 0) <= 1 || card?.setConfirmed === true || isPageGuess(card);
 }
 
 /** The user accepted the guessed printing: it stops being a guess, and the Set? menu stays. */
 export function confirmGuess(card) {
   if (!card?.bestGuess) return card;
-  const next = { ...card, setConfirmed: true };
+  const next = { ...card, setConfirmed: true, userConfirmed: true };
   delete next.bestGuess;
   return next;
 }
@@ -232,7 +284,9 @@ export function isUnsure(card) {
 
 /** A card the scanner named, is not guessing about, and whose set is settled. */
 export function isIdentified(card) {
-  if (!card || card.cardBack) return false;
+  if (!card || card.cardBack || card.skipped === true) return false;
+  // A crop that looks like one the user skipped is never named on its own: it waits for the user's pick.
+  if (card.skippedBefore === true && card.userConfirmed !== true) return false;
   return Boolean(card.identity?.name || card.identity?.id) && !isUnsure(card) && (isSetConfirmed(card) || hasSetRange(card));
 }
 
@@ -250,11 +304,12 @@ export function photoLabel(card) {
 
 /**
  * Named for sure, but which printing is still the user's call: several sets print the same art and nothing on the
- * card (number, symbol, stamp) has settled it, and no printing is guessed. Shown as identified with a price range and a
- * "Pick printing" menu. A card with a guessed printing keeps that printing's price and the "Set?" menu.
+ * card (number, symbol, stamp) has settled it, and no printing is guessed from the page's words. Shown as identified
+ * with a price range and a "Pick printing" menu (a picture-only guess preselects it). A printing guessed from the
+ * page keeps that printing's price and the "Set?" menu.
  */
 export function needsPrinting(card) {
-  if (!isIdentified(card) || card.setConfirmed === true || card.bestGuess) return false;
+  if (!isIdentified(card) || card.setConfirmed === true || isPageGuess(card)) return false;
   return (card.setChoices?.length || 0) > 1;
 }
 
@@ -263,30 +318,37 @@ export function needsPrinting(card) {
  * when there are any. unrecognised: only a card back, which is not a card to identify.
  */
 export function classifyCard(card) {
+  if (card?.skipped === true) return 'skipped';
+  if (card?.notCard === true) return 'hidden';
   if (isIdentified(card)) return 'identified';
   if (card?.cardBack) return 'unrecognised';
   return 'pick';
 }
 
-/** Indexes of the cards for the main list and of those folded into "not recognised". */
+/** Indexes of the cards for the main list, those folded into "not recognised", and those the user skipped. */
 export function splitByRecognition(cards) {
   const shown = [];
   const hidden = [];
+  const skipped = [];
+  const notCard = [];
   (cards || []).forEach((card, index) => {
-    (classifyCard(card) === 'unrecognised' ? hidden : shown).push(index);
+    const kind = classifyCard(card);
+    (kind === 'hidden' ? notCard : kind === 'skipped' ? skipped : kind === 'unrecognised' ? hidden : shown).push(index);
   });
-  return { shown, hidden };
+  return { shown, hidden, skipped, notCard };
 }
 
 const plural = (n, one, many) => (n === 1 ? one : many);
 
 /** "Found 15 cards: 2 identified (1 to pick printing), 13 need your pick". Empty when nothing was found. */
 export function scanStatus(cards) {
-  const list = cards || [];
+  const list = (cards || []).filter((card) => card?.notCard !== true);
   if (list.length === 0) return '';
-  const counts = { identified: 0, pick: 0, unrecognised: 0 };
+  const counts = { identified: 0, pick: 0, unrecognised: 0, skipped: 0 };
   let printing = 0;
+  let removed = 0;
   for (const card of list) {
+    if (card?.removed === true) { removed += 1; continue; }
     counts[classifyCard(card)] += 1;
     if (needsPrinting(card)) printing += 1;
   }
@@ -294,17 +356,14 @@ export function scanStatus(cards) {
     counts.identified ? `${counts.identified} identified${printing ? ` (${printing} to pick printing)` : ''}` : '',
     counts.pick ? `${counts.pick} ${plural(counts.pick, 'needs', 'need')} your pick` : '',
     counts.unrecognised ? `${counts.unrecognised} not recognised` : '',
+    counts.skipped ? `${counts.skipped} skipped` : '',
+    removed ? `${removed} removed` : '',
   ].filter(Boolean);
   return `Found ${list.length} ${plural(list.length, 'card', 'cards')}: ${parts.join(', ')}`;
 }
 
-// A guess is not part of the total until the user confirms it.
-function isOnlyAGuess(card) {
-  if (card?.setConfirmed === true) return false;
-  return card?.abstain === true
-    || card?.unsure === true
-    || (Number.isFinite(card?.confidence) && confTier(card.confidence) === 'low');
-}
+// A $0, negative or NaN figure is a gap in the data, not a price.
+const isPositivePrice = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0;
 
 export function quotedPrice(card, choice, enabledConditions = ['NM']) {
   if (!isSetConfirmed(card)) return null;
@@ -316,54 +375,101 @@ export function quotedPrice(card, choice, enabledConditions = ['NM']) {
   const order = enabledConditions.length ? enabledConditions : ['NM'];
   if (conditions) {
     for (const condition of order) {
-      if (conditions[condition] != null) return { price: conditions[condition], condition, printing };
+      if (isPositivePrice(conditions[condition])) return { price: conditions[condition], condition, printing };
     }
     return null;
   }
-  if (typeof card?.market_price === 'number' && names.length <= 1) {
+  if (isPositivePrice(card?.market_price) && names.length <= 1) {
     return { price: card.market_price, condition: null, printing };
   }
   return null;
 }
 
+/**
+ * The user (or the grid, with one printing) settled the printing and the set, yet that printing has no price at the
+ * conditions shown. Its price must never be borrowed from the other printings, so it is "no price", not a range.
+ */
+export function chosenPrintingHasNoPrice(card, choice, enabledConditions = ['NM']) {
+  if (!isSetConfirmed(card)) return false;
+  const grid = card?.price_grid;
+  if (listPrintings(grid).length < 2 || !isPrintingConfirmed(grid, choice)) return false;
+  return quotedPrice(card, choice, enabledConditions) === null;
+}
+
 // A range that already exists on the row for the condition being shown, or null.
-function rowRange(card, condition) {
+export function rowRange(card, condition) {
   const range = card?.setRange;
   if (!(range?.high > 0)) return null;
   return range.byCondition?.[condition] ?? (condition === 'NM' || !range.byCondition ? range : null);
 }
 
+/** A price older than this many days is shown as old and stays out of the totals and the export. */
+export const STALE_PRICE_DAYS = 30;
+
+/**
+ * True when the grid's own date is more than STALE_PRICE_DAYS old, whichever source it came from. A grid with no
+ * date, or one that does not parse, is unknown rather than stale. A grid already flagged `stale` stays stale.
+ */
+export function isGridStale(grid, now = Date.now()) {
+  if (!grid) return false;
+  if (grid.stale === true) return true;
+  const stamp = Date.parse(typeof grid.updatedAt === 'string' ? grid.updatedAt : '');
+  return Number.isFinite(stamp) && now - stamp > STALE_PRICE_DAYS * DAY_MS;
+}
+
+// A price that stays out of the totals: its grid is older than STALE_PRICE_DAYS.
+export const isStale = (card, now = Date.now()) => isGridStale(card?.price_grid, now);
+
 /**
  * What the whole lot could be worth, for one condition: a confirmed price counts at both ends, a name whose
  * set or printing is still open counts as its price range, and everything else (a guess, an unrecognised
- * card, a card with no price) counts $0 until the user picks. Card backs are not cards and are left out.
+ * card, a card with no price) counts $0 and is counted in `toIdentify` (cards still to confirm) until the user
+ * picks. A price from an old fallback grid is counted in `toCheck`. Card backs are left out.
  */
-export function lotEstimate(cards, choiceFor, enabledConditions = ['NM']) {
+export function lotEstimate(cards, choiceFor, enabledConditions = ['NM'], now = Date.now()) {
   const condition = enabledConditions?.[0] || 'NM';
-  const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0 };
+  const out = { low: 0, high: 0, identified: 0, total: 0, toIdentify: 0, toCheck: 0, noPrice: 0 };
   for (const card of cards || []) {
-    if (card?.cardBack) continue;
+    if (card?.cardBack || card?.skipped === true) continue;
     out.total += 1;
-    const named = Boolean(card?.identity?.name || card?.identity?.id);
-    if (!named || isOnlyAGuess(card)) {
+    if (!isIdentified(card)) {
       out.toIdentify += 1;
       continue;
     }
+    if (isStale(card, now)) {
+      out.toCheck += 1;
+      continue;
+    }
+    const quote = quotedPrice(card, choiceFor(card), enabledConditions);
     out.identified += 1;
-    const choice = choiceFor(card);
-    const quote = quotedPrice(card, choice, enabledConditions);
     if (quote) {
       out.low += quote.price;
       out.high += quote.price;
+      continue;
+    }
+    if (chosenPrintingHasNoPrice(card, choiceFor(card), enabledConditions)) {
+      out.noPrice += 1;
       continue;
     }
     const range = !isSetConfirmed(card) ? rowRange(card, condition) : setRangeOf([card], [condition]);
     if (range) {
       out.low += range.low;
       out.high += range.high;
+    } else if (!card.pricing) {
+      out.noPrice += 1;
     }
   }
   return out;
+}
+
+/** The lot strip's note beside "Confirmed value": confirmed cards, those with no price data at all, and stale prices; the tooltip only when some lack a price. */
+export function sureNote(lot) {
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const parts = [String(lot.identified)];
+  if (lot.noPrice) parts.push(`${lot.noPrice} without price`);
+  if (lot.toCheck) parts.push(`${plural(lot.toCheck, 'old price', 'old prices')} to check`);
+  const title = lot.noPrice ? `${lot.noPrice} confirmed ${lot.noPrice === 1 ? 'card has' : 'cards have'} no price data` : '';
+  return { text: `(${parts.join(', ')})`, title };
 }
 
 /** The lot's value as "$12.50" or "$14.00–$30.00", with the "2 of 3 cards identified" detail; value is null while no card is identified. */
@@ -401,59 +507,15 @@ export function explainScanError(message) {
   return raw;
 }
 
-/**
- * The scanner's top guess for a card it could not name: the closest catalog card, shown as a question with its price
- * so a whole lot can be priced at a glance. Null for a named card, a card back, or a card with no candidates.
- * It never names the card: identity, confidence and "identified" stay as they were.
- */
-export function topGuessOf(card) {
-  if (!card || card.cardBack || card.identity?.name || card.identity?.id) return null;
-  const top = card.candidates?.[0];
-  if (!top?.id || !top.name) return null;
-  return { id: top.id, name: top.name, set: top.set || null, setCode: top.setCode || null, number: top.number || null };
-}
-
 /** Under this many pixels the reader saw so little of the card that its guess is a long shot (shown as a note). */
 export const SMALL_READ_PX = 150;
 export function readFromSmallCrop(card) {
   return card?.readHeight > 0 && card.readHeight < SMALL_READ_PX;
 }
 
-/** The price a guess counts at: a named card's own quote, else its top guess's price; null when there is none. */
-export function guessPrice(card, choice, enabledConditions = ['NM']) {
-  if (!card || card.cardBack) return null;
-  if (card.identity?.name || card.identity?.id) {
-    const quote = quotedPrice(card, choice, enabledConditions);
-    if (quote) return quote.price;
-    if (typeof card.market_price === 'number' && card.market_price > 0) return card.market_price;
-    return card.setRange?.low > 0 ? card.setRange.low : null;
-  }
-  const price = card.topGuess?.price;
-  return typeof price === 'number' && price > 0 ? price : null;
-}
-
-/**
- * The lot in three figures: what the identified cards are worth (lotEstimate, a range while a printing is open), what
- * the guesses would add if they are right, and the two together. Card backs are left out.
- */
-// A guess priced above this is more likely a rare look-alike than the card: it is listed to check, not added.
-export const GUESS_TOTAL_CAP = 50;
-
-export function lotTotals(cards, choiceFor, enabledConditions = ['NM']) {
-  const sure = lotEstimate(cards, choiceFor, enabledConditions);
-  let guess = 0;
-  let guessed = 0;
-  let toCheck = 0;
-  for (const card of cards || []) {
-    if (!card || card.cardBack || isIdentified(card)) continue;
-    const price = guessPrice(card, choiceFor(card), enabledConditions);
-    if (price == null) continue;
-    if (price > GUESS_TOTAL_CAP) {
-      toCheck += 1;
-      continue;
-    }
-    guess += price;
-    guessed += 1;
-  }
-  return { sure, guess, guessed, toCheck, low: sure.low + guess, high: sure.high + guess };
+/** Whole days since the grid's own date when the grid is stale, else null. */
+export function staleDays(grid, now = Date.now()) {
+  if (!isGridStale(grid, now)) return null;
+  const stamp = Date.parse(grid.updatedAt || '');
+  return Number.isFinite(stamp) ? Math.floor((now - stamp) / DAY_MS) : null;
 }

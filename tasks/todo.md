@@ -315,3 +315,55 @@ Plan: `docs/plans/launch.md`. Nothing is pushed (branch `feat/card-picker-sealed
 - [~] Detection learning: shape-filter part done (boxes up to 1.82 wide/tall kept; on 67 HiBid lot photos +9 cards found, +6 right names, wrong names 13→14, no losses, 0 extra boxes on sealed-product negatives)
 - [x] Detector misses ~18 heavily tilted cards: tried, not shipped (2026-10-18). Retrain of v4e6 + tilted synthetic pages (`models/card_detect_v7b`) offline found 284→302/305, F1 .977 = shipped; but in Chrome on 67 lot photos found 195→203, right names 106→107, confident wrong names 14→21. Detection is no longer the bottleneck; recognising tilted cards is
 
+
+## Fresh set R150 result (2026-10-25)
+- [x] Labeller B done (716 rows). Agreed set: 265 boxes from 17 listings on 5 sites; by band <100/100-149/150-199/200-299/300+ px: 0/18/143/47/57.
+- [x] R150 scored once: 197 confirms, 3 wrong (shipped 71, 1 wrong). Fails criterion 2 (extra wrong-rate upper 4.9% vs <=3%) and 3a (all-confirm upper 3.9% vs <=2%). Not adopted; `CONFIRM_ROWS` unchanged. Report: `card-scanner-data/data/reports/fresh-150/README.md`.
+- [x] The fresh set is spent: it is viewed and no longer blind. Do not tune on it.
+- [ ] R150b (frozen R150 rule for 150-199 px only) came from looking at the result. Pre-register it in writing first, then score once on a new harvest with two blind labellers.
+
+## Detection-recall audit result (2026-10-25)
+- [x] 30 fresh photos: detector boxed 574 of 686 visible card faces, recall 83.7% (photo-clustered 95% CI 74.0-93.2%); Pokemon only 86.2% (77.2-94.9%). Grids and binders 98.6% (415/421); dense piles and bulk lots 63.1% (142/225); 83 of 112 misses are overlapping cards. 41 false boxes; about 51 boxes span two or more cards. Report: `card-scanner-data/data/reports/recall-audit/README.md`.
+- [x] Upper bound only: the sample took listings where the detector already found 12+ boxes (photo 1, capped at 40), so total detector failures cannot show.
+- [ ] Implication, not yet proven on the live page: for neat grid lots the drifting boxes more likely come from overlay placement (pinned to the `<img>` element box) than from the detector. Check in the dense-lot diagnosis.
+
+## Release QA gate (must pass before anything is shown to the owner)
+- [ ] Unit tests: `npm test` passes with the real exit code; `npm run lint` clean.
+- [ ] Builds: dev and `-Store` build; `tests/store-build.test.js` passes.
+- [ ] Live smoke in the owner's Chrome on listings we find ourselves, at least: Facebook letterboxed portrait binder page; Facebook landscape lot; Facebook graded-slab lot; Facebook single card; Mercari lot; one other site (HiBid or eBay).
+- [ ] Screenshots per listing per the Smoke round 2 protocol, embedded in the report; director checks every one.
+- [ ] Overlay: every box on its card within about 5% of card size, before and after scroll, window resize and photo carousel change; labels readable, no overlap.
+- [ ] Every overlay check is judged on the on-screen page screenshot (canvas dumps only for measurement); the director opens the robustness shots before accepting.
+- [ ] Identity and price: spot-check names on the screenshots; prices shown match the popup rows; slabs either handled or clearly marked as not handled (no raw-card price shown as a slab price).
+- [ ] Popup: totals, Choose picker, skip, export, full-size offer, High value chip; no Accept all.
+- [ ] Regression: each bug found gets a failing test first, then the fix, then a rerun of the whole gate.
+- [ ] Report to the owner only after all boxes above are ticked, with screenshots and any known limits stated plainly.
+
+## Stamped cards (owner request 2026-10-25)
+Owner chose: all phases, set-logo stamps first. Plan and evidence: `.tmp/stamps/plan.md` (research: `.tmp/stamps/research.md`). Rules: price never decides confirmation; a stamp only preselects; no Accept all; no new host permission; never tune on `data/sealed-test`.
+- [ ] Decisions first: D1 keep or downgrade set-stamp OCR auto-pricing (`background.js:1897-1907`); D2 EX set stamp = reverse suggestion (default) or sure finish; D3 keep or drop the "PLATINUM" corner word after one real photo; D4 pytest style for new `tools/shared-data` tests.
+- [ ] Phase 0 (owner): copy the price job from `tools/shared-data` to `fabcrowd/card-scanner-data`; the `prices` release is 404 today, so no snapshot reaches installs.
+- [ ] Phase A1: OCR the Legend Maker (ex12) and Dragon Frontiers (ex15) stamps in `lib/variant.js` `STAMP_SETS`; tests first in `tests/variant.test.js`; check the logo sits in `ART_STAMP_BOX` on 10+ non-sealed photos per set.
+- [ ] Phase A2: a set stamp in ex10-ex16 preselects `reverseHolofoil` (TCGplayer prices the stamped reverse as the set's Reverse Holofoil); never `finishSure`; tests first in `tests/variant.test.js`, `tests/card-display.test.js`.
+- [ ] Phase A3: price the 182 of 744 ex10-ex16 cards that TCGdex leaves unpriced, via the catalog-id section of `prices.json` (needs B).
+- [ ] Phase B1: nightly `tools/shared-data/pipeline/prices.py` reads TCGCSV `/products`, maps exact name tags to stamp keys and joins to catalog ids (set + number + name, single match only); writes `cards` into `prices.json`; pytest fixtures from `.tmp/stamps/tcgcsv-samples`.
+- [ ] Phase B2: `lib/price-snapshot.js` keeps `cards`, adds `snapshotCard` and the catalog-id base fallback; old snapshots still parse; `tests/store-build.test.js` unchanged.
+- [ ] Phase C: popup Stamp choice (None, priced stamps, Other stamp); a user pick prices; no price shows "No stamped price found. Showing the regular card price." and stays out of the lot total; EX set logo maps to Reverse Holo; e2e checks no Accept all.
+- [ ] Phase D: listing-text hint "Stamp? check" in `lib/title-prior.js`; preselect only on single-card listings, flag only in lots; negatives such as "Sealed Prerelease Deck" and "Pokemon Center Lady" tested first.
+- [ ] Phase E: one picture template per stamp family and era (`lib/promo-stamp.js`), run only on 400 px+ cards whose id has that stamp; thresholds fitted on non-sealed train photos, scored once on held-out, split by listing and near-duplicate group.
+- [ ] Phase F: QA gate: npm test, lint, Python tests, dev and `-Store` builds, nightly dry run under 8 MB, live smoke on stamped listings (Legend Maker, Dragon Frontiers, Crystal Guardians, Prerelease, Staff, Pokemon Center, Prize Pack, Base Set 1st Edition, a lot); then update `docs/known-limits.md`.
+
+## Smoke round 2: screenshot protocol (queued after the dense-lot diagnosis)
+- [ ] Roles: Opus director writes the run sheet, approves listings, verifies every claim against the screenshots, decides. Sonnet release/QA engineer drives Chrome and captures. A separate Sonnet UX reviewer grades the screenshots against the checklist without seeing the QA engineer's verdict. A Sonnet extension engineer acts only on a filed bug, test-first. All are experts; none commit.
+- [ ] Setup record per run: extension version and build commit, Chrome window size, devicePixelRatio, page zoom, served photo size (fbcdn `stp=` value), whether the `ctp=`-dropped original was fetched (service-worker log line).
+- [ ] Listings: the owner's dense slab lot (about 60 cards, the all-Check case), the Rock Island 'LOT OF 27' listing (about a dozen per photo), one single-card listing, one Mercari lot.
+- [ ] Shots per listing, saved as `.tmp/smoke/<date>-<listing-id>/NN-<what>.png`: 01 listing before scan; 02 page overlay after scan at normal zoom, full photo in view; 03 zoomed crops of the densest overlay areas; 04 popup top with lot strip totals; 05 popup scrolled until every row has been captured; 06 the 'Open full-size photo' offer if shown, then 07 the overlay after using it; 08 one Choose row opened with its picker; 09 service-worker console text saved as `sw-log.txt`.
+- [ ] Capture method: Playwright MCP `browser_take_screenshot` for the page. The action popup is a separate window, so capture it with a PowerShell `System.Drawing` screen grab of the popup region; do not substitute `popup.html` opened in a tab (it behaves differently).
+- [ ] Checks, each pass/fail with the shot number as evidence: every box sits on one card (no box mostly on the table, none spanning two cards); every visible card has a box (count by eye vs popup 'found'); labels readable (name not cut to a few letters) and not overlapping; overlay states match popup rows; 'High value, double-check' chip on unconfirmed $50+ rows; 'small photo' chip and full-size offer appear when they should; no 'Accept all' control.
+- [ ] Report: in chat, with the screenshots embedded inline and a pass/fail table; notes in `.tmp/smoke/<run>/notes.md`. Nothing under `.tmp/smoke/` is ever committed.
+- [ ] Smoke results never adopt or reject R150 or change thresholds; layout bugs go to the extension engineer as failing tests first.
+
+## Obscured-card training (paused 2026-11-08)
+- [x] Tilt gate and blur arms: tilt training skipped, no blur model qualifies, model E stays. Report: `card-scanner-data/data/reports/geo/README.md`.
+- [ ] Fresh test set, 600 boxes: 663 photos from 169 lots harvested (`card-scanner-data/data/harvest-20261108` and `harvest-20261108b`). Test set done: 875 agreed boxes, 133 final obscured (two blind tag passes). obscure50 degrader built, calibrated on dev, tested; pilot preregistered (`data/reports/obscure/PREREGISTRATION.md`). Pilot done (the degrader adds little beyond longer training). Recognition-gap follow-up: a corner model trained on real photos passed on a fresh blind set (+5.3 top-1; `card-scanner-data/data/reports/fresh-20261111/README.md`).
+- [ ] Port the corner model behind a Chrome A/B (owner OK 2026-11-12). Started: `tools/extension-wasm/lib/corners.js`, warp in `lib/rectify.js`. Remaining steps are listed in `card-scanner-data/tasks/handoff.md` ("Owner chose 2026-11-12"). Handoff: `card-scanner-data/tasks/handoff.md`. Plan: `card-scanner-data/data/reports/obscure/PLAN.md`.

@@ -217,3 +217,21 @@ test('a failed or same-size Facebook original falls back to the next candidate',
   assert.deepEqual(seen, [FB_ORIGINAL, 'https://cdn.example/b.jpg']);
   assert.equal(found.url, 'https://cdn.example/b.jpg');
 });
+
+// D5 note (gate 2, L1): reading the Facebook original (1537x2048) instead of the served 720x960 made the Detective
+// Pikachu box worse (IoU 0.768 -> 0.582). The mapping is not the cause: the same box in either picture lands on the
+// same viewport rect (the original's 1537/2048 shape differs from 720/960 by under half a pixel here), so the wider
+// box is the detector's own output on the original's pixels.
+test('a box read from the Facebook original maps to the viewport exactly as the served copy\'s box does (L1)', () => {
+  const rect = { x: 908.5, y: 74.47, w: 576, h: 768 };
+  const served = imageToViewportTransform(rect, 720, 960, { fit: 'contain', position: '50% 50%' });
+  const original = rescaleTransform(served, 720 / 1537, 960 / 2048);
+  // The gate 1 Detective Pikachu card edges, in served pixels.
+  const box = [249.4, 109.6, 463.1, 415.7];
+  const fromServed = mapPhotoBoxToViewport(box, served);
+  const fromOriginal = mapPhotoBoxToViewport([box[0] * 1537 / 720, box[1] * 2048 / 960, box[2] * 1537 / 720, box[3] * 2048 / 960], original);
+  for (let i = 0; i < 4; i++) assert.ok(Math.abs(fromServed[i] - fromOriginal[i]) < 0.5, `edge ${i}: ${fromServed[i]} vs ${fromOriginal[i]}`);
+  // A box as wide as the gate 2 one (686x746 in the original) stays that wide on screen: the mapping cannot widen it.
+  const wide = mapPhotoBoxToViewport([305, 159, 991, 905], original);
+  assert.ok(Math.abs((wide[2] - wide[0]) - 686 * 576 / 1537) < 0.01);
+});

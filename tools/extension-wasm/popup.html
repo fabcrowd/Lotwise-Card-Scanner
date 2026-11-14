@@ -165,6 +165,13 @@
     }
     .era-select:disabled { opacity: 0.5; cursor: wait; }
 
+    /* OVERLAY TOGGLE — "Show boxes on page" hides the page overlay, keeps the results */
+    .overlay-row { display: flex; align-items: center; padding: 0 16px 8px; background: #0b0c12; }
+    .overlay-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #8b92ab; cursor: pointer; }
+    .overlay-toggle input { width: 14px; height: 14px; margin: 0; accent-color: #6366f1; cursor: pointer; }
+    .overlay-toggle input:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .overlay-row .draw-btn { margin-left: auto; align-self: center; font-size: 11px; font-weight: 600; color: #a5b4fc; }
+
     /* SITE ACCESS NOTICE — offered after a screenshot scan that lacked site access */
     .access-notice {
       display: flex;
@@ -202,11 +209,25 @@
     .lot-totals .lt-guess b { color: #e9d6a8; font-style: italic; }
     .lot-totals .lt-lbl { text-transform: uppercase; letter-spacing: 0.6px; font-size: 9px; font-weight: 700; }
     .lot-totals .lt-n { color: #5d6480; }
+    .lot-totals .lt-cond, .stat-block .cond-tag { font-size: 9px; font-weight: 700; letter-spacing: 0.6px; color: #8b92ab; border: 1px solid #2a2f45; border-radius: 4px; padding: 0 4px; margin-left: 2px; cursor: help; }
+    .stat-block .cond-tag[hidden] { display: none; }
+    .lot-totals .lt-actions { display: flex; gap: 6px; margin-left: auto; }
+    .lot-totals .lt-btn { font-family: inherit; font-size: 11px; font-weight: 700; height: 24px; padding: 0 8px; border-radius: 8px; border: 1px solid #2a2f45; background: #0e1018; color: #c5cadc; cursor: pointer; }
+    .lot-totals .lt-unconfirmed { font-size: 11px; color: #8b92ab; }
+    .lot-totals .lt-btn:hover { border-color: #6366f1; }
+    .lot-totals .lt-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .lot-edition { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 16px; border-top: 1px solid #1a1d2a; font-size: 11px; color: #8b92ab; }
+    .lot-edition[hidden] { display: none; }
+    .lot-edition label { text-transform: uppercase; letter-spacing: 0.6px; font-size: 9px; font-weight: 700; }
+    .lot-edition select { font-family: inherit; font-size: 11px; font-weight: 700; height: 26px; padding: 0 6px; border-radius: 8px; border: 1px solid #1e2130; background: #0e1018; color: #c5cadc; cursor: pointer; }
+    .lot-edition select:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
 
-    /* GUESS ROWS — a card the reader could not name, shown as its top guess */
-    .card-name.guess-name { color: #e9d6a8; font-style: italic; font-weight: 600; }
-    .card-price.guess-price { color: #c8a45c; font-style: italic; border-bottom: 1px dashed #6b5a35; }
-    .guess-chip { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #c8a45c; border: 1px dashed #6b5a35; border-radius: 4px; padding: 0 4px; }
+    /* CHOOSE ROWS — a card below the bar: pick from the closest cards, no name and no price until picked */
+    .value-chip { font-size: 9px; color: #fcd34d; border: 1px solid #7a5a12; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+    .memory-chip { font-size: 9px; color: #86efac; border: 1px solid #1f5d3a; border-radius: 4px; padding: 0 4px; margin-left: 4px; white-space: nowrap; }
+    .why-row { padding: 0 12px 2px 20px; }
+    .why-btn { font-size: 11px; }
+    .why-pop { margin: 2px 12px 6px 20px; padding: 6px 8px; font-size: 11px; line-height: 1.4; color: #c5cadc; background: #171a28; border: 1px solid #2a2e40; border-radius: 6px; }
     .small-chip { font-size: 9px; color: #8b92ab; border: 1px solid #2a2e40; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
     .card-row.flash { outline: 2px solid #6366f1; outline-offset: -2px; transition: outline-color 0.4s; }
 
@@ -331,6 +352,7 @@
       text-transform: uppercase;
       color: #8b92ab;
     }
+    .variant-select-row .variant-note { font-size: 11px; color: #fcd34d; }
     .photo-chip { display:inline-block; margin-left:6px; font-size:10px; color:#475569; background:#f1f5f9; border-radius:8px; padding:0 6px; }
     .variant-select-row .lbl.pick-printing {
       color: #1d4ed8;
@@ -417,9 +439,42 @@
     .pick-card-guess { border-color: #f59e0b; }
     .pick-guess { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #f59e0b; text-align: center; }
     .pick-card img, .pick-blank { display: block; width: 62px; height: 87px; margin: 0 auto; border-radius: 3px; background: #14172a; object-fit: cover; }
+    /* A neutral skeleton behind candidate art, so an empty box reads as "loading", not broken. */
+    .pick-card img, .scanned-card img, .pick-blank { background: #1b2036; border: 1px solid #262c47; box-sizing: border-box; }
     .pick-name, .pick-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pick-name { font-size: 10px; font-weight: 700; }
     .pick-sub { font-size: 9px; color: #8b92ab; }
+    /* IMAGE PICKERS: printings and versions are strips of card art, finishes are chips that carry their price. */
+    .strip-row { align-items: flex-start; }
+    .strip-row .lbl { flex: 0 0 auto; }
+    .strip { display: flex; gap: 6px; flex: 1 1 100%; min-width: 0; max-width: 100%; overflow-x: auto; scroll-snap-type: x proximity; padding: 3px 3px 6px; margin: -3px; scrollbar-width: thin; scrollbar-color: #262c47 transparent; }
+    .strip-tile {
+      flex: 0 0 76px; scroll-snap-align: start; display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+      padding: 4px; background: #0b0c12; border: 1px solid #1e2130; border-radius: 6px; color: #c5cadc; font: inherit; text-align: left; cursor: pointer;
+    }
+    .strip-tile:hover { border-color: #6366f1; }
+    .strip-tile[aria-disabled="true"] { cursor: wait; opacity: 0.6; }
+    .strip-checked { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; background: #12152a; }
+    .strip-suggested { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b; }
+    .strip-art { position: relative; display: block; width: 62px; height: 87px; margin: 0 auto; border-radius: 3px; background: #1b2036; border: 1px solid #262c47; box-sizing: border-box; overflow: hidden; }
+    .strip-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .strip-fallback { display: none; position: absolute; inset: 0; padding: 4px; font-size: 9px; font-weight: 700; line-height: 1.25; color: #c5cadc; overflow: hidden; word-break: break-word; }
+    .strip-art.no-art .strip-fallback { display: block; }
+    .strip-tag { display: block; }
+    .strip-more { flex: 0 0 56px; scroll-snap-align: start; align-self: stretch; background: #0b0c12; border: 1px dashed #3b4160; border-radius: 6px; color: #c5cadc; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+    .strip-more:hover { border-color: #6366f1; }
+    .chip-wrap { display: flex; align-items: center; gap: 4px; flex: 1 1 100%; min-width: 0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-width: 84px; min-height: 44px;
+      padding: 6px 12px; background: #0b0c12; border: 1px solid #1e2130; border-radius: 10px; color: #c5cadc; font: inherit; cursor: pointer;
+    }
+    .chip:hover { border-color: #6366f1; }
+    .chip-label { font-size: 11px; font-weight: 700; }
+    .chip-price { font-size: 14px; font-weight: 800; color: #10b981; }
+    .chip-checked { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; background: #12152a; }
+    .chip-suggested { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b; }
+    .strip-tile:focus-visible, .strip-more:focus-visible, .chip:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
     .picker-bar { display: flex; align-items: center; gap: 8px; }
     .picker-input {
       flex: 1;
@@ -452,6 +507,54 @@
     .scanned-card img, .scanned-card .pick-blank { display: block; width: 62px; height: 87px; border-radius: 3px; background: #14172a; object-fit: cover; }
     .scanned-label { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
     .card-row.asking:hover, .card-row.asking:focus-within { background: #0c0d16; }
+    .choose-group { border-bottom: 1px solid #1a1d2a; }
+    .choose-head { display: flex; align-items: center; background: #0b0c12; border-bottom: 1px solid #0e1018; }
+    .choose-toggle { flex: 1; display: flex; align-items: center; min-height: 36px; padding: 8px 16px; background: none; border: none; font: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #fcd34d; text-align: left; cursor: pointer; }
+    .choose-toggle::before { content: "\25BE"; margin-right: 6px; }
+    .choose-toggle[aria-expanded="false"]::before { content: "\25B8"; }
+    .choose-row .card-price { color: #8b92ab; font-size: 12px; font-style: italic; }
+    .choose-review { margin-right: 12px; min-height: 28px; padding: 4px 10px; font: inherit; font-size: 11px; font-weight: 700; color: #c7c9ff; background: #6366f114; border: 1px solid #6366f1; border-radius: 6px; cursor: pointer; }
+    .choose-list[hidden] { display: none; }
+    .choose-toggle:focus-visible, .choose-review:focus-visible, .choose-confirm:focus-visible, .bulk-keep:focus-visible, .bulk-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .choose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+    .choose-confirm { min-height: 28px; max-width: 100%; padding: 4px 12px; font: inherit; font-size: 11px; font-weight: 700; color: #fff; background: #4f46e5; border: none; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .choose-confirm:hover { background: #5b5ef4; }
+    .skip-btn-hot { color: #fcd34d; font-weight: 700; border: 1px solid #f59e0b; border-radius: 6px; padding: 2px 8px; text-decoration: none; }
+    .skip-btn:focus-visible, .skipped-toggle:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .lot-totals .lt-skipped b { color: #8b92ab; }
+    /* The row's X: top-right corner, inside space reserved on the right so it never sits on the price or a button. */
+    .card-row:has(> .remove-btn) { position: relative; padding-right: 42px; }
+    .remove-btn { position: absolute; top: 6px; right: 10px; width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; font: inherit; font-size: 16px; line-height: 1; color: #6b7390; background: transparent; border: none; border-radius: 50%; cursor: pointer; }
+    .remove-btn:hover { color: #fca5a5; background: rgba(248,113,113,0.14); }
+    .remove-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    .pick-best-card { border-color: #f59e0b; }
+    .pick-best { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #f59e0b; text-align: center; }
+    .pick-agree { display: block; font-size: 8px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: #34d399; text-align: center; }
+    .pick-choice { width: 76px; }
+    .bulk-panel { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #08090d; }
+    .bulk-panel[hidden] { display: none; }
+    .bulk-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #1a1d2a; }
+    .bulk-title { flex: 1; margin: 0; font-size: 13px; font-weight: 700; color: #e4e6f0; }
+    .bulk-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 16px; font-size: 11px; color: #8b92ab; }
+    .bulk-tick-all { min-height: 28px; padding: 3px 10px; font-size: 11px; flex-shrink: 0; }
+    .bulk-list { flex: 1; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+    .bulk-pair { border-bottom: 1px solid #0e1018; }
+    .bulk-pair.skipped { opacity: 0.8; }
+    .bulk-label { display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer; }
+    .bulk-keep { width: 18px; height: 18px; flex-shrink: 0; accent-color: #6366f1; }
+    .bulk-img { display: block; width: 63px; height: 88px; flex-shrink: 0; border-radius: 3px; background: #14172a; object-fit: cover; }
+    .bulk-arrow { color: #5d6480; }
+    .bulk-text { min-width: 0; font-size: 11px; color: #c5cadc; }
+    .bulk-text b { font-weight: 700; }
+    .bulk-text .pick-agree { display: inline; }
+    .bulk-check { display: inline-block; padding: 0 5px; font-size: 10px; font-weight: 700; color: #f5c26b; border: 1px solid #5a4620; border-radius: 3px; }
+    .bulk-hint { flex: 1; align-self: center; font-size: 11px; color: #f5c26b; }
+    .bulk-hint[hidden] { display: none; }
+    .bulk-sub { font-size: 10px; color: #8b92ab; }
+    .bulk-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid #1a1d2a; }
+    .bulk-btn { min-height: 32px; padding: 6px 14px; font: inherit; font-size: 12px; font-weight: 700; color: #c5cadc; background: #0e1018; border: 1px solid #2a2e40; border-radius: 6px; cursor: pointer; }
+    .bulk-btn.primary { color: #fff; background: #4f46e5; border-color: #4f46e5; }
+    .bulk-btn:disabled { opacity: 0.45; cursor: default; }
 
     /* SETUP OVERLAY */
     .setup-overlay {
@@ -561,7 +664,16 @@
     <select id="era-select" class="era-select" aria-label="Era" title="When the cards are from. Picking an era makes sets much more accurate.">
       <option value="">Any era</option>
     </select>
-    <div class="stat-block" id="stat-value" role="group"><div class="val green" id="s-value">—</div><div class="lbl">est. value</div></div>
+    <div class="stat-block" id="stat-value" role="group"><div class="val green" id="s-value">—</div><div class="lbl">est. value <span class="cond-tag" id="s-cond" title="Prices are Near Mint market prices unless your price-service key provides other conditions" hidden>NM</span></div></div>
+  </div>
+  <div class="overlay-row">
+    <label class="overlay-toggle" title="Hides the boxes and tags on the page. Your results stay here."><input type="checkbox" id="overlay-shown" checked> Show boxes on page</label>
+    <button type="button" class="link-btn draw-btn" id="btn-draw" title="Missed a card? Drag a box around it on the page to read it.">Draw a box</button>
+  </div>
+
+  <div class="access-notice" id="restore-note" hidden>
+    <p class="access-text" id="restore-text" role="status"></p>
+    <button type="button" class="access-btn" id="restore-rescan" title="Scanning again starts the list over">Scan again</button>
   </div>
 
   <div class="access-notice" id="access-notice" hidden>
@@ -580,7 +692,12 @@
 
   <div class="msg-bar hidden" id="msg-bar" role="status"></div>
 
-  <div class="lot-totals" id="lot-totals" role="group" aria-label="Lot value" hidden></div>
+  <div class="lot-totals" id="lot-totals" role="group" aria-label="Lot value" aria-live="polite" aria-atomic="true" hidden></div>
+
+  <div class="lot-edition" id="lot-edition" role="group" aria-label="Base Set editions" hidden>
+    <label for="lot-edition-select">Base Set editions</label>
+    <select id="lot-edition-select" title="Applies this edition to every Base Set card you have not set yourself. A card's own Variant menu wins."><option value="">Apply to all…</option></select>
+  </div>
 
   <div class="exam-strip" id="exam-strip" role="group" aria-label="Help check the results" hidden>
     <span class="exam-text">Help check: is every card here right?</span>
@@ -604,7 +721,7 @@
       </div>
       <div class="setup-title">Download the AI models</div>
       <div class="setup-desc">
-        One-time download, about <b>140 MB</b> (1–3 minutes).<br>
+        One-time download, <b id="setup-size">about 147 MB</b>.<br>
         After this, scanning runs fully on your device — no server, no account.
       </div>
       <button id="btn-setup">Download models</button>
@@ -650,6 +767,20 @@
       </div>
     </div>
 
+  </div>
+
+  <div class="bulk-panel" id="bulk-panel" role="dialog" aria-modal="true" aria-labelledby="bulk-title" hidden>
+    <div class="bulk-head">
+      <h2 class="bulk-title" id="bulk-title">Review and confirm</h2>
+      <button type="button" class="bulk-btn" id="bulk-close" aria-label="Close review">&#10005;</button>
+    </div>
+    <div class="bulk-note">Ticked pairs look like clear matches; check the others yourself. <button type="button" class="bulk-btn bulk-tick-all" id="bulk-tick-all">Tick all</button></div>
+    <ul class="bulk-list" id="bulk-list"></ul>
+    <div class="bulk-foot">
+      <span class="bulk-hint" id="bulk-hint" hidden>Tick the ones that look right</span>
+      <button type="button" class="bulk-btn" id="bulk-cancel">Cancel</button>
+      <button type="button" class="bulk-btn primary" id="bulk-confirm" aria-describedby="bulk-hint">Confirm 0</button>
+    </div>
   </div>
 
   <script type="module" src="popup.js"></script>

@@ -207,7 +207,7 @@ try {
     const fit = Math.min(viewport.width / photo.width, viewport.height / photo.height);
     const offsetX = (viewport.width - photo.width * fit) / 2;
     const offsetY = (viewport.height - photo.height * fit) / 2;
-    const preds = response.cards.map((card) => ({
+    const preds = response.cards.filter((card) => !card.notCard).map((card) => ({
       box: [(card.box[0] - offsetX) / fit, (card.box[1] - offsetY) / fit, (card.box[2] - offsetX) / fit, (card.box[3] - offsetY) / fit],
       id: card.identity?.id ?? null,
       unsure: isUnsure(card),

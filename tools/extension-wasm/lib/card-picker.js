@@ -2,11 +2,12 @@
 // how to search the catalog by hand, and what a saved answer looks like.
 
 import { isUnsure } from "./card-display.js";
-import { inEra } from "./era.js";
+import { ERAS, inEra, seriesOf } from "./era.js";
 import { exactTotalHits, setSizes } from "./card-number.js";
 import { choiceName } from "./set-choice.js";
+import { sanitizeWhy } from "./why.js";
 
-const VIAS = ["candidates", "search", "wrong-card", "set-menu", "guess-confirmed"];
+const VIAS = ["candidates", "search", "wrong-card", "set-menu", "guess-confirmed", "skip", "unskip"];
 const JPEG_DATA_URL = /^data:image\/jpeg;base64,/;
 
 export { isUnsure };
@@ -169,10 +170,14 @@ export function findCards(meta, query, { era = null, limit = 20 } = {}) {
 /** A catalog image, else the pokemontcg.io one, else nothing to show. */
 export function thumbUrl(card) {
   if (card?.imageUrl) return card.imageUrl;
-  if (card?.setCode && card?.number) {
-    return `https://images.pokemontcg.io/${encodeURIComponent(card.setCode)}/${encodeURIComponent(card.number)}.png`;
-  }
-  return null;
+  if (!card?.setCode || !card?.number) return null;
+  const code = encodeURIComponent(card.setCode);
+  const number = encodeURIComponent(card.number);
+  // Catalog set codes are TCGdex's. pokemontcg.io spells the Scarlet & Violet and Mega ones differently (sv3, not sv03)
+  // and answers an unknown id with a card-back picture, so those are asked of the catalog's own host instead.
+  const series = seriesOf(card);
+  if (series === "sv" || series === "me") return `https://assets.tcgdex.net/en/${series}/${code}/${number}/high.webp`;
+  return ERAS.some((era) => era.series.includes(series)) ? `https://images.pokemontcg.io/${code}/${number}.png` : null;
 }
 
 /** What the scanner said about a card, kept apart from what the user later chose. */
@@ -184,6 +189,25 @@ export function guessOf(card) {
     choiceIds: (card?.setChoices || []).map((choice) => choice.id),
     catalogTop: Number.isFinite(card?.catalogTop) ? card.catalogTop : null,
   };
+}
+
+/**
+ * The scanner's guess as it is saved with an answer: what it said at scan time, plus the why-record of the row as it
+ * stands now (with the price shown, which only the popup knows) and which reference, if any, was involved.
+ */
+export function guessWithWhy(card, price = null) {
+  const guess = card?.guess ? { ...card.guess } : {};
+  if (card?.why) guess.why = { ...card.why, ...(Number.isFinite(price) ? { price } : {}) };
+  if (card?.memory?.refId) guess.memory = { refId: card.memory.refId, cardId: card.memory.cardId };
+  return guess;
+}
+
+/** The card the scanner showed that the user said was wrong, or null: same card, no guess, or only another printing of the name. */
+export function wrongIdOf(guessId, pickedId, nameOf) {
+  if (!guessId || guessId === pickedId) return null;
+  const guessName = nameOf(guessId);
+  if (guessName && choiceName(guessName) === choiceName(nameOf(pickedId))) return null;
+  return guessId;
 }
 
 /** Where the listing was, without the query string, hash or login that could identify the user. */
@@ -203,9 +227,10 @@ export function matchesLabel(count) {
 }
 
 /** One saved answer. Throws on a record that would be useless as a label. */
-export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, via, crop, extVersion }) {
+export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, via, crop, extVersion, why, wrongId, count, history, type }) {
   if (!VIAS.includes(via)) throw new Error(`correction via must be one of ${VIAS.join(", ")}`);
   if (typeof pickedId !== "string" || !pickedId) throw new Error("correction needs a pickedId");
+  const cleanWhy = sanitizeWhy(why);
   const linked = typeof scanId === "string" && scanId && Number.isInteger(index) && index >= 0;
   return {
     // One crop has one answer: a later pick for the same scan card replaces the earlier one.
@@ -223,8 +248,15 @@ export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, 
     },
     pickedId,
     via,
+    // Only skips carry a type (lib/skip.js); every older row has none.
+    ...(type === "skip" ? { type } : {}),
     crop: typeof crop === "string" && JPEG_DATA_URL.test(crop) ? crop : null,
     extVersion: typeof extVersion === "string" ? extVersion : null,
+    // Local only. why: what the scanner believed about the row being corrected; wrongId: the card it showed that was wrong.
+    ...(cleanWhy ? { why: cleanWhy } : {}),
+    wrongId: typeof wrongId === "string" && wrongId ? wrongId : null,
+    count: Number.isInteger(count) && count > 0 ? count : 1,
+    history: Array.isArray(history) ? history.slice(-3) : [],
   };
 }
 
@@ -235,7 +267,7 @@ export function correctionRecord({ ts, scanId, index, pageUrl, guess, pickedId, 
 export function setMenuCorrection(scan, index, pickedId, via) {
   const card = scan?.cards?.[index];
   if (!card || !pickedId) return null;
-  return { action: "saveCorrection", scanId: scan.bgScanId, index, guess: card.guess, pickedId, via };
+  return { action: "saveCorrection", scanId: scan.bgScanId, index, guess: guessWithWhy(card), pickedId, via };
 }
 
 export function escHtml(s) {
@@ -261,8 +293,8 @@ export function renderPickList(cards, idx, guessId = null) {
       ? `<img src="${escHtml(url)}" alt="${label}" loading="lazy" width="63" height="88">`
       : `<span class="pick-blank" aria-hidden="true"></span>`;
     const sub = [card.set || card.setCode, card.number ? `#${card.number}` : ""].filter(Boolean).join(" ");
-    const tag = guess ? `<span class="pick-guess">Best guess</span>` : "";
-    return `<button type="button" class="pick-card${guess ? " pick-card-guess" : ""}" data-pick="${escHtml(card.id)}" data-idx="${idx}" aria-label="${guess ? `Best guess: ${label}` : label}" title="${label}">${image}${tag}<span class="pick-name">${escHtml(card.name)}</span><span class="pick-sub">${escHtml(sub)}</span></button>`;
+    const tag = guess ? `<span class="pick-guess">Suggested</span>` : "";
+    return `<button type="button" class="pick-card${guess ? " pick-card-guess" : ""}" data-pick="${escHtml(card.id)}" data-idx="${idx}" aria-label="${guess ? `Suggested: ${label}` : label}" title="${label}">${image}${tag}<span class="pick-name">${escHtml(card.name)}</span><span class="pick-sub">${escHtml(sub)}</span></button>`;
   }).join("");
 }
 

@@ -1,5 +1,274 @@
 # Changelog
 
+## Unreleased (feat/price-follows-pick: price never decides confirmation)
+
+### Changed
+- Removed both dollar-based state rules from `lib/stakes.js` and their callers: the cheap small-photo promotion (`promoteCheap`, `promoteCard`, `priceHighOf`, `rivalHighs`, price <= $5) and the demotion of non-high, non-title-agreed picture confirms priced at $50+ and the demotion of a correction-confirmed card at $50+ without the high bar (`stakesDecision`, `isDemotable`, `demoteCard`, `demoteExpensive`, `HIGH_PRICE_BAR` and the `high` column of `REFERENCE_BARS` are deleted). A correction-memory confirm now uses the per-band confirm bar C whatever the price: for $50+ cards the effective bar drops from 0.86 to 0.84 (300+ px) and 0.83 (150-199 px); the 200-299 and 100-149 bands were already 0.86. A card is confirmed only by the picture/name rule (`lib/fusion.js`) or by the user. Under 200 px nothing confirms from the picture.
+- A Choose row shows the price of its best match (the preselected candidate), marked "unconfirmed" (`bestMatchPrice`: settled or suggested printing, else the typical price marked "typical", else "no price"; old prices tagged and excluded). The overlay tag reads "name? ~$x". Picking another candidate shows that card's price (the pick reuses the same `priceCard` answer).
+- Lot strip: "Confirmed value" is unchanged (confirmed cards only); a separate "Unconfirmed ~$X (N cards)" line sums best-match prices of Choose cards (skipped, old and unpriced excluded). Copy / CSV stay confirmed cards only.
+- Non-state chip "High value, double-check" on popup rows and overlay tags of cards the user has not confirmed whose typical price is $50+; the old "Check: high value" chip and `valueCheck` flag are gone.
+- Fewer requests: one `priceCard` call per Choose card (its best match) instead of up to 5.
+
+## Unreleased (feat/g5-persist: the lot survives the window closing)
+
+### Added
+- Saved lot (`lib/lot-session.js`): after a scan and after every change (confirm, printing, skip, put back, correction) the popup keeps the list in `chrome.storage.session`, per page (URL without the hash), for 24 h, capped at 5 MB with the oldest lot evicted. Cards keep a 160 px JPEG thumbnail instead of the crop. Reopening the popup on the same page restores counts, groups, picks and focus, with "Restored your last scan (N min ago)" and a Scan again button (a rescan starts the list over). Clear wipes it. Damaged storage means the normal empty state.
+- The background holds the scan the popup asked for (`scanState`, `awaitScan`): a window closed mid-scan gets the progress line and then the result when reopened, and a scan finished while closed is applied on open.
+- Privacy policy: one sentence on the saved lot. Never shared (tested).
+
+## Unreleased (feat/audit-fixes: audit findings)
+
+### Fixed
+- Stale prices for every source: a grid dated more than 30 days ago is old whichever source built it (`isGridStale` / `isStale(card, now)` in `lib/card-display.js`; a missing or unparseable date is unknown, not stale). It shows "Old price: N days", and is left out of the lot total (`toCheck`) and the export. Before, only the pokemontcg.io fallback was flagged; a 661-day-old TCGdex grid was priced, totalled and exported.
+- A printing the user picked that has no price at the shown condition is "No price for this printing" (`chosenPrintingHasNoPrice`): counted in "without price", never priced from a range over the other printings, in the lot total, the export row (blank figures) and the overlay.
+- Review all / Tick all no longer saves every preselected card as a correction. Only a Check pair the user ticked by hand is saved (`bulkRememberedPairs`); ticking the scanner's own preselection confirms it for the session and writes no correction or why-memory. One-tap confirm on a row is unchanged.
+- Cheap auto-promotion of small-photo Choose cards needs every close candidate (top 5) to be priced at $5 or less (`stakesDecision` `rivalHighs`); a pricier or unpriced candidate keeps the card a Choose. This prices up to 5 candidates per such card (same `priceCard` call, same 6-at-a-time limit).
+- A $0, negative or NaN price is no price (`quotedPrice`).
+- The page overlay keeps the "set not sure" caveat with a range, and ignores clicks that are not `isTrusted`.
+- Relay: the stored and committed `received` is the UTC date (`YYYY-MM-DD`) only, as the privacy policy says (`tools/relay/src/handler.js`, `cron.js`); queued items with a full timestamp are truncated when committed, and `validate.js` accepts both forms.
+- Setup screen and INSTALL.md quote the real download (about 147 MB, pinned by a test against `lib/setup.js`); the page overlay shows "Old price" instead of a price older than 30 days.
+
+### Changed
+- Lot strip: "Sure" is now "Confirmed value", and the condition chip reads "Near Mint" (was "NM"). The strip is an `aria-live="polite"` region.
+
+### Tests
+- New: `tests/stale-prices.test.js`, `tests/chosen-printing.test.js`, `tests/popup-markup.test.js`; cases in `stakes`, `choose-flow`, `content-pure`, `relay-*` tests; popup e2e: two new tests (bulk saves, pricier runner-up). The lot-export stale test now builds its grid with `fromTcgdexPayload`. Fixtures with a fixed 2026-10 price date (`skip.test.js`, e2e `exportLot`) no longer age into "stale".
+
+## Unreleased (feat/skip-card: "Can't price this")
+
+### Added
+- A one-tap "Can't price this" button on every Choose row (accessible name "Skip this card: I can't price it (not English, not a card)"). The card moves to a collapsed "Skipped (n)" group at the bottom of the list (crop and "Put back"), leaves "To confirm", the lot total, the status line's "need your pick", "Review all" and the Copy / CSV export (the buttons' tooltip says "N skipped cards are not included"), and its page tag is grey "Skipped". The lot strip shows "Skipped N" only when N > 0. After a skip, focus goes to the next Choose row's Confirm button and the message bar says "Skipped. N to confirm.". "Put back" returns the card to Choose with its candidates.
+- Memory: a skip is stored locally as a correction row (`type: "skip"`, `pickedId: "skip"`, with the scanner's why-record, guess and the crop, and the crop's embedding as a reference). It shares the 400 cap, history, count and protection rules; old rows are unaffected. A new crop whose embedding reaches the boost bar of its height band against a skipped crop (`lib/skip.js` `skipHit`, bars from `lib/reference-bars.js`) is never auto-confirmed or auto-promoted: it stays Choose with the chip "You skipped this before" and a highlighted "Can't price this" (`memory-confirm.js` `skipVerdict`, `skippedBefore`). Nothing is skipped for the user. "Use my corrections" off disables it like the other memory. Put back supersedes the skip row (it stays in history) and drops its reference.
+- Skips are local only: shared learning never receives them (asserted in `tests/skip.test.js`); one sentence added to `docs/store/privacy-policy.md`.
+
+### Tests
+- `tests/skip.test.js` (new), a case in `tests/content-pure.test.js`, and nine popup e2e tests in `tests/e2e/extension-wasm-popup.spec.js` (the `popupWithChoose` mock now records `saveSkip` / `unskip` and can return a second scan).
+
+## 3.1.0 (release/3.1: fewer taps, no stale text, honest lot strip)
+
+### Changed
+- Keyboard focus after confirming a card from a Choose row now moves to the next Choose row's preselected Confirm button, then to the lot's Copy button, then to Scan; the message bar says "Confirmed <name>. N to confirm." (or "Nothing left to confirm."). Focus after a printing, version or finish pick is unchanged. The lot strip keeps focus on Copy / Download through its re-renders.
+- Lot strip: "Sure $x (n, k without price)" when k confirmed cards have no price data at all, with the tooltip "k confirmed cards have no price data" (`lotEstimate.noPrice`, `sureNote` in `lib/card-display.js`). The export is unchanged.
+- Overlay tags (`content.js` `placeTag`, new `placeTagLadder`): a tag skips a spot on a neighbouring card, then shrinks to its one-line form, then avoids only a neighbour's top edge, and last takes any spot clear of other tags (the old behaviour), so no card loses its tag.
+- Extension version 3.0.0 to 3.1.0 (`tools/extension-wasm/manifest.json`); the two pins in `tests/store-build.test.js` updated deliberately.
+
+### Fixed
+- After a version swap the message bar no longer keeps "Price updated for <old name>."; it shows the scan status again.
+- The setup status line no longer keeps "Downloading 5 of 5" after the download finishes.
+
+## 2026-10-23 (an original photo that was read is judged at its own pixels)
+
+### Fixed
+- When the extension reads a Facebook photo's original (site access, `ctp=` dropped), the read height used for the confirm rows, SMALL_ROWS and the small-source flags is now the height measured on the original's pixels. It was kept at the shown photo's scale (`naturalPerFed = shown / original`, a rollback from 2dc8aec made under the old model and rules), so most cards stayed on Choose even though the original had been read, and the log said "cards small ... even in the full-size photo". The log now gives the median fed height. Screenshot reads, page photos that were not upgraded and grid tiles are unchanged; overlay placement is unchanged.
+- `naturalPerFedFor` (`lib/fusion.js`): fetched source 1, screenshot crop the shown scale.
+
+### Measured
+- Facebook-CDN stand-in, 10 pages, automatic path with site access: confirmed 55 -> 113 of 250 (click path was 101); labelled matched cards 0 wrong before and after (45 of 48 right, was 36); 59 newly confirmed cards, 37 unlabelled all name-correct by eye; one correct card (g06 Gym Trainer, 326 px) went back to Choose. Screenshot path unchanged (37 / 37). Owner photos 3-7, grid fixtures: identical. 125 harvest photos (local pages, no original): identical within run-to-run noise.
+
+### Tests
+- `small-source.test.js`: read scale for a fetched original (shown 720 vs original 1600), screenshot, unknown natural size, srcset upgrade.
+
+## 2026-10-23 (corrections fixes from the real-model QA: exam photos, printing-only corrections)
+
+### Fixed
+- A correction on an "exam" photo (1 in 5 by hash) was never stored locally: `saveCorrection` diverted to `examPicks` and answered ok, so nothing was remembered and the row still said "Corrected, remembered". Every correction is now stored locally (reference memory, why-record, history) whatever the split and whether or not sharing is on. The exam split only decides what is queued for sharing: `holdExamPick` (`lib/correction-save.js`) queues the pick for the exam only when sharing is enabled (nothing is queued when it is off), and exam photos still never enter the shared training queue (`contributeTeachPick` is teach-only). No other early return skipped local storage.
+- A correction that only changed the printing of the same card name was not confirmed on rescan even at 0.99 (no chip, "Set not sure", and the Why panel quoted the old card's picture score). Now: when a reference moved the card to the top, the why-record and chip report the memory similarity and source "your correction" (`memory.moved`/`movedFrom`); and a near-duplicate of the corrected crop (cosine >= `PRINT_C` 0.95) confirms the exact printing the user picked (printing settled, `confirmedBy: 'correction'`, the $50 high-price bar H applies as for any memory confirm). Below `PRINT_C` the printing stays open with the earlier printing preselected.
+
+### Measured
+- `PRINT_C = 0.95` (`lib/reference-bars.js`, table next to the constant; analysis `card-scanner-data/data/reports/g12/print/print_bar.md`): 0 of 390 same-name-other-printing queries reach 0.95 (max 0.943); same-printing queries reach it in 9/206 (200-299 px) and 53/206 (300+ px). 100-149 px has no id-level pairs: same bar, unmeasured.
+
+### Tests
+- `memory-confirm.test.js` (PRINT_C, `moved`, verdict, `printingExact`), `correction-save.test.js` (exam pick queued only with sharing on; exam-split correction stored with sharing off and on; reference current on rescan).
+- Privacy policy unchanged: corrections were already described as stored for every pick; what is sent is unchanged.
+
+## 2026-10-23 (copy or download the confirmed lot; Near Mint label)
+
+### Added
+- Popup lot strip: "Copy N confirmed" and "Download CSV (N)" buttons for the confirmed cards only (the same cards the Sure total counts: named and settled, not demoted to Choose, not priced from an old grid). Hidden when N is 0; the tooltip says how many more cards still need confirming and are not included. No new permission or host: the click writes the clipboard (`navigator.clipboard.writeText`, falling back to a hidden textarea and `execCommand("copy")`) or saves a Blob through a temporary link, as the options page already does.
+- `lib/lot-export.js` (pure): one row per card + printing + condition with Qty; columns Name, Set, Number, Printing (or "open"), Finish, Condition, Qty, Price, Low, High, Price source, Price date, Price age days, Basis ("raw, English, <condition>"). An open printing leaves Price blank and gives the range as Low/High. CSV is RFC 4180, UTF-8 with BOM, CRLF, `card-lot-YYYY-MM-DD.csv` (local date); a cell starting with `=`, `+`, `-`, `@`, tab or CR gets a leading apostrophe (CSV and the tab-separated copy). No page address, image or seller data.
+- The est. value header and the lot strip show the active condition (NM by default) as a small label, with a tooltip that prices are Near Mint market prices unless the user's price-service key provides other conditions.
+
+### Changed
+- `isStale` in `lib/card-display.js` is exported so the export and the lot total share one predicate.
+- Store privacy policy and listing: one sentence each about the click-to-copy/download.
+
+### Tests
+- New `tests/lot-export.test.js`; popup e2e cases for the buttons, tooltip, hidden at 0, Copy, clipboard fallback, Download (name, BOM, CRLF) and the Near Mint label. No existing test changed.
+
+## 2026-10-23 (corrections that stick: positive memory leads, negative memory, the why-record)
+
+### Changed
+- "Use my corrections" (was "Recognize cards I corrected before") is on by default. An unset setting reads as on; an explicit off stays off (`referencesInUse` is `!== false`, options page the same).
+- Reference memory uses per-height bars measured on labelled crops (`lib/reference-bars.js`, from `data/reports/g12/thresholds.json`; leave-one-out 541 fires, 0 wrong, 0 broken) instead of the single unmeasured `0.93`. By the read height of the new crop (100-149 / 150-199 / 200-299 / 300+ px): boost B .84 / .81 / .83 / .83, confirm C .86 / .83 / .86 / .84, high-price bar H .86; the 0.02 margin over the raw catalog top stays. Under 100 px memory does nothing. An unknown height uses the 200-299 row.
+- A reference at or above B moves the corrected card first and preselects it; at or above C (and not in conflict: two cards within 0.03 only boost) it CONFIRMS the card with source "your correction" (`confirmedBy: 'correction'`, confidence capped below high). A card worth $50 or more needs H, else it goes back to Choose with the card preselected (`lib/stakes.js`). The reference stores the exact card id; when other printings share the art the name is confirmed and the printing stays open with the earlier printing preselected (`lib/page-prior.js`).
+- Community pack rows keep the old 0.93 cut and only boost (`PACK_REFERENCE_MIN`); they were not part of the measurement.
+- Re-correcting the same crop no longer erases the earlier answer: the row keeps `history` (up to 3 earlier answers with their why-records) and a `count`; the same answer again is x2. Confirming the corrected card again from a different crop adds to the earlier row's count instead of storing a near-duplicate picture.
+- Corrections are capped at 400. Over the cap the oldest unprotected go first (protected: x2, or saved/agreed within 30 days), with their references. A full disk makes room, retries, and as a last resort keeps the answer without its picture; the row on screen is never lost.
+
+### Added
+- Negative memory (`negativeHit`, `memoryVerdict`): when a new crop is at or above B of a corrected crop and the model's top card is the one the user called wrong, that card is not auto-confirmed (Choose, the corrected card first, chip "You corrected this before"). A printing swap within the same name is not a "wrong card".
+- The why-record (`lib/why.js`) on every named card: source (picture, number, setHint, stamp, promoted, correction, user), cosine, lead over the next different card, rival, read height, the confirm row used, title verdict, stripe, top 5, price shown, model/crop/catalog tags. Saved with each correction (`why`, `wrongId`, `count`, `history`). Local only: `lib/contribution.js` has no field for it.
+- Popup: "Corrected, remembered" (x2) chip on a row the user corrected, "From your correction" on a row memory confirmed, "You corrected this before" on Choose rows, and a "Why this card?" button with a plain-words panel (`lib/why-text.js`, `lib/memory-ui.js`). "Wrong card?" is unchanged and works on every confirmed row.
+- `lib/correction-state.js`, `lib/correction-save.js`, `lib/memory-confirm.js`, `lib/reference-bars.js`, `fusion.confirmRowFor`.
+
+### Not in this pass
+- Shared-learning schema v2 / the opt-in "fix" pair, any change to fusion rows or the model, the lot export.
+
+### Tests
+- New: `memory-confirm.test.js`, `why.test.js`, `correction-state.test.js`, `correction-save.test.js`, `memory-ui.test.js`; additions to `stakes.test.js`, `page-prior.test.js`; popup e2e for the chips, the Why panel, the $50 rule, negative memory, "Wrong card?" saving the why-record, x2 and the settings switch.
+- Changed because the behaviour changed: `references.test.js` (the 0.93 placeholder test is now the margin and pack cut), `card-picker.test.js` (`correctionRecord` shape gains `wrongId`, `count`, `history`), `corrections-store.test.js` (heads gain `count`).
+
+## 2026-10-23 (picker fixes: art for every printing, a version tap stays confirmed, focus stays in the strip)
+
+### Fixed
+- Printing tiles for Scarlet & Violet sets showed a card back: `background.js` built `setChoices` (two places), the per-version set choices and the version entries without `imageUrl`, and `thumbUrl` then asked pokemontcg.io for TCGdex set codes (`sv03`; pokemontcg uses `sv3`), which answers with a card-back picture. New `choiceSummary` (`lib/set-choice.js`) carries the catalog row's `imageUrl` into all of them. `thumbUrl` prefers `imageUrl`; with none it uses the catalog's own TCGdex host for `sv`/`me` set codes, pokemontcg.io only for the older series whose ids agree, and nothing (a text tile) otherwise. The learning-bundle rows (`lib/bundle.js`) already carry `imageUrl`. A tile whose picture decodes narrower than 20 px now falls back to a text tile like a failed load.
+- Tapping the other-version tile on a row the user had confirmed sent it back to Choose (`swapVersion` kept `unsure: true`). The tap is the user's answer: `unsure: false`, `userConfirmed: true`; price and range logic and saved corrections unchanged.
+- Focus after a pick stays in the strip: on the chosen finish chip (it jumped to the printing tile), and on the newly checked printing or version tile (it landed on "Wrong card?").
+
+### Tests
+- `card-display.test.js` (swapVersion of an unsure row), `card-picker.test.js` (`thumbUrl` never builds a pokemontcg.io URL for TCGdex codes), `set-choice.test.js` (`choiceSummary`), popup e2e (sv printing strip requests the catalog art and never pokemontcg.io, speck image fallback, version tap stays confirmed, focus in the strip).
+
+## 2026-10-23 (image-first pickers: printings, versions and finishes are tapped, not named)
+
+### Changed
+- Popup: the Set? / Pick printing menu is a strip of card thumbnails (catalog art, set name and number under each; same `thumbUrl` as the candidate cards, no new host). One tap runs the same `saveCorrection` (`via: "set-menu"`) and `pickSet` as the old select. The suggested printing is ringed with the existing "Suggested" tag and the "?" confirm.
+- Popup: "Other version?" is the same strip with the version name under each tile (the shown card first, checked); a tap swaps the row exactly as the old select did.
+- Popup: the Variant menu is large chips, each with the finish label and its price at the first enabled condition (label only when it has none), the chosen one highlighted, the suggested one ringed with its "?" confirm. A tap sets the printing like the old select.
+- Strips scroll horizontally with scroll-snap; more than 8 choices show 8 and a "More +N" tile that expands in place ("Fewer" collapses). Art that fails to load becomes a text tile (name and set). Each strip and chip group is a `radiogroup` with an accessible label; tiles are `radio` buttons with `aria-checked`; Arrow keys/Home/End move, Enter/Space select, focus returns to the row after a pick.
+- The top status line ("Found N cards: ...") is recomputed from the current cards whenever a promotion, demotion or pick changes them, while the scan status is what the bar shows (a pick's own "Getting price..." message still replaces it).
+- Tapping the picture of a suggested printing confirms it through the same path as the "?" (saveCorrection `via: "guess-confirmed"`, same price update); the suggested finish chip already did. Tapping an already confirmed tile or chip does nothing and sends nothing; a different tile picks that one.
+- The lot-level Base Set edition control is unchanged (still a compact select).
+
+### Added
+- `lib/option-strip.js`: pure view models (`setTiles`, `versionTiles`, `finishChips`, `splitMore`) and markup (`renderTileStrip`, `renderChipGroup`); `formatPrinting` moved here from `popup.js`.
+
+### Tests
+- New `tests/option-strip.test.js`. `extension-wasm-popup.spec.js`: new cases for the strips, taps, keyboard, More, image fallback, version swap, finish chips and the status line; updated the three Set? `toHaveValue` checks, the Variant `?` test and the Base Set edition test (they read the removed selects). `tests/e2e/live-scan.mjs` set pick now taps a tile.
+
+## 2026-10-23 (price decides how much picture evidence a card needs)
+
+Product stays at two user-visible states (CONFIRMED / CHOOSE). QA D-1: two wrong cards were auto-confirmed with real prices at cosine 0.73 ('Regice ex' Hidden Legends #97 $303.75 at read height 312; 'Regirock ex' Emerald #99 $179.99 at 334).
+
+### Changed
+- `lib/fusion.js` `CONFIRM_ROWS` raised to the floor analysis (`card-scanner-data/data/reports/fusion-study-E/floor/README.md`): under 200 px never; 200-249 T 0.68 / G 0.03; 250-299 T 0.72 / G 0.03; 300-349 T 0.74 / G 0.02; 350 and up T 0.76 / G 0.02 (was 0.62/0.03, 0.60/0.01, 0.69/0.00, 0.72/0.00). `UNKNOWN_HEIGHT_ROW` is still the 200 row, so it is now 0.68 / 0.03. The two QA cases (0.73 at 312 and 334 px) no longer confirm.
+- `tools/shared-data/pipeline/gate.py` `CONFIRM_ROWS` mirrors the new rows (drift test and gate tests updated). `SMALL_ROWS` and the price rules are not mirrored: nightly rows carry no read height and no price.
+
+### Added
+- `lib/fusion.js` `SMALL_ROWS` (100-149 px T 0.68 / G 0.05; 150-199 px T 0.65 / G 0.05; lead over the best different-name card, no title demotion) and `smallRowDecision`. A read under 200 px that passes its row stays CHOOSE but carries `smallRow: true` and `smallRowCos` (also when the older gate abstained). Under 100 px nothing is flagged.
+- `lib/stakes.js`: `LOW_STAKES_MAX_USD = 5`, `HIGH_STAKES_MIN_USD = 50`, pure `stakesDecision` ('promote' | 'demote' | 'keep'), `priceHighOf`, `promoteCard`, `demoteCard`, `isDemotable`. Promote: a CHOOSE card with `smallRow` whose top candidate costs at most $5. Demote: a picture-confirmed card that is not "high", not title-confirmed, not read from a printed number, priced at $50 or more (single price, or the high end of the open range). A card the user confirmed (`userConfirmed`: pick, search, accepted guess, bulk confirm) is never changed; an unknown price changes nothing.
+- Popup: after a scan, only `smallRow` CHOOSE cards fetch the price of their top candidate through the existing `priceCard` call (at most 6 at a time, cached per candidate id, no new host). A promoted card is built like a pick, marked `autoConfirmed`, saves no correction and sends nothing for learning; "Wrong card?" still works. A demoted card becomes a CHOOSE card (`valueCheck`, its own name preselected) with a "Check: high value" chip; the overlay tag reads "Check: high value". Lot totals follow (promoted = Sure, demoted = To confirm). Evaluated on every scan and rescan.
+- `background.js` carries `smallRow` / `smallRowCos` from the read and attaches `candidates` / `ranked` / `crop` to confirmed cards the stakes rule could demote.
+
+### Tests
+- `confirm-rule.test.js` (new rows, boundaries 199/200/249/250/299/300/349/350, QA D-1 regression, small rows), new `stakes.test.js`, `fusion.test.js` (two expectations moved with the rows), `test_gate.py`, popup e2e (stakes cases).
+
+## 2026-10-23 (QA fixes: Clear, octet-stream photos, wording, tags, wizard size, version 3.0.0)
+
+### Fixed
+- Popup: Clear now hides and empties the lot summary line and the full-size notice (`resetResults`), so the popup returns to its empty state (QA D-2).
+- `background.js` `loadPhotoSource`: a response typed `application/octet-stream` or with no content-type is accepted only when its bytes sniff as an image (JPEG, PNG, WebP, GIF, AVIF; `lib/photo-fetch.js` `photoTypeVerdict` / `sniffImageType`). ShopGoodwill serves pictures that way, so its rendition upgrade and original read were dead. Host, redirect, size and time caps are unchanged; other types are still rejected (QA C-1).
+- Overlay tags (`content.js` `tagRows`, `fitPrice`, `fitName`): a Choose tag collapses to "Choose" when "Tap to choose" does not fit; a small confirmed tag shows the name (cut with an ellipsis only if three letters still show), else the whole price, else "from $low"; a price is never cut mid-number (QA D-3).
+- Setup wizard quotes the size of the assets actually missing (`missingAssets`, `downloadSizeText`), e.g. "about 89 MB" when only the recognizer is needed; the fixed "(1-3 minutes)" is gone.
+
+### Changed
+- Leftover "guess" wording removed from user-visible text: To confirm tooltip, "Best guess" tag and aria-labels now say "Suggested" / "Suggested set"; the picture-based set reason reads "suggested from the picture" (QA D-4).
+- Candidate art boxes get a neutral skeleton background (QA D-5).
+- Extension version 2.1.0 to 3.0.0 (`tools/extension-wasm/manifest.json`); `tests/store-build.test.js` version pins updated deliberately.
+- `tools/shared-data/README.md`: no longer quotes an old clip hash; points at `pins.json` and `setup.js`.
+
+## 2026-10-23 (unknown read height uses the 200 px confirm row)
+
+### Changed
+- `lib/fusion.js` `confirmDecision`: an unknown read height (0, missing or not finite: grid-page tiles, legacy scan path) now uses the 200-249 px row (T 0.62, G 0.03, exported as `UNKNOWN_HEIGHT_ROW`) instead of the native row (T 0.72, G 0.00). The native G=0 was fitted on large crops and confirmed a Double Colorless Energy tile as Lightning Energy with no lead, while T=0.72 was too strict for ~140 px thumbnails and sent correctly-read Mixed tiles to CHOOSE. Known heights are unchanged.
+- `tools/shared-data/pipeline/gate.py` mirrors it (`UNKNOWN_HEIGHT_ROW`): regression and exam rows, which carry no height, are replayed on the 200 row. `test_drift.py` compares the unknown-height row choice between both files.
+
+## 2026-10-23 (model E and the per-height confirm rule)
+
+### Changed
+- The shipped recognizer is model E (`fastE_all/epoch16-ema-int8.onnx`, release `v3.0`, 88,999,043 bytes, sha256 `0dba1302580da2a629936be835b765d6dba9019e677284257470d30070d9d52b`; tag prefix `0dba1302580da2a6`). Pinned in `lib/setup.js` and `tools/shared-data/pins.json`; `CACHE_NAME` and the catalog are unchanged. Tests that echo the pin updated. Staged release files in `dist/release-v3.0/` replaced (old file kept as `_F-clip_visual_int8.onnx.bak`); `docs/release-v3.0-notes.md` has the new sha and model description, and says E results are pending.
+- `CARD_BACK` re-derived for E from the 71 verified training backs (`cardback-E/cardback_vector.json`); `CARD_BACK_BUILT_FOR` is `0dba1302580da2a6` / crop 3. `BACK_MIN` stays 0.84 (held-out precision 1.000, recall 0.882).
+- `lib/fusion.js`: the accept gate and the height caps are replaced by the per-height confirm rule (`confirmDecision`, table `CONFIRM_ROWS`, fitted for E per `card-scanner-data/data/reports/fusion-study-E/README.md`; refit whenever the model, crop or catalog changes). Confirm needs a card height of at least 200 px, `a_top >= T(h)` and a lead of at least `G(h)` over the best card with a different name, where a candidate loses 0.05 when the title line spells another catalog name. Under 200 px nothing confirms. An unconfirmed read that the previous gate could name is a CHOOSE (unsure, 0.49, guess first); otherwise it abstains as before. The high tier (`HIGH_TIER_SIM` / `HIGH_TIER_GAP`) and `CLEAR_GAP` are unchanged.
+- `background.js`: the title line is read before the decision for crops of 200 px and up (`TITLE_MIN_HEIGHT` 200, was 150) and its contradiction demotes candidates inside the rule. A title that agrees adds nothing (no bonus), so it no longer lifts a CHOOSE to identified; contradiction handling after the decision is unchanged.
+
+### Removed
+- `capSmallSource`, `MIN_RELIABLE_HEIGHT`, `MIN_NAME_HEIGHT` (replaced by the confirm rule and `markChoose`).
+
+## 2026-10-23 (review all: scores, printing-only pairs, Tick all)
+
+### Changed
+- Every card that gets candidates now carries `ranked` as `[{ id, rank, score }]` (`score` is the cosine similarity; `rank` as before), attached where the candidate list is built (`recognizeCard` records the hits, the scan's candidate step attaches them). Existing `{ id, rank }` consumers are unaffected; the page set prior still only sees the cards it saw before.
+- Review all: the lead is measured on `score` (rank for older rows) between the preselected candidate and the best candidate with a different card name, `>= CLEAR_GAP` (value unchanged), so clear pairs exist beyond the abstain and re-rank paths. No scores: not decisive unless the name agrees.
+- Review all: when every candidate is the same card (only the printing is open) the pair starts unticked with "Check"; the printing is the user's pick.
+
+### Added
+- Review all: a "Tick all" / "Untick all" button beside the note. It only changes the ticks; "Confirm N" still needs its own press.
+
+## 2026-10-22 (choose flow refinements)
+
+### Changed
+- Popup, To confirm: a candidate whose name agrees with the photo's name-box read (`titleConfirmed`, `titleReranked`, `titleContradicts`) is preselected: it comes first and carries the "Best match" tag and its name check. A candidate the title contradicts is never preselected while another exists. No title evidence changes nothing.
+- Review all: a pair is ticked by default only when its preselected candidate agrees with the photo's name or leads the best candidate with another card name by at least `CLEAR_GAP` (now exported from `lib/fusion.js`, value unchanged; scores come from the card's `ranked`). Every other pair starts unticked with a "Check" label; a card with no scores is not decisive. "Confirm N" counts ticked pairs; with none ticked it is disabled and says "Tick the ones that look right". New line under the title: "Ticked pairs look like clear matches; check the others yourself."
+- Review all thumbnails (photo crop and candidate art) are 63 x 88 px so they can be compared.
+- `lib/set-choice.js`: a leading "Basic" is ignored on Energy names only (`choiceName`, `nameAgrees`, `titleConfirmsName`), so "Basic Water Energy" and "Water Energy" are the same card. Every "Basic ..." name in the catalog is a basic Energy; "Basic Charizard" stays distinct.
+
+## 2026-10-22 (choose flow)
+
+Two identification states (branch `feat/choose-flow`): Confirmed and Choose.
+
+### Added
+- Popup: a "To confirm (N)" group first in the list. Each card below the bar shows its crop beside up to 5 candidate cards (art when the catalog has it, name, set, number, printing when known), the best match preselected with a one-press "Confirm <name>" button, any other candidate confirmed with one tap, and "None of these? Search". A candidate whose name agrees with the photo's name line (existing title verdict: `titleConfirmed`, `titleReranked`, `titleContradicts`) carries a check mark.
+- Popup: "Review all N" opens an in-popup panel with every card to confirm beside its preselected candidate, a keep/skip checkbox per pair (default keep) and one "Confirm N" button. Skipped pairs stay in Choose; Escape or Cancel closes; Tab stays inside the panel.
+- `lib/choose-flow.js`: `chooseState`, `overlayStateOf`, `nameAgreesWithPhoto`, `candidateView`, `candidatesOfCard`, `bulkPairs`, and the candidate and group renderers.
+
+### Changed
+- The page overlay has no guess tier: a card to choose is amber with the tag "Choose" / "Tap to choose", no name and no price; its hover label says "Choose a card". Confirmed cards keep green (blue while the printing is open); card backs stay grey ("Not recognised" / "Turn it over").
+- A row to choose shows "Card N", no name and "—" for the price; confirming goes through the existing pick path (same saveCorrection, `via: candidates`, same price lookup), so teaching and shared learning receive exactly what they did.
+- Tests updated for the removed guess tier: `tests/content-pure.test.js` (tag, label and state assertions), `tests/guess-first.test.js` (`topGuessOf` test removed, guess fixtures now candidate-based), `tests/e2e/extension-wasm-popup.spec.js` (row order puts the choice first, picker sub-line, fixture without `topGuess`).
+
+### Removed
+- `topGuessOf`, the popup's "Top guess" chip and italic guess styling, the overlay `guess` state and its dashed outline. Thresholds, fusion, detector, price rules, manifest, permissions and host lists are unchanged.
+
+## 2026-10-22
+
+Rendition upgrade (branch `feat/rendition-upgrade`).
+
+### Added
+- `lib/rendition.js` `upgradeRenditionUrl`: the largest rendition a listing site serves, from measured URL rules (Mercari drops `/thumb` and the width/quality query; HiBid `w=0&h=0&sz=MAX`; ShopGoodwill `t<k>.jpeg` to `<k>.jpg`; Craigslist 50x50c / 300x300 / 600x450 to 1200x900; Poshmark `s_`/`m_` to `l_`, `_wp_` webp twins kept). Same host, https only, null for anything else. The photo read, gallery photos and the tile source look try it first and fall back silently to the shown URL; `largerRendition` counts it as a known larger rendition. No new hosts or permissions.
+
+## 2026-10-22
+
+Rendition upgrade (branch `feat/rendition-upgrade`).
+
+### Added
+- `lib/rendition.js` `upgradeRenditionUrl`: the largest rendition a listing site serves, from measured URL rules (Mercari drops `/thumb` and the width/quality query; HiBid `w=0&h=0&sz=MAX`; ShopGoodwill `t<k>.jpeg` to `<k>.jpg`; Craigslist 50x50c / 300x300 / 600x450 to 1200x900; Poshmark `s_`/`m_` to `l_`, `_wp_` webp twins kept). Same host, https only, null for anything else. The photo read, gallery photos and the tile source look try it first and fall back silently to the shown URL; `largerRendition` counts it as a known larger rendition. No new hosts or permissions.
+
+## 2026-10-22 (earlier)
+
+Pricing guards (branch `feat/pricing-guards`).
+
+### Added
+- Lot-level Base Set edition control in the popup (Unlimited / Shadowless / 1st Edition, "Apply to all"), shown only when a settled row has its finish read from the number or catalog but its grid has 1stEdition / Shadowless rows. It sets that edition on every such row the user has not set on its own Variant menu; an individual pick wins. The star-only promo path is unchanged.
+- Popup e2e tests for the Variant "?" confirm, the "To confirm N" lot cell, the lot edition control and a page-borrowed set; the startup test now waits for the background's readiness instead of sampling the scan button early.
+- A named row whose printing is still open is priced at its default printing's NM price (holofoil, then normal, then reverse; chosen over median, 25th percentile, cheapest and geometric mean on lot-level error), shown as "~$x" and counted under Guesses, never Sure. A confirmed printing keeps its exact quote.
+- Top guesses on a multi-printing grid get the same default-printing "~" price instead of "no price".
+- A pokemontcg.io fallback grid whose own date is over 30 days old carries `stale: true`; the price still shows with an "Old price: N days old" tooltip.
+
+### Changed
+- A 1st Edition stamp match (template score on pixels) that narrows a card to the one 1st Edition set no longer prices it: the set choices stay open as a range, the stamp's set is the preselected Set? suggestion (`suggestedSetId`, "1st Edition stamp seen on the card"), and "?" confirms it. A page heading still wins over it.
+- A stale-grid price is listed "to check" and left out of Sure and the totals, like a guess over $50.
+- Owner rule: a price is never chosen for something the extension does not know. This replaces the guess pricing above.
+  - A card whose identity is not confirmed (top guess, asked name, not recognised) shows its name to confirm and "—" (tooltip "Confirm the card to see a price"); it adds nothing to any total. The page overlay tag says "Guess · tap to confirm".
+  - A name that is sure with its printing open shows a range (set range, or the range over its printings) until the user picks the printing in the menu or confirms the suggestion with its "?" button.
+  - A printing is auto-priced only from non-visual evidence: a single printing, a finish read from the printed collector number or the catalog (`finishSure`), or a set settled by number, code, symbol or stamp text. A printing inferred from the picture (variant model, 1st Edition stamp template, drop shadow) is the menu's preselected suggestion only; the new "?" button next to Variant confirms it. `detectedVariant` is the settled printing, `suggestedVariant` the picture's.
+  - A best-guess set whose source is `image` keeps its set range and the preselected Set? menu, and prices only after "?" confirms it. A set borrowed from the page's other cards (`page` source) now behaves the same way. Only a page heading that names the set (`hint`) still prices directly.
+  - Lot summary: Sure (confirmed rows plus ranges) and "To confirm N". No Guesses or Together figures.
+
+### Removed
+- Default-printing "~" pricing (`guessQuote`, `guessPrice`, `defaultPrintingPrice`), top-guess prices (the background `priceCard` fetch in the popup), the Guesses and Together totals (`lotTotals`), and the $50 picture-guess cap (`GUESS_TOTAL_CAP`): their purpose is covered by not pricing unconfirmed cards.
+
+### Fixed
+- A name from a picture-only best guess (`bestGuess.source === 'image'`) priced over $50 no longer counts in Sure; it is listed "to check". Page and hint best guesses are unchanged.
+
 ## 2026-10-21
 
 Facebook Marketplace accuracy and UI pass (branch `feat/fb-accuracy-ui`, 899ba40 … 4c4aae5). The numbers, the rationale and the rejected experiments are in `HANDOFF.md` under "Facebook accuracy and UI pass".

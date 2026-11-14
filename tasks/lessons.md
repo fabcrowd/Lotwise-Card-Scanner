@@ -130,3 +130,36 @@ Rules:
 - Before tuning the matcher, check the crop height.
 - Every offline win must pass the in-extension A/B on FB photos, with sure-wrong counted on its own.
 - A guard that removes wrong names must be weighed against the right names it removes. The title guard cut sure-wrong 5→0 but sure-right 34→19.
+
+## Smoke tests need screenshots of the screen
+The overlay pill text is drawn on a canvas, so DOM snapshots and popup text dumps miss what the user actually sees (box placement, truncation, overlap). The 2026-10-25 Facebook smoke reported counts and totals but no screenshots, and the owner had to supply one.
+
+Rule: every smoke test captures screenshots of the page overlay and of the popup, embeds them in the report, and judges layout from the images. A smoke without screenshots is not done.
+
+## Nothing goes to the owner before a full smoke and QA pass
+On 2026-10-25 the owner found, from his own screenshots, that overlay boxes do not sit on the cards (boxes stretched outward from the photo centre on a letterboxed Facebook photo) and that slabs are not detected. Our smoke had reported counts and prices only.
+
+Rule: the owner is the client. Before any result, build or 'ready' message goes to him, run the release QA gate in `tasks/todo.md` on real listings found by us (Playwright in his Chrome; never ask him for links), with screenshots checked by the director. Correct identifications with misplaced boxes is a failed release.
+
+## QA verdicts come from on-screen screenshots, not the overlay canvas
+Gate 3 (2026-10-25) passed the L2 resize check from the extension's canvas dump, which held 3 correct boxes, while the real on-screen screenshot showed no boxes at all (the canvas was not visible after the resize).
+
+Rule: every overlay check is judged on the page screenshot as the user sees it; canvas dumps and box JSON are only for measuring. A check passes only when the on-screen shot shows it. The director opens the on-screen shots for every robustness step before accepting a gate.
+
+## Size the test before spending the GPU (2026-11-08)
+Two blur-trained models scored +0.88 and -0.88 points on 114 real blurry boxes with a CI about 10 points wide, one run each, so the study could not have shown a small gain. A harder degrader alone also gave nothing, matching the CDN degrader result (G1).
+
+Rule: before a training study, work out how many boxes the winner rule needs (about 500 for +5 points, 1,300 for +3, assuming 15% of answers change) and run at least 3 seeds per arm, including the control. No test set that size means build it first.
+
+## Most of the tilt loss is the crop, and tilt is rare in labelled boxes (2026-11-08)
+`rectifyCard` stretches the axis-aligned box. On synthetic held-out cards at 150 px, 45 deg tilt read 7.2% on that crop and 81.0% when straightened with true corners. But only 4.8% of 291 tagged real boxes were tilted 10 deg or more, so tilt training was skipped. That sample holds readable, name-agreed boxes and few piles, so the true share may be higher.
+
+Rule: measure both how much a condition costs and how often it occurs before training for it. Heavy tilt is a geometry problem for a corner-finding detector, not obviously a training problem.
+
+## Blind agreement drops the smallest cards (2026-11-08)
+The last fresh set had 0 agreed boxes under 100 px, so the scored set cannot test the cards that fail most (Facebook lot errors were all at 106 px or smaller).
+
+Rule: label on the largest available picture and score on the small served one.
+
+## Harvest blocks are final (2026-11-08)
+LiveAuctioneers rendered empty in headless Chromium and estatesales.org returned 403 on the first request. Rule: record the block, skip the site, and do not retry headed or otherwise work around it.

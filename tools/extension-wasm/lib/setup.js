@@ -6,7 +6,14 @@ const RELEASES =
 
 // The "p" marks a cache whose files were all checked against a pinned hash. Caches from builds that did not
 // check (older names) are deleted by pruneOldCaches, so those files are downloaded and verified once.
+// Do not rename this when one file moves to a new release: files are cached by URL, so only that file is
+// downloaded, and renaming would make pruneOldCaches delete every working model before the new one is verified.
 export const CACHE_NAME = "cardscanner-models-v2.1p";
+
+// Superseded URLs, removed only after the file that replaces them is downloaded and hash-checked.
+const STALE_URLS = {
+  "clip_visual_int8.onnx": [RELEASES + "v2.0/clip_visual_int8.onnx"],
+};
 
 export async function pruneOldCaches() {
   for (const name of await caches.keys()) {
@@ -19,9 +26,9 @@ export async function pruneOldCaches() {
 export const ASSETS = [
   {
     name: "clip_visual_int8.onnx",
-    bytes: 89_000_000,
-    release: "v2.0",
-    sha256: "77538aade655907f58db20510909210f52c45dc858a9d05ffce7420b62b59689",
+    bytes: 88_999_043,
+    release: "v3.0",
+    sha256: "0dba1302580da2a629936be835b765d6dba9019e677284257470d30070d9d52b",
   },
   {
     name: "card_detect.onnx",
@@ -61,6 +68,11 @@ export const OPTIONAL_ASSETS = [
     release: "v2.2",
     sha256: "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
   },
+  {
+    name: "card_corners.onnx",
+    release: "v2.2",
+    sha256: "d85aba2af7c30c868df9353ec6f5750973133dfffdb2dbc2c1f4784ca968d57e",
+  },
 ];
 
 export function assetUrl(name) {
@@ -72,6 +84,22 @@ export function assetUrl(name) {
 export async function sha256Hex(bytes) {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The assets not yet in the cache, so the wizard quotes what will really download. */
+export async function missingAssets() {
+  const cache = await caches.open(CACHE_NAME);
+  const missing = [];
+  for (const asset of ASSETS) {
+    if (!(await cache.match(assetUrl(asset.name)))) missing.push(asset);
+  }
+  return missing;
+}
+
+/** "about 89 MB" for the given assets (all of ASSETS when none are given). */
+export function downloadSizeText(assets = ASSETS) {
+  const mb = Math.round(assets.reduce((sum, a) => sum + a.bytes, 0) / 1_000_000);
+  return mb < 1 ? "under 1 MB" : `about ${mb} MB`;
 }
 
 export async function checkModelsReady() {
@@ -142,12 +170,13 @@ export async function downloadModels(onProgress) {
     const blob = new Blob(chunks);
     const actual = await sha256Hex(await blob.arrayBuffer());
     if (actual !== asset.sha256) {
-      throw new Error(`The card finder download is damaged (${asset.name}). Try again.`);
+      throw new Error(`The download of ${asset.name} is damaged. Try again.`);
     }
     const cachedResponse = new Response(blob, {
       headers: { "content-type": _contentType(asset.name) },
     });
     await cache.put(url, cachedResponse);
+    for (const stale of STALE_URLS[asset.name] ?? []) await cache.delete(stale);
 
     onProgress?.({
       file: asset.name,

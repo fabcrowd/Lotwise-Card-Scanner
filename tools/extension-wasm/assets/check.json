@@ -1,0 +1,126 @@
+{
+ "v": 2,
+ "model_sha256": "0dba1302580da2a629936be835b765d6dba9019e677284257470d30070d9d52b",
+ "model_tag16": "0dba1302580da2a6",
+ "crop_version": 3,
+ "crop_path": "detector box stretched to 750x1050 (corner model off), art crop, model E epoch16-ema-int8",
+ "inputs": [
+  {
+   "name": "det_conf",
+   "meaning": "detector score of the box",
+   "zscore": "fit-set mean and population std in the header"
+  },
+  {
+   "name": "aspect",
+   "meaning": "box width / height in the picture the detector ran on",
+   "zscore": "fit-set mean and population std in the header"
+  }
+ ],
+ "hidden": 128,
+ "torch_version": "2.11.0+cu128",
+ "threads": 4,
+ "threshold": 0.08363516628742218,
+ "k": 17,
+ "sha256": "1d925ef1d46f94b0c5c61e2b8ca0af55e87f257f9c65f9b54ed1f878e09c30cb",
+ "bytes": 264423,
+ "extra_mean": [
+  0.7585527552328062,
+  0.8849491670226399
+ ],
+ "extra_std": [
+  0.2433452313855217,
+  0.22052750140724517
+ ],
+ "fit": {
+  "obscure": {
+   "n_real": 983,
+   "n_nonc": 69
+  },
+  "check-20261112": {
+   "n_real": 471,
+   "n_nonc": 112
+  },
+  "check-20261112c": {
+   "n_real": 360,
+   "n_nonc": 346
+  },
+  "n_real": 1814,
+  "n_nonc": 527,
+  "listings": 377,
+  "dropped_no_det": {
+   "obscure": 0,
+   "check-20261112": 0,
+   "check-20261112c": 0
+  },
+  "set": "obscure + check-20261112 + check-20261112c (all splits)",
+  "epochs": 300,
+  "in_sample_real_kept": 0.9928335170893055,
+  "in_sample_nonc_rejected": 0.8462998102466793
+ },
+ "held_out": {
+  "check-20261112": {
+   "n_real": 471,
+   "new_hidden_real": 11,
+   "packaged_hidden_real": 12,
+   "n_nonc": 112,
+   "new_rejected_nonc": 95,
+   "packaged_rejected_nonc": 74
+  },
+  "check-20261112c": {
+   "n_real": 360,
+   "new_hidden_real": 6,
+   "packaged_hidden_real": 5,
+   "n_nonc": 346,
+   "new_rejected_nonc": 211,
+   "packaged_rejected_nonc": 176
+  },
+  "pooled": {
+   "n_real": 831,
+   "new_hidden_real": 17,
+   "packaged_hidden_real": 17,
+   "n_nonc": 458,
+   "new_rejected_nonc": 306,
+   "packaged_rejected_nonc": 250
+  }
+ },
+ "packaged": {
+  "sha256": "c048ee69871df2a2e82d48ff78206dc7eaf4d8fd7d39a61f52fdec421d4d0929",
+  "threshold": 0.25221944241130606
+ },
+ "gate": {
+  "g1": {
+   "k": 17,
+   "threshold": 0.08363516628742218,
+   "expect_k": 17,
+   "expect_threshold": 0.08363516628742218,
+   "abs_diff": 0.0,
+   "tolerance": 1e-06,
+   "pass": true
+  },
+  "g2": {
+   "n_nonc": 458,
+   "new_rejected": 0.6681222707423581,
+   "packaged_rejected": 0.5458515283842795,
+   "points": 12.227074236,
+   "bar": 8.0,
+   "pass": true
+  },
+  "g3": {
+   "n_real": 849,
+   "new_real_kept": 0.9905771495877503,
+   "packaged_real_kept": 0.9893992932862191,
+   "floor": 0.97,
+   "margin_points": 0.5,
+   "kept_without_det": 0,
+   "pass": true
+  },
+  "g4": {
+   "n_nonc": 57,
+   "new_rejected": 0.7192982456140351,
+   "packaged_rejected": 0.5263157894736842,
+   "points": 19.298245614,
+   "bar": 8.0,
+   "pass": true
+  }
+ }
+}

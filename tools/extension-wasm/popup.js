@@ -1,13 +1,36 @@
 import { truncationNote } from "./lib/page-scan.js";
-import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, classifyCard, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, versionLabel, confirmGuess, topGuessOf, readFromSmallCrop, lotTotals, formatUsd, GUESS_TOTAL_CAP } from "./lib/card-display.js";
+import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotEstimate, sureNote, formatUsd, chosenPrintingHasNoPrice, isIdentified, isStale, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
+import { TOO_SMALL_ROW_TEXT } from "./lib/tiny-card.js";
+import { DRAW_HINT_TEXT, drawnIndices, isSameLot, placeDrawnCard, replacedKind, restoredLotTabId } from "./lib/draw-box.js";
+import { withBoxKind } from "./lib/share-rows.js";
+// dev-only:start
+import { drawnKind } from "./lib/drawn-examples-store.js";
+// dev-only:end
 import { ERAS, eraById } from "./lib/era.js";
-import { cropThumb, escHtml, guessOf, isUnsure, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
+import { downloadSizeText, missingAssets } from "./lib/setup.js";
+import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, unrecognisedLabel } from "./lib/card-picker.js";
+import { bulkPairs, bulkRememberedPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderRemoveButton, renderSkipButton, renderSkippedGroup, renderSkippedRow, tickAllLabel } from "./lib/choose-flow.js";
+import { clearLot, loadLot, saveLot } from "./lib/lot-session.js";
+import { leftOutLabel, putBackCard, removeCard, removedCount, skipCard, skippedCount } from "./lib/skip.js";
+import { acceptFromBackground, acceptRemove } from "./lib/overlay-remove.js";
+import { UNREAD_ROW_TEXT, hiddenCount, isNotCard, overlayCards, renderNotCardGroup, renderNotCardRow, shownMessage, showNotCard } from "./lib/not-card.js";
+import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
+import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
+import { userWhy } from "./lib/why.js";
+import { bestMatchPrice, isHighValue, priceTypicalOf, unconfirmedTotal } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
+import { CONDITION_TIP, conditionName, lotExportLabels, lotExportRows, lotFileName, lotToCsv, lotToTsv } from "./lib/lot-export.js";
 import { getPptKey } from "./lib/ppt-key.js";
+import { loadOverlayShown, saveOverlayShown } from "./lib/overlay-toggle.js";
+import { stampFinishNote, stampedPrices } from "./lib/set-stamp.js";
 import { accessOfferText, dismissedFor, hasAllSites, requestAllSites, requestSites, shouldOfferSiteAccess } from "./lib/site-access.js";
 
 const btnScan      = document.getElementById("btn-scan");
 const btnClear     = document.getElementById("btn-clear");
+const btnDraw      = document.getElementById("btn-draw");
+const restoreNote  = document.getElementById("restore-note");
+const restoreText  = document.getElementById("restore-text");
+const restoreRescan = document.getElementById("restore-rescan");
 const btnLabel     = document.getElementById("btn-label");
 const btnOptions   = document.getElementById("open-options");
 const examStrip    = document.getElementById("exam-strip");
@@ -23,6 +46,9 @@ const btnWizSkip    = document.getElementById("btn-wiz-skip");
 const sValue       = document.getElementById("s-value");
 const statValue    = document.getElementById("stat-value");
 const lotTotalsEl  = document.getElementById("lot-totals");
+const sCond        = document.getElementById("s-cond");
+const lotEditionEl = document.getElementById("lot-edition");
+const lotEditionSelect = document.getElementById("lot-edition-select");
 const fullSizeNotice = document.getElementById("fullsize-notice");
 const fullSizeText = document.getElementById("fullsize-text");
 const fullSizeOpen = document.getElementById("fullsize-open");
@@ -34,6 +60,7 @@ const btnSetup     = document.getElementById("btn-setup");
 const setupStatus  = document.getElementById("setup-status");
 const setupBars    = document.getElementById("setup-bars");
 const eraSelect    = document.getElementById("era-select");
+const overlayShownToggle = document.getElementById("overlay-shown");
 const accessNotice  = document.getElementById("access-notice");
 const accessText    = document.getElementById("access-text");
 const accessOutcome = document.getElementById("access-outcome");
@@ -41,21 +68,42 @@ const accessAllow   = document.getElementById("access-allow");
 const accessAllowAll = document.getElementById("access-allow-all");
 const accessSkip    = document.getElementById("access-skip");
 const accessRescan  = document.getElementById("access-rescan");
+const bulkPanel     = document.getElementById("bulk-panel");
+const bulkList      = document.getElementById("bulk-list");
+const bulkConfirm   = document.getElementById("bulk-confirm");
+const bulkClose     = document.getElementById("bulk-close");
+const bulkCancel    = document.getElementById("bulk-cancel");
+const bulkHint      = document.getElementById("bulk-hint");
+const bulkTickAll   = document.getElementById("bulk-tick-all");
 
+const MIN_ART_PX = 20;
 const CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"];
 
 let isScanning = false;
 let _lastResult = null;
 let _scanSeq = 0;
 let _filters   = mergeFilters(DEFAULT_FILTERS);
-let _variantChoice = new Map(); // card index -> printing chosen this scan
+let _variantChoice = new Map(); // card index -> printing the user chose, or one settled by the printed number
+let _variantSuggest = new Map(); // card index -> printing the picture suggests: preselected, never priced until confirmed
+let _variantPicked = new Set(); // card indexes whose printing the user set themselves: the lot edition leaves them alone
+let _lotEdition = "";           // the edition applied to every Base Set row not picked individually
+let _stripMore = new Set();     // "idx:kind" of the picker strips expanded past their first 8 tiles
+let _whyOpen = new Set();       // card indexes whose "Why this card?" text is open
 let _picker = new Map();        // card index -> { via, query, results } while its search box is open
 let _showUnrecognised = false;  // the "not recognised" group is open
+let _showChoose = true;         // the "To confirm" group is open
+let _showSkipped = false;       // the "Skipped" group is open
+let _showNotCard = false;       // the "Hidden: not a card" group is open (never saved: it opens collapsed)
+let _bulk = null;               // { pairs, skipped, opener, scan } while the review-all panel is open
 let _searchTimer = null;
 let _pickSeq = 0;
 const _pickToken = new Map();   // card index -> its latest pick; a slower earlier price is dropped
 
-function showMessage(text, isError = false) {
+let _statusTail = "";       // what follows the scan status line: truncation and still-loading notes
+let _statusShown = false;   // the message bar currently shows the scan status, so card changes may refresh it
+
+function showMessage(text, isError = false, isStatus = false) {
+  _statusShown = isStatus;
   msgBar.textContent = text;
   msgBar.classList.toggle("error", isError);
   msgBar.setAttribute("role", isError ? "alert" : "status");
@@ -102,6 +150,10 @@ async function maybeStartWizard(modelsReady) {
   const pptApiKey = await getPptKey();
   if (!modelsReady) {
     showWizStep(1);
+    // After the step shows, so the size lookup never delays the wizard.
+    missingAssets()
+      .then((missing) => { document.getElementById("setup-size").textContent = downloadSizeText(missing); })
+      .catch((err) => console.warn("[popup] could not size the download", err));
     return;
   }
   if (onboarding.step !== "done" && onboarding.step !== 2 && !(await hasAllSites(chrome.permissions))) {
@@ -126,12 +178,17 @@ btnSetup.addEventListener("click", async () => {
   chrome.runtime.onMessage.removeListener(onSetupProgress);
   if (resp?.ok) {
     btnScan.disabled = false;
+    // The download is over: no "Downloading 5 of 5" may outlive it.
+    setupStatus.textContent = "";
+    setupBars.innerHTML = "";
     // Move the wizard forward: site access, then the PPT upsell (each skipped when already settled)
     await setOnboarding({ step: "access" });
     await maybeStartWizard(true);
   } else {
     console.error("model download failed", resp?.error || "unknown error");
-    setupStatus.textContent = "The download stopped. Check your connection and try again.";
+    setupStatus.textContent = /HTTP 404/.test(String(resp?.error))
+      ? "This update isn't available yet. Try again later."
+      : "The download stopped. Check your connection and try again.";
     btnSetup.disabled = false;
   }
 });
@@ -204,19 +261,39 @@ eraSelect.addEventListener("change", () => {
   if (_lastResult && !isScanning) scanPage();
 });
 
+/* ─── Show boxes on page ─── */
+
+// An overlay pushed before the stored choice is read would show boxes the user turned off.
+const overlayShownLoaded = loadOverlayShown(chrome.storage.local).then((shown) => { overlayShownToggle.checked = shown; });
+overlayShownToggle.addEventListener("change", () => {
+  saveOverlayShown(chrome.storage.local, overlayShownToggle.checked).catch(() => {});
+  chrome.runtime.sendMessage({ action: "setOverlayShown", shown: overlayShownToggle.checked }).catch(() => {});
+});
+
 btnClear.addEventListener("click", () => {
   chrome.runtime.sendMessage({ action: "clearPageOverlay" }).catch(() => {});
+  clearTimeout(_saveTimer);
+  clearLot(lotArea(), _lotUrl).catch(() => {});
+  restoreNote.hidden = true;
   _lastResult = null;
+  _lotTabId = null;
   _variantChoice = new Map();
+  _variantSuggest = new Map();
+  _variantPicked = new Set();
+  _lotEdition = "";
   _picker = new Map();
+  _whyOpen = new Set();
+  _stripMore = new Set();
   _showUnrecognised = false;
+  _showSkipped = false;
+  _showChoose = true;
+  closeBulk(false);
   examStrip.hidden = true;
   resetResults();
   showMessage("");
 });
 
-async function scanPage() {
-  if (isScanning) return;
+function beginScanUi(text) {
   isScanning = true;
   btnScan.classList.add("scanning");
   btnLabel.textContent = "SCANNING…";
@@ -224,11 +301,17 @@ async function scanPage() {
   btnScan.setAttribute("aria-busy", "true");
   eraSelect.disabled = true;
   accessNotice.hidden = true;
+  restoreNote.hidden = true;
   if (fullSizeNotice) fullSizeNotice.hidden = true;
-  showMessage("Capturing page and running detection…");
+  showMessage(text);
+  chrome.runtime.onMessage.addListener(onScanProgress);
+}
+
+async function scanPage() {
+  if (isScanning) return;
+  beginScanUi("Capturing page and running detection…");
 
   let data;
-  chrome.runtime.onMessage.addListener(onScanProgress);
   try {
     data = await chrome.runtime.sendMessage({ action: "scanPage", era: eraSelect.value || null });
   } catch (err) {
@@ -250,16 +333,23 @@ async function scanPage() {
 // A scan's result in the list, the stats and the page overlay. A rescan the page started (pictures that loaded
 // later) comes here too, so the list always matches what the overlay shows.
 function applyScanResult(data) {
-  const cards = (data.cards || []).map((card) => {
-    const topGuess = topGuessOf(card);
-    return { ...card, guess: guessOf(card), ...(topGuess ? { topGuess } : {}) };
-  });
+  restoreNote.hidden = true;
+  if (data.tabUrl) _lotUrl = data.tabUrl;
+  if (Number.isInteger(data.targetTabId) || Number.isInteger(data.tabId)) _lotTabId = data.targetTabId ?? data.tabId;
+  const cards = (data.cards || []).map((card) => ({ ...card, guess: guessOf(card) }));
   _lastResult = { scanId: ++_scanSeq, bgScanId: data.scanId, cards, srcWidth: data.srcWidth, srcHeight: data.srcHeight,
     fullSize: data.fullSizePhoto?.url ? data.fullSizePhoto : null };
   _variantChoice = new Map();
+  _variantSuggest = new Map();
+  _variantPicked = new Set();
+  _lotEdition = "";
   _picker = new Map();
+  _stripMore = new Set();
   _userEdits = false;
   _showUnrecognised = false;
+  _showNotCard = false;
+  _showChoose = true;
+  closeBulk(false);
   _lastResult.cards.forEach(seedVariant);
   // Offered only to someone who opted in, on a photo picked for checking; it never blocks anything.
   examStrip.hidden = data.shareExam !== true;
@@ -267,19 +357,127 @@ function applyScanResult(data) {
   renderResults();
   maybeOfferSiteAccess(data).catch(() => { accessNotice.hidden = true; });
   showFullSizeOffer(_lastResult.fullSize);
-  priceGuesses(_lastResult).catch((err) => console.warn("guess prices failed", err?.message || err));
 
-  if (cards.length === 0) {
+  if (cards.length === hiddenCount(cards)) {
     showMessage("No Pokémon cards detected on this page.");
   } else {
     const stillLoading = data.pending > 0
       ? ` ${data.pending} picture${data.pending === 1 ? " is" : "s are"} still loading.`
       : "";
-    showMessage(`${scanStatus(cards)}${truncationNote(data.truncated)}.${stillLoading}`);
+    _statusTail = `${truncationNote(data.truncated)}.${stillLoading}`;
+    refreshStatus(true);
   }
 
   // Push the overlay snapshot with current filter state baked in
   pushOverlay();
+  loadBestMatchPrices(_lastResult);
+}
+
+// The top status line always counts the cards as they are now. A pick's own message ("Getting price...") replaces it
+// until the next scan; while the status is showing, every change to the cards (a pick) refreshes it.
+function refreshStatus(force = false) {
+  const cards = _lastResult?.cards;
+  if (!cards?.length || !(force || _statusShown)) return;
+  showMessage(`${scanStatus(cards)}${_statusTail}`, false, true);
+}
+
+/* ─── Best-match prices: the price of the card a Choose row would confirm (lib/stakes.js) ─── */
+
+// One priceCard call per Choose card, for its preselected best match only, a few at a time, cached by candidate id. The
+// answer is shown marked unconfirmed; it never confirms anything. A pick reuses the same answer.
+const STAKES_FETCH_LIMIT = 6;
+const _candidatePrice = new Map();
+const _candidateResp = new Map();   // candidate id -> priceCard answer, once loaded
+const _candidateFailed = new Set(); // candidate ids whose price could not be fetched: shown as "no price"
+const _stakesQueue = [];
+let _stakesActive = 0;
+
+function limitedFetch(task) {
+  return new Promise((resolve) => {
+    const run = async () => {
+      _stakesActive += 1;
+      try { resolve(await task()); } finally {
+        _stakesActive -= 1;
+        _stakesQueue.shift()?.();
+      }
+    };
+    if (_stakesActive < STAKES_FETCH_LIMIT) run(); else _stakesQueue.push(run);
+  });
+}
+
+function candidatePrice(id) {
+  if (!_candidatePrice.has(id)) {
+    const asked = limitedFetch(async () => {
+      try { return await chrome.runtime.sendMessage({ action: "priceCard", id }); } catch (err) { return { error: explainScanError(err?.message || err) }; }
+    }).then((resp) => {
+      if (!resp || resp.error) _candidatePrice.delete(id); else _candidateResp.set(id, resp);
+      if (!resp || resp.error) _candidateFailed.add(id); else _candidateFailed.delete(id);
+      return resp;
+    });
+    _candidatePrice.set(id, asked);
+  }
+  return _candidatePrice.get(id);
+}
+
+function bestCandidateOf(card) { return candidatesOfCard(card)[0] || null; }
+
+// The best match's price for a Choose card, or null while it is loading (or the card has no candidate).
+function matchPriceOf(card) {
+  const best = bestCandidateOf(card);
+  if (!best?.id) return null;
+  if (_candidateFailed.has(best.id) && !_candidateResp.has(best.id)) return { price: null, kind: "none", stale: false, failed: true };
+  return bestMatchPrice(card, _candidateResp.get(best.id), enabledConditions());
+}
+
+// The typical price used for the high-value flag: the best match's for a Choose card, the card's own once confirmed.
+function typicalForFlag(card, idx) {
+  if (chooseState(card) === "choose") {
+    const match = matchPriceOf(card);
+    return match && !match.stale ? match.price : null;
+  }
+  return isStale(card) ? null : priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions());
+}
+
+function highValueChipHtml(card, idx) {
+  return isHighValue(card, typicalForFlag(card, idx))
+    ? ` <span class="value-chip" title="This card is worth enough to be worth a second look. It is not marked confirmed because of its price.">High value, double-check</span>`
+    : "";
+}
+
+// A price arriving re-renders the rows; a keyboard user's focus stays on the same button of the same row.
+const FOCUS_KEYS = ["data-confirm-best", "data-pick", "data-skip-card", "data-open-search", "data-show-on-page", "data-put-back"];
+function renderKeepingFocus() {
+  const active = document.activeElement;
+  const inList = resultsEl.contains(active);
+  const key = inList ? FOCUS_KEYS.find((name) => active.hasAttribute(name)) : null;
+  const idx = inList ? active.closest(".card-row[data-idx]")?.dataset.idx : null;
+  const pick = key === "data-pick" ? active.getAttribute("data-pick") : null;
+  renderResults();
+  if (!key || idx == null) return;
+  const same = [...resultsEl.querySelectorAll(`.card-row[data-idx="${idx}"] [${key}]`)].find((el) => !pick || el.getAttribute(key) === pick);
+  same?.focus({ preventScroll: true });
+}
+
+function loadBestMatchPrices(scan) {
+  let refreshQueued = false;
+  const refresh = () => {
+    if (refreshQueued) return;
+    refreshQueued = true;
+    Promise.resolve().then(() => {
+      refreshQueued = false;
+      if (_lastResult?.scanId !== scan.scanId || _picker.size) return;
+      renderKeepingFocus();
+      updateStats(_lastResult.cards);
+      pushOverlay();
+    });
+  };
+  scan.cards.forEach((card) => {
+    if (chooseState(card) !== "choose") return;
+    const best = bestCandidateOf(card);
+    if (!best?.id) return;
+    if (_candidateResp.has(best.id)) { refresh(); return; }
+    candidatePrice(best.id).then(refresh);
+  });
 }
 
 // The background rescans on its own when more card pictures load. A pick in progress is never thrown away: the list
@@ -295,6 +493,84 @@ chrome.runtime.onMessage.addListener((msg) => {
     return;
   }
   applyScanResult(msg.data);
+});
+
+/* ─── Draw a box: a card the scan missed ─── */
+
+// The page enters draw mode; when the user has drawn, the background reads the box and sends the card back as "drawnCard".
+let _drawPending = false;   // draw mode is on in the page and no box has come back yet
+
+async function startDrawBox() {
+  if (isScanning) { showMessage("Wait for the scan to finish, then draw a box.", true); return; }
+  try {
+    const resp = await chrome.runtime.sendMessage({ action: "drawBox", era: eraSelect.value || null });
+    if (resp?.error) { showMessage(resp.error, true); return; }
+    _drawPending = true;
+    showMessage(DRAW_HINT_TEXT);
+  } catch (err) {
+    showMessage(explainScanError(err?.message || err), true);
+  }
+}
+btnDraw.addEventListener("click", startDrawBox);
+
+// Closing the popup with a draw pending leaves the page's draw mode too (best effort: the page also leaves it on its own).
+window.addEventListener("pagehide", () => {
+  if (_drawPending) chrome.runtime.sendMessage({ action: "cancelDraw" }).catch(() => {});
+});
+
+// The drawn card joins the list (replacing a hidden or Too small entry it covers) and the page overlay, as a Choose or
+// confirmed row by the usual rules; drawing confirms nothing. With no scan yet it starts a one-card result.
+// dev-only:start
+// Tells the background what the drawn box turned out to be, for the training log. Best effort: never in the way of the list.
+function reportDrawnKind(msg, replacedCard) {
+  if (typeof msg.exampleId !== "string") return;
+  chrome.runtime.sendMessage({ action: "drawnPlaced", exampleId: msg.exampleId, kind: drawnKind(replacedCard) }).catch(() => {});
+}
+// dev-only:end
+
+// A box signal for the relay, when sharing is on (the background decides). Never in the way of what the user did.
+function sendBoxSignal(source, scanId, index, card) {
+  chrome.runtime.sendMessage({ action: "shareBoxSignal", source, scanId: scanId ?? null, index, ...drawnFields(card) }).catch(() => {});
+}
+
+function applyDrawnCard(msg) {
+  _drawPending = false;
+  const drawn = { ...msg.card, guess: guessOf(msg.card) };
+  // The kind of box it was (the scan had hidden, Too small or nothing there) is known only here.
+  const withKind = (replacedCard) => (drawn.share ? { ...drawn, share: withBoxKind(drawn.share, replacedKind(replacedCard)) } : drawn);
+  let card = withKind(null);
+  // A result from another page is not added to: the drawn card starts its own one-card result, so the overlay and totals never mix pages.
+  // Two tabs on the same URL are two lots, so the tab counts too.
+  if (!_lastResult || !isSameLot({ url: _lotUrl, tabId: _lotTabId }, { url: msg.tabUrl, tabId: msg.tabId })) {
+    applyScanResult({ cards: [card], srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, tabUrl: msg.tabUrl, tabId: msg.tabId, scanId: null });
+    sendBoxSignal("drawn", null, 0, card);
+    // dev-only:start
+    reportDrawnKind(msg, null);
+    // dev-only:end
+    return;
+  }
+  const placed = placeDrawnCard(_lastResult.cards, drawn);
+  card = withKind(placed.replacedCard);
+  const cards = placed.cards.map((c, i) => (i === placed.index ? card : c));
+  sendBoxSignal("drawn", _lastResult.bgScanId, placed.index, card);
+  // dev-only:start
+  reportDrawnKind(msg, placed.replacedCard);
+  // dev-only:end
+  _lastResult = { ..._lastResult, cards };
+  for (const map of [_variantChoice, _variantSuggest]) map.delete(placed.index);
+  _variantPicked.delete(placed.index);
+  seedVariant(card, placed.index);
+  _showChoose = true;
+  updateStats(cards);
+  renderResults();
+  loadBestMatchPrices(_lastResult);
+  pushOverlay();
+  showMessage(`Box ${placed.index + 1} added${card.tooSmall ? ": too small to read" : card.cardBack ? ": it reads as a card back" : ""}.`);
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.action === "drawnCard" && msg.card) applyDrawnCard(msg);
+  else if (msg?.action === "drawnFailed") { _drawPending = false; showMessage(typeof msg.error === "string" ? msg.error : "Could not read that box.", true); }
 });
 
 /* ─── Site access offer ─── */
@@ -410,57 +686,124 @@ function updateStats(cards) {
   const lot = lotValue(cards, choiceFor, enabledConditions());
   sValue.textContent = lot.value ?? "—";
   setStatDetail(lot.detail);
+  sCond.textContent = enabledConditions()[0] || "NM";
+  sCond.hidden = false;
   renderLotTotals(cards, choiceFor);
+  renderLotEdition(cards);
 }
 
-// The lot in three figures, so a whole lot can be priced before every card is checked: the identified cards, the
-// guesses (marked with ~, counted only if they are right), and the two together.
+for (const edition of LOT_EDITIONS) lotEditionSelect.add(new Option(edition.label, edition.id));
+
+// Shown only while some row has its finish settled by the printed number but its edition open.
+function renderLotEdition(cards) {
+  lotEditionEl.hidden = !(cards || []).some(needsEdition);
+  lotEditionSelect.value = _lotEdition;
+}
+
+// One edition for the whole lot: every eligible row the user has not set themselves takes it, or loses it when cleared.
+lotEditionSelect.addEventListener("change", () => {
+  const cards = _lastResult?.cards;
+  if (!cards) return;
+  _lotEdition = lotEditionSelect.value;
+  cards.forEach((card, idx) => {
+    if (_variantPicked.has(idx) || !needsEdition(card)) return;
+    const key = _lotEdition ? editionVariant(card, _lotEdition) : null;
+    if (key) _variantChoice.set(idx, key);
+    else _variantChoice.delete(idx);
+    _variantSuggest.delete(idx);
+  });
+  renderResults();
+  pushOverlay();
+  updateStats(cards);
+  lotEditionSelect.focus();
+});
+
+// The lot in two figures: what the confirmed cards are worth (a range while a printing is open), and how many
+// cards are still to confirm. A guessed card adds nothing until the user confirms it.
 function renderLotTotals(cards, choiceFor) {
   if (!lotTotalsEl) return;
   const list = (cards || []).filter((card) => !card.cardBack);
   if (!list.length) { lotTotalsEl.hidden = true; return; }
-  const t = lotTotals(cards, choiceFor, enabledConditions());
+  const skipped = skippedCount(cards);
+  const removed = removedCount(cards);
+  const t = lotEstimate(cards, choiceFor, enabledConditions());
   const span = (low, high) => (Math.abs(high - low) < 0.005 ? formatUsd(high) : `${formatUsd(low)}–${formatUsd(high)}`);
-  const pending = list.some((card) => card.topGuess && card.topGuess.price === undefined);
-  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Sure</span> <b>${escHtml(span(t.sure.low, t.sure.high))}</b> <span class="lt-n">(${t.sure.identified})</span></span>`
-    + `<span class="lt-item lt-guess"><span class="lt-lbl">Guesses</span> <b>~${escHtml(formatUsd(t.guess))}</b> <span class="lt-n">(${t.guessed}${t.toCheck ? `, ${t.toCheck} over $${GUESS_TOTAL_CAP} to check` : ""}${pending ? ", pricing…" : ""})</span></span>`
-    + `<span class="lt-item"><span class="lt-lbl">Together</span> <b>~${escHtml(span(t.low, t.high))}</b></span>`;
+  const cond = enabledConditions()[0] || "NM";
+  const note = sureNote(t);
+  const labels = lotExportLabels(...currentLotCounts(cards, choiceFor));
+  const actions = labels
+    ? `<span class="lt-actions" title="${escHtml(labels.tip)}">`
+      + `<button type="button" class="lt-btn" data-lot-copy aria-label="${escHtml(labels.copy)}" title="${escHtml(labels.tip)}">${escHtml(labels.copy)}</button>`
+      + `<button type="button" class="lt-btn" data-lot-csv aria-label="${escHtml(labels.csv)}" title="${escHtml(labels.tip)}">${escHtml(labels.csv)}</button></span>`
+    : "";
+  const unconfirmed = unconfirmedTotal(cards, (card) => matchPriceOf(card));
+  const hadCopyFocus = lotTotalsEl.contains(document.activeElement) ? document.activeElement.closest("[data-lot-copy], [data-lot-csv]") : null;
+  lotTotalsEl.innerHTML = `<span class="lt-item"><span class="lt-lbl">Confirmed value</span> <b>${escHtml(span(t.low, t.high))}</b> <span class="lt-n"${note.title ? ` title="${escHtml(note.title)}"` : ""}>${escHtml(note.text)}</span> <span class="lt-cond" title="${escHtml(CONDITION_TIP)}">${escHtml(conditionName(cond))}</span></span>`
+    + `<span class="lt-item lt-guess" title="Cards still to confirm. Confirm each card to see its price."><span class="lt-lbl">To confirm</span> <b>${t.toIdentify}</b></span>`
+    + (unconfirmed.count ? `<span class="lt-item lt-unconfirmed" title="Best-match prices of the cards still to confirm. A guess, not part of Confirmed value or the export."><span class="lt-lbl">Unconfirmed</span> <b>~${escHtml(formatUsd(unconfirmed.total))}</b> <span class="lt-n">(${unconfirmed.count} ${unconfirmed.count === 1 ? "card" : "cards"})</span></span>` : "")
+    + (skipped ? `<span class="lt-item lt-skipped" title="${escHtml(removed === skipped ? "Cards you removed from the scan. They are not counted, priced or exported." : removed ? "Cards you skipped or removed. They are not counted, priced or exported." : "Cards you skipped. They are not priced or exported.")}"><span class="lt-lbl">${escHtml(leftOutLabel(skipped, removed))}</span> <b>${skipped}</b></span>` : "")
+    + actions;
   lotTotalsEl.hidden = false;
+  // The strip is rewritten on every card change; a keyboard user on Copy or Download stays on it.
+  if (hadCopyFocus) lotTotalsEl.querySelector(hadCopyFocus.hasAttribute("data-lot-csv") ? "[data-lot-csv]" : "[data-lot-copy]")?.focus();
 }
 
-// Top guesses are priced in the background, a few at a time, so the lot totals and tags fill in without blocking.
-const GUESS_PRICE_CONCURRENCY = 3;
-async function priceGuesses(scan) {
-  const todo = scan.cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.topGuess && card.topGuess.price === undefined);
-  if (!todo.length) return;
-  const stale = () => _lastResult?.scanId !== scan.scanId;
-  let next = 0;
-  let done = 0;
-  const refresh = () => {
-    updateStats(_lastResult.cards);
-    pushOverlay();
-    // The rows are drawn again only when that cannot take away a search box the user is typing in.
-    if (!resultsEl.contains(document.activeElement)) renderResults();
-  };
-  const worker = async () => {
-    while (next < todo.length) {
-      const { idx } = todo[next++];
-      let resp = null;
-      try {
-        resp = await chrome.runtime.sendMessage({ action: "priceCard", id: _lastResult.cards[idx].topGuess.id });
-      } catch { resp = null; }
-      if (stale()) return;
-      const current = _lastResult.cards[idx];
-      if (!current?.topGuess) continue;
-      const quote = resp && !resp.error ? quotedPrice({ ...resp, setChoices: [] }, null, enabledConditions()) : null;
-      const price = quote?.price ?? (typeof resp?.market_price === "number" ? resp.market_price : null);
-      _lastResult.cards[idx] = { ...current, topGuess: { ...current.topGuess, price: price > 0 ? price : null } };
-      if (++done % 6 === 0) refresh();
-    }
-  };
-  await Promise.all(Array.from({ length: GUESS_PRICE_CONCURRENCY }, worker));
-  if (!stale()) refresh();
+// Copy and Download write only the confirmed cards, on the user's click; nothing leaves the browser otherwise.
+function currentLot() {
+  const cards = _lastResult?.cards || [];
+  const choiceFor = (card) => _variantChoice.get(cards.indexOf(card)) || null;
+  return lotExportRows(cards, choiceFor, enabledConditions());
 }
+function currentLotCounts(cards, choiceFor) {
+  const { count, notIncluded, skipped, removed } = lotExportRows(cards, choiceFor, enabledConditions());
+  return [count, notIncluded, skipped, removed];
+}
+
+// The clipboard API needs no extra permission from a click; the textarea route is for when it refuses.
+function copyWithTextarea(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+  document.body.appendChild(area);
+  area.select();
+  try { return document.execCommand("copy"); } catch { return false; } finally { area.remove(); }
+}
+
+async function copyLot() {
+  const lot = currentLot();
+  const labels = lotExportLabels(lot.count, lot.notIncluded, lot.skipped, lot.removed);
+  if (!labels) return;
+  const text = lotToTsv(lot.rows);
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    copied = true;
+  } catch {
+    copied = copyWithTextarea(text);
+  }
+  showMessage(copied ? labels.copied : "Copy failed: use Download CSV", !copied);
+}
+
+function downloadLot() {
+  const lot = currentLot();
+  const labels = lotExportLabels(lot.count, lot.notIncluded, lot.skipped, lot.removed);
+  if (!labels) return;
+  const name = lotFileName(new Date());
+  // The byte order mark makes Excel read the file as UTF-8.
+  const url = URL.createObjectURL(new Blob(["﻿", lotToCsv(lot.rows)], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  showMessage(`Saved ${lot.count} ${lot.count === 1 ? "card" : "cards"} as ${name}`);
+}
+
+lotTotalsEl?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-lot-copy]")) copyLot();
+  else if (event.target.closest("[data-lot-csv]")) downloadLot();
+});
 
 /* ─── Full-size photo offer ─── */
 
@@ -497,9 +840,10 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
   setTimeout(() => { if (!isScanning) scanPage(); }, 600);
 });
 
-// A click on a guess or question tag on the page: the card's row and its picks, ready to fix.
+// A click on a Choose tag on the page: the card's row and its picks, ready to choose.
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.action !== "overlayPick" || !Number.isInteger(msg.index)) return;
+  if (!_showChoose) { _showChoose = true; renderResults(); }
   const row = resultsEl.querySelector(`.card-row[data-idx="${msg.index}"]`);
   if (!row) return;
   row.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -527,54 +871,33 @@ function chosenPrinting(card, idx) {
 function resetResults() {
   sValue.textContent    = "—";
   setStatDetail("");
+  sCond.hidden          = true;
+  lotEditionEl.hidden   = true;
+  if (lotTotalsEl) { lotTotalsEl.hidden = true; lotTotalsEl.innerHTML = ""; }
+  if (fullSizeNotice) fullSizeNotice.hidden = true;
   resultsEl.innerHTML   = "";
   resultsEl.appendChild(emptyHint);
 }
 
 function renderResults() {
   const cards = _lastResult?.cards || [];
+  scheduleSave();
   if (cards.length === 0) { resetResults(); return; }
   emptyHint.remove();
 
-  const { shown, hidden } = splitByRecognition(cards);
-  resultsEl.innerHTML = shown.map((idx) => renderCardRow(cards[idx], idx)).join("")
-    + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised);
-
-  document.querySelectorAll(".set-select-row select").forEach((sel) => {
-    sel.addEventListener("change", (e) => {
-      const idx = Number(e.target.dataset.idx);
-      saveSetCorrection(idx, e.target.value, "set-menu");
-      pickSet(idx, e.target.value);
-    });
-  });
-
-  document.querySelectorAll(".version-select-row select").forEach((sel) => {
-    sel.addEventListener("change", (e) => {
-      const idx = Number(e.target.dataset.idx);
-      const card = _lastResult?.cards?.[idx];
-      if (card && e.target.value) replaceCard(idx, swapVersion(card, e.target.value));
-    });
-  });
-
-  // Wire variant selectors
-  document.querySelectorAll(".variant-select-row:not(.version-select-row) select").forEach((sel) => {
-    sel.addEventListener("change", (e) => {
-      const idx = Number(e.target.dataset.idx);
-      const value = e.target.value;
-      if (value) _variantChoice.set(idx, value);
-      else _variantChoice.delete(idx);
-      renderResults();
-      pushOverlay();
-      updateStats(cards);
-    });
-  });
+  const { shown, hidden, skipped, notCard } = splitByRecognition(cards);
+  const toChoose = shown.filter((idx) => chooseState(cards[idx]) === "choose");
+  const confirmed = shown.filter((idx) => chooseState(cards[idx]) !== "choose");
+  resultsEl.innerHTML = renderChooseGroup(toChoose.map((idx) => renderChooseRow(cards[idx], idx)).join(""), toChoose.length, _showChoose, bulkPairs(cards).length)
+    + confirmed.map((idx) => renderCardRow(cards[idx], idx)).join("")
+    + renderUnrecognisedGroup(hidden.map((idx) => renderUnrecognisedRow(cards[idx], idx)).join(""), hidden.length, _showUnrecognised)
+    + renderSkippedGroup(skipped.map((idx) => renderSkippedRow(idx, cropThumb(cards[idx]), cards[idx].removed === true, cards[idx].removedFromSkipped === true)).join(""), skipped.length, _showSkipped, removedCount(cards))
+    + renderNotCardGroup(notCard.map((idx) => renderNotCardRow(idx, cropThumb(cards[idx]), cards[idx].tooSmall === true, cards[idx].unread === true)).join(""), notCard.length, _showNotCard);
 }
 
 function renderCardRow(card, idx) {
   const id   = card.identity || {};
-  // A guess stays a guess until the user picks a card; once the row is named the guess is history.
-  const guess = id.name || id.id ? null : card.topGuess || null;
-  const name = id.name    || (card.cardBack ? "Card back" : guess ? `${guess.name}?` : "Not recognised");
+  const name = id.name    || "Card";
   const code = id.setCode || "";
   const set  = id.set     || "";
   const num  = id.number  || "";
@@ -583,22 +906,15 @@ function renderCardRow(card, idx) {
   const setKnown = isSetConfirmed(card);
 
   const setHtml = code ? `<span class="set-chip">${escHtml(code)}</span>` : "";
-  const smallHtml = readFromSmallCrop(card)
-    ? ` <span class="small-chip" title="Read from a small picture (${Math.round(card.readHeight)} px tall): the guess is a long shot. A full-size photo reads better.">small photo</span>`
-    : "";
-  const subHtml = guess
-    ? `<span class="guess-chip">Top guess</span> ${escHtml(guess.set || "")}${guess.number ? ` <span class="card-number">#${escHtml(guess.number)}</span>` : ""}${smallHtml}`
-    : setKnown
-      ? `${setHtml}${escHtml(set)}${num ? ` <span class="card-number">#${escHtml(num)}</span>` : ""}`
-      : "Set not sure";
+  const subHtml = setKnown
+    ? `${setHtml}${escHtml(set)}${num ? ` <span class="card-number">#${escHtml(num)}</span>` : ""}`
+    : "Set not sure";
   const photo = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
   const photoHtml = photo ? ` <span class="photo-chip" title="Read from this photo of the listing">${escHtml(photo)}</span>` : "";
 
-  // An asked row offers search once, under its picks; an identified row offers it as "Wrong card?" in the head.
-  const asked      = isAskedRow(card);
-  const askRow     = renderAskRow(card, idx);
-  // The candidates already include the set choices; a second menu would ask the same question twice.
-  const setRow     = card.candidates?.length ? "" : renderSetRow(card, idx);
+  // A confirmed row offers search as "Wrong card?" in its head; the box opens under the head.
+  const searchRow  = renderSearchPanel(idx);
+  const setRow     = renderSetRow(card, idx);
   const versionRow = renderVersionRow(card, idx);
   const variantRow = setKnown ? renderVariantRow(card, idx) : "";
   const gradedRow  = setKnown ? renderGradedGrid(card, grid) : "";
@@ -607,20 +923,19 @@ function renderCardRow(card, idx) {
     ? ` <span class="repeat-mark" role="img" title="${REPEAT_NOTE}" aria-label="${REPEAT_NOTE}">⚠</span>`
     : "";
 
-  // An asked card shows its picture in the question instead.
-  const thumb = id.name || askRow ? null : cropThumb(card);
-  return `<div class="card-row${askRow ? " asking" : ""}" data-idx="${idx}">
+  return `<div class="card-row" data-idx="${idx}">
     <div class="card-head">
       <div class="conf-stripe ${tier}"></div>
-      ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <div class="card-meta">
-        <div class="card-name${guess ? " guess-name" : ""}"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}</div>
-        <div class="card-sub">${subHtml}${photoHtml}</div>
+        <div class="card-name"${loneEdition ? ` title="${escHtml(loneEdition)}"` : ""}>${escHtml(name)}${loneEdition ? ` <span class="sr-only">${escHtml(loneEdition)}</span>` : ""}${guessMark(card, idx)}${repeatMark}${memoryChipHtml(card)}</div>
+        <div class="card-sub">${subHtml}${photoHtml}${highValueChipHtml(card, idx)}</div>
       </div>
       ${renderPrice(card, idx)}
-      ${asked ? "" : `<button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>`}
+      <button type="button" class="link-btn" data-open-search data-via="wrong-card" data-idx="${idx}" aria-label="Wrong card? Search for the right one for ${escHtml(name)}">Wrong card?</button>
     </div>
-    ${askRow}
+    ${renderRemoveButton(idx)}
+    ${whyHtml(card, idx, _whyOpen.has(idx))}
+    ${searchRow}
     ${setRow}
     ${versionRow}
     ${variantRow}
@@ -630,18 +945,30 @@ function renderCardRow(card, idx) {
 
 const REPEAT_NOTE = "Same name found several times in this photo. Check it.";
 
+// A Choose row's price: the preselected best match's, printing-specific, never a range, always marked unconfirmed.
+function renderUnconfirmedPrice(card, cell) {
+  if (!bestCandidateOf(card)?.id) return cell("—", "No close match to price");
+  const match = matchPriceOf(card);
+  if (!match) return cell("…", "Getting the best match's price…");
+  const note = "Price of the best match. Not confirmed: choose the card to confirm it.";
+  if (match.price == null) return cell("no price", `${match.failed ? "Price unavailable" : "No price data for the best match"}. ${note}`);
+  const money = formatUsd(match.price);
+  if (match.stale) return cell(`${money} · old price`, `Old price, left out of the lot. ${note}`);
+  if (match.kind === "typical") return cell(`${money} typical · unconfirmed`, `Typical price over the printings. ${note}`);
+  const printingNote = match.kind === "suggested" ? " At the printing the picture suggests: pick the printing to settle it." : "";
+  return cell(`${money} · unconfirmed`, `${note}${printingNote}`);
+}
+
 // One price per card, always in the head: a quote, a range while the set is open, or a dash that says why.
 function renderPrice(card, idx) {
   const cell = (text, title) => `<div class="card-price" title="${escHtml(title)}" aria-label="${escHtml(`${text}. ${title}`)}">${escHtml(text)}</div>`;
   if (card.pricing) return cell("…", "Getting price…");
   if (card.priceError) return cell("—", card.priceError);
+  if (card.tooSmall) return cell("—", TOO_SMALL_ROW_TEXT);
+  if (card.unread) return cell("—", UNREAD_ROW_TEXT);
   if (card.cardBack) return cell("—", "Turn it over to identify it");
-  if (card.topGuess && !card.identity?.name && !card.identity?.id) {
-    const p = card.topGuess.price;
-    const text = p === undefined ? "…" : p > 0 ? `~${formatUsd(p)}` : "—";
-    const title = p > 0 ? `Price of the top guess, ${card.topGuess.name}. Pick the card to confirm it.` : p === undefined ? "Getting the guess's price…" : "No price for the top guess";
-    return `<div class="card-price guess-price" title="${escHtml(title)}" aria-label="${escHtml(`${text}. ${title}`)}">${escHtml(text)}</div>`;
-  }
+  // A card still to choose shows its best match's price, marked unconfirmed: it is quoted for real only once picked.
+  if (!isIdentified(card)) return renderUnconfirmedPrice(card, cell);
   const conditions = enabledConditions();
   // Name sure, printing open: the range across the printings it could be, until the user picks one.
   const openSpan = needsPrinting(card) ? setRangeSpan(card.setRange, conditions) : null;
@@ -652,10 +979,17 @@ function renderPrice(card, idx) {
     const others = Object.entries(card.price_grid?.variants?.[quote.printing]?.conditions || {})
       .filter(([cond, price]) => cond !== quote.condition && price != null)
       .map(([cond, price]) => `${cond} $${Number(price).toFixed(2)}`);
-    const title = [quote.condition, quote.printing ? formatPrinting(quote.printing) : null, sourceFooter(card.price_grid), ...others]
+    const oldDays = staleDays(card.price_grid);
+    const oldTag = isStale(card) ? (oldDays != null ? `Old price: ${oldDays} days` : "Old price") : null;
+    const title = [quote.condition, quote.printing ? formatPrinting(quote.printing) : null, sourceFooter(card.price_grid), oldTag, ...others]
       .filter(Boolean).join(" · ");
     return cell("$" + Number(quote.price).toFixed(2), title);
   }
+  // A printing the user picked has no price: say so, never borrow another printing's.
+  if (chosenPrintingHasNoPrice(card, printing, conditions)) return cell("—", "No price for this printing");
+  // Set settled, printing open: the range over its printings, the same one the lot total uses.
+  const printings = isSetConfirmed(card) ? setRangeOf([card], conditions) : null;
+  if (printings) return cell(setRangeSpan(printings), "Printing not picked — pick it for one price");
   const span = isSetConfirmed(card) ? null : setRangeSpan(card.setRange, conditions);
   if (span) return cell(span, "Set not sure — pick the set for one price");
   return cell("—", "No price data");
@@ -665,7 +999,7 @@ function renderPrice(card, idx) {
 function renderUnrecognisedRow(card, idx) {
   const thumb = cropThumb(card);
   const inPhoto = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
-  const label = (card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`) + (inPhoto ? ` · ${inPhoto}` : "");
+  const label = (card.tooSmall ? `Card ${idx + 1}: ${TOO_SMALL_ROW_TEXT}` : card.unread ? `Card ${idx + 1}: ${UNREAD_ROW_TEXT}` : card.cardBack ? `Card ${idx + 1}: card back, turn it over to identify it` : `Card ${idx + 1}`) + (inPhoto ? ` · ${inPhoto}` : "");
   const search = card.cardBack || _picker.get(idx)
     ? ""
     : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="Search for card ${idx + 1}">Search for this card</button>`;
@@ -674,7 +1008,9 @@ function renderUnrecognisedRow(card, idx) {
       ${thumb ? `<img class="unrec-thumb" src="${escHtml(thumb)}" alt="" width="34" height="48">` : ""}
       <span class="unrec-name">${escHtml(label)}</span>
       ${search}
+      ${card.unread && !card.tooSmall ? `<button type="button" class="link-btn" data-draw-box aria-label="${escHtml(`Draw a box around card ${idx + 1} to read it`)}">Draw a box</button>` : ""}
     </div>
+    ${renderRemoveButton(idx)}
     ${renderSearchPanel(idx)}
   </div>`;
 }
@@ -685,19 +1021,45 @@ function searchResultsHtml(state, idx) {
   return renderPickList(state.results, idx);
 }
 
-const isAskedRow = (card) => isUnsure(card) && !card.pricing;
-
-function renderAskRow(card, idx) {
+// A card to choose: the picture beside the closest cards (art, name, set, number), the best one preselected and
+// confirmed with one press. No name is asserted for the card and no price is shown until it is picked.
+function renderChooseRow(card, idx) {
+  const candidates = candidatesOfCard(card);
+  const best = candidates[0] ? candidateView(card, candidates[0], { best: true }) : null;
   const state = _picker.get(idx);
-  const ask = isAskedRow(card)
-    ? `<div class="picker" role="group" aria-labelledby="picker-title-${idx}">
-        <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
-        ${(card.identity?.name && !card.lowCertainty) || !card.candidates?.length ? "" : `<div class="picker-sub">${card.lowCertainty ? "Best guess first, then the closest matches" : "Closest matches"}</div>`}
-        <div class="pick-row">${renderScannedCard(card, idx)}${renderPickList(card.candidates, idx, card.lowCertainty ? card.identity?.id : null)}</div>
-        ${state ? "" : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="None of these? Search for card ${idx + 1}">None of these? Search</button>`}
-      </div>`
+  const photo = fromSeveralPhotos(_lastResult?.cards) ? photoLabel(card) : "";
+  const photoHtml = photo ? ` <span class="photo-chip" title="Read from this photo of the listing">${escHtml(photo)}</span>` : "";
+  const smallHtml = readFromSmallCrop(card)
+    ? ` <span class="small-chip" title="Read from a small picture (${Math.round(card.readHeight)} px tall). A full-size photo reads better.">small photo</span>`
     : "";
-  return ask + renderSearchPanel(idx);
+  const valueHtml = highValueChipHtml(card, idx);
+  const repeatMark = card.repeatedName
+    ? ` <span class="repeat-mark" role="img" title="${REPEAT_NOTE}" aria-label="${REPEAT_NOTE}">⚠</span>`
+    : "";
+  const confirm = best
+    ? `<button type="button" class="choose-confirm" data-confirm-best data-idx="${idx}" aria-label="${escHtml(`Confirm the best match for card ${idx + 1}: ${best.label}`)}">Confirm ${escHtml(best.name)}</button>`
+    : "";
+  const search = state
+    ? ""
+    : `<button type="button" class="link-btn" data-open-search data-via="search" data-idx="${idx}" aria-label="None of these? Search for card ${idx + 1}">None of these? Search</button>`;
+  return `<div class="card-row choose-row asking" data-idx="${idx}">
+    ${renderRemoveButton(idx)}
+    <div class="card-head">
+      <div class="conf-stripe abstain"></div>
+      <div class="card-meta">
+        <div class="card-name">Card ${idx + 1}${repeatMark}</div>
+        <div class="card-sub">Choose the right card${photoHtml}${smallHtml}${valueHtml}${memoryChipHtml(card, { choose: true })}</div>
+      </div>
+      ${renderPrice(card, idx)}
+    </div>
+    <div class="picker" role="group" aria-labelledby="picker-title-${idx}">
+      <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
+      <div class="picker-sub">${candidates.length ? "Closest matches, best one first" : "No close matches"}</div>
+      <div class="pick-row">${renderScannedCard(card, idx)}${renderCandidateCards(card, idx)}</div>
+      <div class="choose-actions">${confirm}${search}${renderSkipButton(idx, card.skippedBefore === true)}</div>
+    </div>
+    ${renderSearchPanel(idx)}
+  </div>`;
 }
 
 // The picture the question is about; pressing it scrolls the page to that card.
@@ -736,10 +1098,14 @@ function openSearch(idx, via) {
 // Re-rendering drops the focused element, so keyboard users land back on a button in the same card: the opener
 // they used, else the row's one search opener (asked rows have only "search", identified rows only "wrong-card"),
 // else the first pick or other button in the row, so focus never falls back to the page.
-function focusOpener(idx, via = null) {
+function focusOpener(idx, via = null, strip = null) {
   const row = resultsEl.querySelector(`.card-row[data-idx="${idx}"]`);
   if (!row) return;
-  const target = (via && row.querySelector(`[data-open-search][data-via="${via}"]`))
+  // After a pick in a strip or chip group, focus stays in that group: on its newly checked tile, else the one tapped.
+  const group = strip ? row.querySelector(`[data-strip="${strip.kind}"]`) : null;
+  const inGroup = group && (group.querySelector('[role="radio"][aria-checked="true"]')
+    || [...group.querySelectorAll("[data-strip-pick]")].find((el) => el.dataset.stripPick === strip.id));
+  const target = inGroup || (via && row.querySelector(`[data-open-search][data-via="${via}"]`))
     || row.querySelector("[data-open-search]")
     || row.querySelector("button[data-pick], button, select, input");
   target?.focus();
@@ -790,9 +1156,11 @@ function showSearchResults(idx) {
 // What each row shows now, after any fixes: the answers "All right" confirms.
 function shownAnswers(cards) {
   return cards.map((card, index) => {
+    if (card.drawn) return null;
+    if (card.tooSmall || card.unread) return { index, unknown: true };
     if (card.cardBack) return { index, notACard: true };
     return card.identity?.id ? { index, cardId: card.identity.id } : { index, unknown: true };
-  });
+  }).filter(Boolean);
 }
 
 examDismiss.addEventListener("click", () => { examStrip.hidden = true; });
@@ -802,7 +1170,7 @@ examYes.addEventListener("click", async () => {
   if (!scan) return;
   examYes.disabled = true;
   try {
-    const resp = await chrome.runtime.sendMessage({ action: "confirmExam", scanId: scan.bgScanId, answers: shownAnswers(scan.cards) });
+    const resp = await chrome.runtime.sendMessage({ action: "confirmExam", scanId: scan.bgScanId, answers: shownAnswers(scan.cards), drawnIndices: drawnIndices(scan.cards) });
     if (resp?.error || !resp?.ok) throw new Error(resp?.error || "not sent");
     examStrip.hidden = true;
     showMessage("Thanks. Those results were sent to help check the scanner.");
@@ -813,16 +1181,141 @@ examYes.addEventListener("click", async () => {
   }
 });
 
-function pickCard(idx, id, via, row) {
+// A drawn row's own picture goes with its answer: the scan's crop at that row number is another box's.
+const drawnFields = (card) => (card?.drawn ? { drawn: true, crop: card.crop ?? null, share: card.share ?? null } : {});
+
+function pickCard(idx, id, via, row, remember = true) {
   const scan = _lastResult;
   if (!scan?.cards?.[idx]) return;
   _picker.delete(idx);
-  chrome.runtime.sendMessage({
-    action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess: scan.cards[idx].guess, pickedId: id, via,
-  }).then((resp) => {
-    if (resp?.error) showMessage(resp.error, true);
-  }).catch((err) => showMessage(explainScanError(err?.message || err), true));
-  return pickSet(idx, id, row ?? { id });
+  const card = scan.cards[idx];
+  const advance = chooseState(card) === "choose" && resultsEl.contains(document.activeElement);
+  if (advance) _advanceNote.add(idx); else _advanceNote.delete(idx);
+  // What the scanner believed (its why-record, the price shown) is saved with the answer, before the row says "you chose".
+  const price = priceTypicalOf(card, chosenPrinting(card, idx), enabledConditions());
+  const guess = guessWithWhy(card, price);
+  if (remember) {
+    scan.cards[idx] = { ...card, why: userWhy(card.why) };
+    chrome.runtime.sendMessage({
+      action: "saveCorrection", scanId: scan.bgScanId, index: idx, guess, pickedId: id, via, ...drawnFields(card),
+    }).then((resp) => {
+      if (resp?.error) { showMessage(resp.error, true); return; }
+      const corrected = correctedMark(guess, id, resp);
+      const current = _lastResult?.scanId === scan.scanId ? _lastResult.cards[idx] : null;
+      if (corrected && current) replaceCard(idx, { ...current, corrected });
+    }).catch((err) => showMessage(explainScanError(err?.message || err), true));
+  }
+  const priced = pickSet(idx, id, row ?? { id });
+  if (advance) advanceAfterConfirm(idx, row?.name || card.identity?.name);
+  return priced;
+}
+
+// A confirmed Choose row leaves the group, so keyboard focus moves to what is next to do: the next row's preselected
+// Confirm button, else the lot's Copy button, else Scan. The change is spoken through the message bar.
+const _advanceNote = new Set();   // card indexes confirmed from a Choose row: their message says what is left
+function toConfirmCount() {
+  const cards = _lastResult?.cards || [];
+  return splitByRecognition(cards).shown.filter((i) => chooseState(cards[i]) === "choose").length;
+}
+function confirmedNote(name) {
+  const left = toConfirmCount();
+  return `Confirmed ${name || "card"}. ${left ? `${left} to confirm.` : "Nothing left to confirm."}`;
+}
+function advanceAfterConfirm(idx, name, note = null) {
+  const rows = [...resultsEl.querySelectorAll(".choose-row[data-idx]")];
+  const next = rows.find((row) => Number(row.dataset.idx) > idx) || rows[0];
+  const target = (next?.querySelector("button[data-confirm-best]") || next?.querySelector("button[data-pick], [data-open-search]"))
+    || lotTotalsEl?.querySelector("[data-lot-copy]") || btnScan;
+  target.focus({ preventScroll: false });
+  showMessage(note ?? confirmedNote(name));
+}
+
+// "Can't price this": the card leaves the list, the lot and the export, and the scanner remembers it locally (a similar
+// crop is then never confirmed on its own). Focus goes where a confirm sends it: the next row's Confirm button.
+function skipAt(idx) {
+  const scan = _lastResult;
+  const card = scan?.cards?.[idx];
+  if (!card || chooseState(card) !== "choose") return;
+  _picker.delete(idx);
+  const guess = guessWithWhy(card);
+  chrome.runtime.sendMessage({ action: "saveSkip", scanId: scan.bgScanId, index: idx, guess, ...drawnFields(card) })
+    .then((resp) => { if (resp?.error) showMessage(resp.error, true); })
+    .catch((err) => showMessage(explainScanError(err?.message || err), true));
+  replaceCard(idx, skipCard(card));
+  const left = toConfirmCount();
+  advanceAfterConfirm(idx, null, `Skipped. ${left ? `${left} to confirm.` : "Nothing left to confirm."}`);
+}
+
+// "Show it": the hidden box becomes a normal row (Choose when it has a read, Too small when it has none) and the page
+// overlay draws it. Nothing is confirmed; a pick goes through the usual pick and confirm. The row is part of the saved lot.
+function showHiddenAt(idx) {
+  const card = _lastResult?.cards?.[idx];
+  if (!isNotCard(card)) return;
+  const next = showNotCard(card);
+  _showChoose = true;
+  replaceCard(idx, { ...next, guess: guessOf(next) });
+  loadBestMatchPrices(_lastResult);
+  resultsEl.querySelector(`.choose-row[data-idx="${idx}"] [data-confirm-best], .choose-row[data-idx="${idx}"] [data-open-search]`)?.focus();
+  showMessage(shownMessage(next, toConfirmCount()));
+}
+
+// The X on a card, in the list or on the page: the card leaves the scan, the total and the export, and nothing is
+// taught (no skip memory). Put back returns it. Only the list's X moves focus; a click on the page leaves the window be.
+function removeAt(idx, { fromPage }) {
+  const card = _lastResult?.cards?.[idx];
+  if (!card || card.removed === true) return;
+  const buttons = fromPage ? [] : [...resultsEl.querySelectorAll("button[data-remove-card]")].filter((button) => button.offsetParent !== null);
+  const at = buttons.findIndex((button) => Number(button.dataset.idx) === idx);
+  const neighbour = at < 0 ? null : buttons[at + 1] || buttons[at - 1] || null;
+  _picker.delete(idx);
+  dropFromBulk(idx);
+  _userEdits = true; // else a rescan from newCardsDetected would replace the list and bring the card back
+  replaceCard(idx, removeCard(card));
+  sendBoxSignal("removed", _lastResult?.bgScanId, idx, card);
+  if (_bulk) _bulk.scan = _lastResult;
+  if (!fromPage) (neighbour && resultsEl.querySelector(`button[data-remove-card][data-idx="${neighbour.dataset.idx}"]`) || btnScan).focus();
+  showMessage(`Removed card ${idx + 1}. It is left out of the total. Put it back from "Removed" at the bottom of the list.`);
+}
+
+// A card taken out of the scan can never be confirmed from the open review panel.
+function dropFromBulk(idx) {
+  if (!_bulk?.pairs.some((pair) => pair.idx === idx)) return;
+  _bulk.pairs = _bulk.pairs.filter((pair) => pair.idx !== idx);
+  _bulk.skipped.delete(idx);
+  _bulk.explicit.delete(idx);
+  if (!_bulk.pairs.length) { closeBulk(false); return; }
+  const hadFocus = bulkList.contains(document.activeElement);
+  bulkList.innerHTML = _bulk.pairs.map(bulkPairHtml).join("");
+  updateBulkCount();
+  if (hadFocus) bulkList.querySelector("input")?.focus();
+}
+
+// The background forwards a click on a page card's X (it is the one place that decides). Taken only when this window
+// holds the lot of that page and is idle; the reply tells it whether the removal is stored here.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.action !== "applyOverlayRemove" || !acceptFromBackground(sender, chrome.runtime.id)) return;
+  const take = !_restoring && !isScanning && acceptRemove(msg.tabUrl, msg.index, _lotUrl, _lastResult?.cards);
+  if (take) removeAt(msg.index, { fromPage: true });
+  sendResponse({ handled: take });
+});
+
+function putBackAt(idx) {
+  const scan = _lastResult;
+  const card = scan?.cards?.[idx];
+  if (!card?.skipped) return;
+  // A removed card taught the skip memory nothing, so only a plain skip has a skip to undo; a removed card's put back is a box signal.
+  const removed = card.removed === true;
+  if (removed) sendBoxSignal("put-back", scan.bgScanId, idx, card);
+  else {
+    chrome.runtime.sendMessage({ action: "unskip", scanId: scan.bgScanId, index: idx })
+      .then((resp) => { if (resp?.error) showMessage(resp.error, true); })
+      .catch((err) => showMessage(explainScanError(err?.message || err), true));
+  }
+  _showChoose = true;
+  replaceCard(idx, putBackCard(card));
+  const row = resultsEl.querySelector(`.card-row[data-idx="${idx}"]`);
+  (row?.querySelector("[data-confirm-best], [data-open-search], [data-remove-card]") || btnScan).focus();
+  showMessage(removed ? (card.removedFromSkipped === true ? "Put back. It is still skipped." : "Put back. It counts in the total again.") : `Put back. ${toConfirmCount()} to confirm.`);
 }
 
 resultsEl.addEventListener("click", (e) => {
@@ -830,21 +1323,72 @@ resultsEl.addEventListener("click", (e) => {
   if (!button || !resultsEl.contains(button)) return;
   if ("unrecToggle" in button.dataset) {
     // Changed in place, not re-rendered, so keyboard focus stays on the button.
-    _showUnrecognised = !_showUnrecognised;
+    _showUnrecognised = !_showUnrecognised; scheduleSave();
     button.setAttribute("aria-expanded", String(_showUnrecognised));
     button.textContent = unrecognisedLabel(resultsEl.querySelectorAll(".unrec-row").length, _showUnrecognised);
     resultsEl.querySelector("#unrec-list").hidden = !_showUnrecognised;
     return;
   }
+  if ("skippedToggle" in button.dataset) {
+    _showSkipped = !_showSkipped; scheduleSave();
+    button.setAttribute("aria-expanded", String(_showSkipped));
+    resultsEl.querySelector("#skipped-list").hidden = !_showSkipped;
+    return;
+  }
+  if ("drawBox" in button.dataset) { startDrawBox(); return; }
+  if ("notcardToggle" in button.dataset) {
+    _showNotCard = !_showNotCard;
+    button.setAttribute("aria-expanded", String(_showNotCard));
+    resultsEl.querySelector("#notcard-list").hidden = !_showNotCard;
+    return;
+  }
+  if ("chooseToggle" in button.dataset) {
+    _showChoose = !_showChoose; scheduleSave();
+    button.setAttribute("aria-expanded", String(_showChoose));
+    resultsEl.querySelector("#choose-list").hidden = !_showChoose;
+    return;
+  }
+  if ("reviewAll" in button.dataset) {
+    openBulk(button);
+    return;
+  }
   const idx = Number(button.dataset.idx);
-  if ("guessConfirm" in button.dataset) {
-    const card = _lastResult?.cards?.[idx];
-    if (!card?.bestGuess) return;
-    saveSetCorrection(idx, card.identity?.id, "guess-confirmed");
-    replaceCard(idx, confirmGuess(card));
+  if ("confirmBest" in button.dataset) {
+    const best = candidatesOfCard(_lastResult?.cards?.[idx])[0];
+    if (best?.id) pickCard(idx, best.id, "candidates", best);
+  } else if ("skipCard" in button.dataset) {
+    skipAt(idx);
+  } else if ("removeCard" in button.dataset) {
+    removeAt(idx, { fromPage: false });
+  } else if ("putBack" in button.dataset) {
+    putBackAt(idx);
+  } else if ("showHidden" in button.dataset) {
+    showHiddenAt(idx);
+  } else if ("variantConfirm" in button.dataset) {
+    const suggested = _variantSuggest.get(idx);
+    if (!suggested) return;
+    _variantChoice.set(idx, suggested);
+    _variantPicked.add(idx);
+    _variantSuggest.delete(idx);
+    renderResults();
+    pushOverlay();
+    updateStats(_lastResult.cards);
+  } else if ("why" in button.dataset) {
+    if (_whyOpen.has(idx)) _whyOpen.delete(idx); else _whyOpen.add(idx);
+    renderResults();
+    resultsEl.querySelector(`.why-btn[data-idx="${idx}"]`)?.focus();
+  } else if ("guessConfirm" in button.dataset) {
+    confirmSuggestedSet(idx);
+  } else if ("stripMore" in button.dataset) {
+    const key = `${idx}:${button.dataset.stripMore}`;
+    if (_stripMore.has(key)) _stripMore.delete(key); else _stripMore.add(key);
+    renderResults();
+    resultsEl.querySelector(`.strip-more[data-strip-more="${button.dataset.stripMore}"][data-idx="${idx}"]`)?.focus();
+  } else if ("stripPick" in button.dataset) {
+    onStripPick(idx, button);
   } else if (button.dataset.pick) {
     const fromSearch = Boolean(button.closest(".picker-results"));
-    const shown = fromSearch ? _picker.get(idx)?.results : _lastResult?.cards?.[idx]?.candidates;
+    const shown = fromSearch ? _picker.get(idx)?.results : candidatesOfCard(_lastResult?.cards?.[idx]);
     pickCard(
       idx,
       button.dataset.pick,
@@ -858,6 +1402,176 @@ resultsEl.addEventListener("click", (e) => {
   } else if ("showOnPage" in button.dataset) {
     highlightOnPage(idx, true);
   }
+});
+
+// The "?" beside the name and a tap on the suggested printing's picture do the same thing.
+function confirmSuggestedSet(idx) {
+  const card = _lastResult?.cards?.[idx];
+  if (!card?.bestGuess) return;
+  saveSetCorrection(idx, card.identity?.id, "guess-confirmed");
+  replaceCard(idx, confirmGuess(card));
+}
+
+// One tap on a thumbnail or chip. Each kind goes through exactly what its menu did: the printing saves the same
+// correction (via "set-menu") and prices the same way, a version swaps the row, a finish sets the printing for the row.
+function onStripPick(idx, button) {
+  const card = _lastResult?.cards?.[idx];
+  if (!card || button.getAttribute("aria-disabled") === "true") return;
+  // The checked tile is the current answer: a no-op, unless it is the suggested printing, which a tap confirms.
+  if (button.getAttribute("aria-checked") === "true") {
+    if (button.dataset.stripKind === "set" && button.classList.contains("strip-suggested")) confirmSuggestedSet(idx);
+    return;
+  }
+  const value = button.dataset.stripPick;
+  const kind = button.dataset.stripKind;
+  if (kind === "set") {
+    saveSetCorrection(idx, value, "set-menu");
+    pickSet(idx, value);
+  } else if (kind === "version") {
+    replaceCard(idx, swapVersion(card, value));
+    // An earlier "Price updated for <old name>" no longer describes this row.
+    refreshStatus(true);
+  } else if (kind === "finish") {
+    _variantSuggest.delete(idx);
+    _variantChoice.set(idx, value);
+    _variantPicked.add(idx);
+    renderResults();
+    pushOverlay();
+    updateStats(_lastResult.cards);
+    focusOpener(idx, null, { kind: "finish", id: value });
+  }
+}
+
+// Arrow keys move through a strip or chip group; Enter and Space press the focused one like any button.
+function moveInGroup(e) {
+  const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  const radio = e.target.closest?.('[role="radio"]');
+  const group = radio?.closest('[role="radiogroup"]');
+  if (!group || !(e.key in keys || e.key === "Home" || e.key === "End")) return false;
+  const items = [...group.querySelectorAll('[role="radio"]')];
+  const at = items.indexOf(radio);
+  const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : Math.min(items.length - 1, Math.max(0, at + keys[e.key]));
+  e.preventDefault();
+  for (const item of items) item.tabIndex = item === items[next] ? 0 : -1;
+  items[next].focus();
+  return true;
+}
+
+// A thumbnail that fails to load becomes a text tile (name and set), so the choice is never lost.
+function failStripArt(img) {
+  const art = img?.tagName === "IMG" ? img.closest(".strip-art") : null;
+  if (!art) return;
+  art.classList.add("no-art");
+  img.remove();
+}
+resultsEl.addEventListener("error", (e) => failStripArt(e.target), true);
+// A picture that decodes to a speck is a placeholder, not a card.
+resultsEl.addEventListener("load", (e) => {
+  if (e.target?.naturalWidth < MIN_ART_PX) failStripArt(e.target);
+}, true);
+
+/* ─── Review all: every card to choose beside its preselected candidate, kept or skipped, one Confirm N ─── */
+
+function bulkPairHtml(pair) {
+  const card = _bulk.scan.cards[pair.idx];
+  const view = candidateView(card, pair.candidate, { best: true });
+  const crop = cropThumb(card);
+  const kept = !_bulk.skipped.has(pair.idx);
+  const check = pair.decisive ? "" : ` <span class="bulk-check">Check</span>`;
+  const sub = [view.set, view.number ? `#${view.number}` : "", view.printing].filter(Boolean).join(" · ");
+  return `<li class="bulk-pair${kept ? "" : " skipped"}" data-idx="${pair.idx}">
+    <label class="bulk-label">
+      <input type="checkbox" class="bulk-keep" data-bulk-keep data-idx="${pair.idx}"${kept ? " checked" : ""} aria-label="${escHtml(`Keep card ${pair.idx + 1}: ${view.label}`)}">
+      ${crop ? `<img class="bulk-img" src="${escHtml(crop)}" alt="" width="63" height="88">` : `<span class="pick-blank bulk-img" aria-hidden="true"></span>`}
+      <span class="bulk-arrow" aria-hidden="true">&rarr;</span>
+      ${view.art ? `<img class="bulk-img" src="${escHtml(view.art)}" alt="" loading="lazy" width="63" height="88">` : `<span class="pick-blank bulk-img" aria-hidden="true"></span>`}
+      <span class="bulk-text"><b>${escHtml(view.name)}</b>${view.agrees ? ` <span class="pick-agree" title="The name on the card matches">&#10003; name</span>` : ""}${check}<br><span class="bulk-sub">${escHtml(sub)}</span></span>
+    </label>
+  </li>`;
+}
+
+function updateBulkCount() {
+  const kept = _bulk.pairs.filter((pair) => !_bulk.skipped.has(pair.idx)).length;
+  bulkConfirm.textContent = confirmLabel(kept);
+  bulkConfirm.disabled = kept === 0;
+  bulkHint.hidden = kept !== 0;
+  bulkTickAll.textContent = tickAllLabel(kept === _bulk.pairs.length);
+  return kept;
+}
+
+function openBulk(opener) {
+  const scan = _lastResult;
+  const pairs = bulkPairs(scan?.cards);
+  if (!pairs.length) return;
+  _bulk = { pairs, explicit: new Set(), skipped: new Set(pairs.filter((pair) => !pair.decisive).map((pair) => pair.idx)), opener: opener || document.activeElement, scan };
+  bulkList.innerHTML = pairs.map(bulkPairHtml).join("");
+  updateBulkCount();
+  bulkPanel.hidden = false;
+  bulkList.querySelector("input")?.focus();
+}
+
+// restoreFocus: false when the list is about to be replaced anyway.
+function closeBulk(restoreFocus = true) {
+  if (!_bulk) return;
+  const opener = _bulk.opener;
+  _bulk = null;
+  bulkPanel.hidden = true;
+  bulkList.innerHTML = "";
+  if (!restoreFocus) return;
+  const target = opener?.isConnected ? opener : resultsEl.querySelector("[data-review-all], [data-choose-toggle], .card-row button") || btnScan;
+  target.focus();
+}
+
+function confirmBulk() {
+  if (!_bulk) return;
+  const { pairs, skipped, scan, explicit } = _bulk;
+  const kept = pairs.filter((pair) => !skipped.has(pair.idx) && _lastResult?.cards?.[pair.idx]?.skipped !== true);
+  const remembered = new Set(bulkRememberedPairs(kept, explicit).map((pair) => pair.idx));
+  closeBulk(false);
+  if (_lastResult !== scan) return;
+  // Each pair goes through the same pick as a single confirm, so the price is the same. Only a Check pair the user
+  // ticked by hand is saved as their correction; ticking the scanner's own preselection confirms it for this session.
+  for (const pair of kept) pickCard(pair.idx, pair.candidate.id, "candidates", pair.candidate, remembered.has(pair.idx));
+  showMessage(`Confirmed ${kept.length} ${kept.length === 1 ? "card" : "cards"}. Prices are loading.`);
+  (resultsEl.querySelector("[data-review-all], [data-choose-toggle]") || btnScan).focus();
+}
+
+bulkList.addEventListener("change", (e) => {
+  if (!_bulk || !e.target.matches("[data-bulk-keep]")) return;
+  const idx = Number(e.target.dataset.idx);
+  if (e.target.checked) { _bulk.skipped.delete(idx); _bulk.explicit.add(idx); }
+  else { _bulk.skipped.add(idx); _bulk.explicit.delete(idx); }
+  e.target.closest(".bulk-pair").classList.toggle("skipped", !e.target.checked);
+  updateBulkCount();
+});
+// Only the checkboxes change; nothing is confirmed until "Confirm N".
+bulkTickAll.addEventListener("click", () => {
+  if (!_bulk) return;
+  const tick = _bulk.skipped.size > 0;
+  _bulk.skipped = tick ? new Set() : new Set(_bulk.pairs.map((pair) => pair.idx));
+  for (const box of bulkList.querySelectorAll("[data-bulk-keep]")) {
+    box.checked = tick;
+    box.closest(".bulk-pair").classList.toggle("skipped", !tick);
+  }
+  updateBulkCount();
+});
+bulkConfirm.addEventListener("click", confirmBulk);
+bulkClose.addEventListener("click", () => closeBulk());
+bulkCancel.addEventListener("click", () => closeBulk());
+bulkPanel.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeBulk();
+    return;
+  }
+  if (e.key !== "Tab") return;
+  // The panel covers the popup: keep Tab inside it.
+  const focusable = [...bulkPanel.querySelectorAll("input, button")].filter((el) => !el.disabled);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
 
 let _highlighted = null;
@@ -878,6 +1592,7 @@ resultsEl.addEventListener("focusin", (e) => highlightOnPage(rowIndex(e.target))
 resultsEl.addEventListener("mouseleave", () => highlightOnPage(null));
 
 resultsEl.addEventListener("keydown", (e) => {
+  if (moveInGroup(e)) return;
   if (e.key === "Escape" && e.target.classList.contains("picker-input")) {
     e.preventDefault();
     closeSearch(Number(e.target.dataset.idx));
@@ -891,8 +1606,8 @@ resultsEl.addEventListener("input", (e) => {
 // The only sign that a printing is a guess; why it was chosen is in the tooltip, not in a sentence.
 function guessMark(card, idx) {
   if (!card.bestGuess || card.setConfirmed === true) return "";
-  const why = escHtml(card.bestGuess.reason || "Best guess");
-  return ` <button type="button" class="guess-mark" data-guess-confirm data-idx="${idx}" title="${why}" aria-label="Best guess: ${why}. Press to confirm this set.">?</button>`;
+  const why = escHtml(card.bestGuess.reason || "Suggested set");
+  return ` <button type="button" class="guess-mark" data-guess-confirm data-idx="${idx}" title="${why}" aria-label="Suggested set: ${why}. Press to confirm this set.">?</button>`;
 }
 
 // A set the user picked, or a guess they accepted, is an answer worth keeping like any other pick.
@@ -904,40 +1619,46 @@ function saveSetCorrection(idx, id, via) {
   }).catch((err) => showMessage(explainScanError(err?.message || err), true));
 }
 
+// Printings of the same card: a strip of thumbnails, one tap picks (same saveCorrection and pickSet as the old menu).
 function renderSetRow(card, idx) {
-  const choices = card.setChoices || [];
-  if (choices.length <= 1) return "";
-  const picked = card.setConfirmed || card.bestGuess ? card.identity?.id : "";
-  const blank = `<option value="" ${picked ? "" : "selected"}>Choose set</option>`;
-  const options = choices.map((c) => {
-    const label = `${c.set || c.setCode || "Unknown set"}${c.number ? " #" + c.number : ""}`;
-    return `<option value="${escHtml(c.id)}" ${c.id === picked ? "selected" : ""}>${escHtml(label)}</option>`;
-  }).join("");
-  return `<div class="variant-select-row set-select-row">
-    <span class="lbl${needsPrinting(card) ? " pick-printing" : ""}">${needsPrinting(card) ? "Pick printing" : "Set?"}</span>
-    <select data-idx="${idx}" aria-label="Set" ${card.pricing ? "disabled" : ""}>${blank}${options}</select>
+  const tiles = setTiles(card);
+  if (!tiles.length) return "";
+  const open = needsPrinting(card);
+  return `<div class="variant-select-row strip-row set-select-row">
+    <span class="lbl${open ? " pick-printing" : ""}">${open ? "Pick printing" : "Set?"}</span>
+    ${renderTileStrip({ kind: "set", idx, label: "Choose the printing", tiles, expanded: _stripMore.has(`${idx}:set`), locked: Boolean(card.pricing) })}
   </div>`;
 }
 
 // The matcher's best card is shown with its own price; a look-alike version (Pikachu ex beside Pikachu V) is one tap away.
 function renderVersionRow(card, idx) {
-  const versions = card.versionChoices || [];
-  if (!versions.length) return "";
-  const options = versions.map((v) => `<option value="${escHtml(v.id)}">${escHtml(versionLabel(v, enabledConditions()))}</option>`).join("");
-  return `<div class="variant-select-row version-select-row">
+  const tiles = versionTiles(card, enabledConditions());
+  if (!tiles.length) return "";
+  return `<div class="variant-select-row strip-row version-select-row">
     <span class="lbl">Other version?</span>
-    <select data-idx="${idx}" aria-label="Other version"><option value="" selected>Keep ${escHtml(card.identity?.name || "this card")}</option>${options}</select>
+    ${renderTileStrip({ kind: "version", idx, label: "Choose the version", tiles, expanded: _stripMore.has(`${idx}:version`) })}
   </div>`;
 }
 
 function replaceCard(idx, next) {
   const hadFocus = resultsEl.contains(document.activeElement);
+  const active = document.activeElement?.closest?.("[data-strip-kind]");
+  const strip = active ? { kind: active.dataset.stripKind, id: active.dataset.stripPick } : null;
+  // Focus on another row's Confirm button (moved there after a confirm) stays on that button through the re-render.
+  const keptConfirm = document.activeElement?.matches?.("[data-confirm-best]") && Number(document.activeElement.dataset.idx) !== idx
+    ? Number(document.activeElement.dataset.idx) : null;
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
+  refreshStatus();
   _variantChoice.delete(idx);
+  _variantSuggest.delete(idx);
+  _variantPicked.delete(idx);
   seedVariant(next, idx);
   renderResults();
-  if (hadFocus && !resultsEl.contains(document.activeElement)) focusOpener(idx);
+  if (hadFocus && !resultsEl.contains(document.activeElement)) {
+    const kept = keptConfirm === null ? null : resultsEl.querySelector(`.choose-row[data-idx="${keptConfirm}"] [data-confirm-best]`);
+    if (kept) kept.focus(); else focusOpener(idx, null, strip);
+  }
   updateStats(cards);
   pushOverlay();
 }
@@ -966,7 +1687,8 @@ async function pickSet(idx, id, picked = null) {
   }
   let resp;
   try {
-    resp = await chrome.runtime.sendMessage({ action: "priceCard", id });
+    // The same answer a Choose row showed for its best match: a pick on a loaded one prices at once.
+    resp = await candidatePrice(id);
   } catch (err) {
     resp = { error: explainScanError(err?.message || err) };
   }
@@ -978,46 +1700,53 @@ async function pickSet(idx, id, picked = null) {
     if (picked) showMessage(error, true);
     return;
   }
+  const { market_price, price_variant, price_grid } = resp;
   replaceCard(idx, {
     ...current,
     identity: resp.identity,
-    market_price: resp.market_price,
-    price_variant: resp.price_variant,
-    price_grid: resp.price_grid,
+    ...stampedPrices({ ...current, identity: resp.identity }, { market_price, price_variant, price_grid }),
     setConfirmed: true,
+    userConfirmed: true,
     // A card the scanner gave up on is still a card the user named.
     ...(picked ? { abstain: false, confidence: 1 } : {}),
     pricing: false,
     priceError: null,
   });
-  if (picked) showMessage(`Price updated for ${resp.identity?.name || label}.`);
+  if (picked) showMessage(_advanceNote.delete(idx) ? confirmedNote(resp.identity?.name || label) : `Price updated for ${resp.identity?.name || label}.`);
 }
 
+// A printing settled by the printed number prices at once; one the picture suggests only preselects the menu.
 function seedVariant(card, idx) {
-  const seen = detectedVariant(card);
-  if (seen) _variantChoice.set(idx, seen);
+  const settled = detectedVariant(card);
+  if (settled) { _variantChoice.set(idx, settled); return; }
+  const suggested = suggestedVariant(card);
+  if (suggested) _variantSuggest.set(idx, suggested);
 }
 
 function renderVariantRow(card, idx) {
   const grid = card.price_grid;
-  const printings = Object.keys(grid?.variants || {});
-  if (printings.length <= 1) return "";
-  const picked = _variantChoice.get(idx) || "";
-  const blank = `<option value="" ${picked ? "" : "selected"}>Choose variant</option>`;
-  const options = printings.map((p) => `<option value="${escHtml(p)}" ${p === picked ? "selected" : ""}>${escHtml(formatPrinting(p))}</option>`).join("");
-  const seen = picked && picked === detectedVariant(card);
+  const chosen = _variantChoice.get(idx) || "";
+  const suggested = chosen ? "" : _variantSuggest.get(idx) || "";
+  const chips = finishChips(grid, { chosen, suggested, conditions: enabledConditions() });
+  const stampOnly = stampFinishNote(card)
+    ? `<div class="variant-select-row strip-row"><span class="lbl">Variant</span><span class="variant-note">${escHtml(stampFinishNote(card))}</span></div>`
+    : "";
+  if (!chips.length) return stampOnly;
+  const picked = chosen || suggested;
+  const seen = picked && (picked === suggestedVariant(card));
   const stampNote = {
     prerelease: "Prerelease stamp found",
     staff: "Staff stamp found",
     league: "League stamp found",
     setstamp: "Set stamp found",
   }[card.variant?.stamp];
-  const note = seen
+  const note = stampFinishNote(card) || (seen
     ? (stampNote || editionNote(card) || (card.firstEdition ? "1st Edition stamp found" : card.shadow ? "Drop shadow seen" : "Variant seen on the card"))
-    : (editionNote(card) || printingNote(grid));
-  return `<div class="variant-select-row">
+    : (editionNote(card) || printingNote(grid)));
+  const confirmMark = suggested ? `<button type="button" class="guess-mark" data-variant-confirm data-idx="${idx}" title="Suggested from the picture, which glare can fool. Press to confirm this printing." aria-label="Suggested printing ${escHtml(formatPrinting(suggested))}. Press to confirm it.">?</button>` : "";
+  return `<div class="variant-select-row strip-row">
     <span class="lbl">Variant</span>
-    <select data-idx="${idx}" aria-label="Variant${note ? `. ${escHtml(note)}` : ""}"${note ? ` title="${escHtml(note)}"` : ""}>${blank}${options}</select>
+    ${renderChipGroup({ idx, label: "Choose the finish", chips, note: note || "", confirmMark })}
   </div>`;
 }
 
@@ -1037,22 +1766,11 @@ function renderGradedGrid(card, grid) {
   return `<div class="graded-grid">${cells.join("")}</div>`;
 }
 
-function formatPrinting(p) {
-  // Prettify camelCase/compact names: "1stEditionHolofoil" → "1st Ed Holofoil"
-  const s = String(p);
-  if (/^1stEdition/i.test(s)) return "1st Ed " + s.slice(10);
-  if (s === "holofoil") return "Holofoil";
-  if (s === "normal") return "Normal";
-  if (s === "reverseHolofoil") return "Reverse Holo";
-  if (s === "unlimitedHolofoil") return "Unlimited Holo";
-  return s.replace(/([A-Z])/g, " $1").trim().replace(/^./, (c) => c.toUpperCase());
-}
-
 /* ─── Overlay push ─── */
 
 function pushOverlay() {
   if (!_lastResult) return;
-  const cards = _lastResult.cards.map((c, idx) => ({
+  const cards = overlayCards(_lastResult.cards.map((c, idx) => isNotCard(c) ? c : c.removed === true ? { box: null, removed: true } : ({
     box: c.box,
     docBox: c.docBox,
     identity: c.identity,
@@ -1061,33 +1779,38 @@ function pushOverlay() {
     ...(c.inGallery ? { inGallery: true } : {}),
     display: {
       ...computeDisplayForOverlay(c, idx),
-      state: overlayState(c),
-      ...(c.topGuess ? { guess: { name: c.topGuess.name, price: c.topGuess.price ?? null } } : {}),
+      state: overlayStateOf(c),
       ...(readFromSmallCrop(c) ? { small: true } : {}),
+      ...(isStale(c) ? { stale: true } : {}),
+      ...(isHighValue(c, typicalForFlag(c, idx)) && ["choose", "confirmed"].includes(chooseState(c)) ? { highValue: true } : {}),
+      ...overlayGuess(c),
     },
-  }));
-  chrome.runtime.sendMessage({
+  })));
+  const message = {
     action: "overlayWithGrid",
     cards,
     ...(_lastResult.fullSize ? { fullSize: { url: _lastResult.fullSize.url } } : {}),
     srcWidth: _lastResult.srcWidth,
     srcHeight: _lastResult.srcHeight,
-  }).catch(() => {});
+  };
+  overlayShownLoaded.then(() => chrome.runtime.sendMessage({
+    ...message,
+    shown: overlayShownToggle.checked,
+  })).catch(() => {});
 }
 
-// The same verdict the list shows: identified, identified with the printing to pick, asked, or not recognised.
-function overlayState(card) {
-  if (card.cardBack) return "none";
-  // A card with no name shows its top guess, or "not recognised" when the reader had no candidates at all.
-  if (!card.identity?.name && !card.identity?.id && isUnsure(card)) return card.topGuess ? "guess" : "none";
-  if (isUnsure(card)) return "ask";
-  const kind = classifyCard(card);
-  if (kind === "identified") return needsPrinting(card) ? "printing" : "identified";
-  return kind === "pick" ? "ask" : "none";
+// A Choose tag on the page names its best match with the unconfirmed price: 'name? ~$1.20'.
+function overlayGuess(card) {
+  if (chooseState(card) !== "choose") return {};
+  const best = bestCandidateOf(card);
+  if (!best?.name) return {};
+  const match = matchPriceOf(card);
+  return { guess: { name: best.name, price: match ? match.price : null, kind: match ? match.kind : "loading", stale: Boolean(match?.stale) } };
 }
 
 function computeDisplayForOverlay(card, idx) {
-  if (card.abstain) return null;
+  // A card to choose shows neither a name nor a price on the page.
+  if (card.abstain || chooseState(card) === "choose" || chooseState(card) === "skipped") return null;
   const id = card.identity || {};
   if (!isSetConfirmed(card)) {
     const range = setRangeNote(card.setRange, enabledConditions());
@@ -1104,16 +1827,127 @@ function computeDisplayForOverlay(card, idx) {
     condition: quote?.condition || null,
     price: quote ? quote.price : null,
     spreadRatio: card.price_grid?.spreadRatio || 1,
-    printingNote: quote ? null : printingNote(card.price_grid),
+    printingNote: quote ? null : stampFinishNote(card) || (chosenPrintingHasNoPrice(card, printing, enabledConditions()) ? "No price for this printing" : printingNote(card.price_grid)),
     footer: sourceFooter(card.price_grid),
   };
+}
+
+/* ─── Saved lot (survives the window closing; lib/lot-session.js) ─── */
+
+const THUMB_SIDE = 160;
+const SAVE_DELAY_MS = 300;
+let _lotUrl = null;       // the page the list is about: where its saved copy is kept
+let _lotTabId = null;     // the tab that page was scanned in (null when unknown, e.g. a lot saved before tab ids were kept)
+let _saveTimer = null;
+let _restoring = false;
+const _thumbCache = new Map(); // crop data URL -> its small JPEG
+
+function lotArea() { return chrome.storage?.session; }
+
+// The crop shrunk to THUMB_SIDE px on its long side as a JPEG; null when it cannot be decoded (the row then has no picture).
+async function smallCrop(crop) {
+  if (typeof crop !== "string" || !crop) return null;
+  if (_thumbCache.has(crop)) return _thumbCache.get(crop);
+  let thumb = null;
+  try {
+    const img = new Image();
+    img.src = crop;
+    await img.decode();
+    const scale = Math.min(1, THUMB_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    thumb = canvas.toDataURL("image/jpeg", 0.7);
+  } catch { thumb = null; }
+  _thumbCache.set(crop, thumb);
+  return thumb;
+}
+
+function scheduleSave() {
+  if (_restoring || !_lastResult) return;
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => { _saveTimer = null; saveSession().catch(() => {}); }, SAVE_DELAY_MS);
+}
+
+async function saveSession() {
+  const scan = _lastResult;
+  if (!scan || !scan.cards.length || _restoring) return;
+  if (!_lotUrl) _lotUrl = (await chrome.runtime.sendMessage({ action: "scanState" }).catch(() => null))?.tabUrl ?? null;
+  if (!_lotUrl) return;
+  const cards = await Promise.all(scan.cards.map(async (card) => ({ ...card, crop: await smallCrop(card.crop) })));
+  if (!_lastResult) return; // cleared meanwhile
+  await saveLot(lotArea(), _lotUrl, {
+    cards, bgScanId: scan.bgScanId, srcWidth: scan.srcWidth, srcHeight: scan.srcHeight, fullSize: scan.fullSize,
+    variantChoice: [..._variantChoice], variantSuggest: [..._variantSuggest], variantPicked: [..._variantPicked],
+    lotEdition: _lotEdition, showUnrecognised: _showUnrecognised, showChoose: _showChoose, showSkipped: _showSkipped,
+    statusTail: _statusTail,
+  });
+}
+// A window closed inside the delay still keeps its last change.
+window.addEventListener("pagehide", () => { if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; saveSession().catch(() => {}); } });
+
+function restoreSession(saved) {
+  const st = saved.state;
+  _restoring = true;
+  try {
+    _lastResult = { scanId: ++_scanSeq, bgScanId: st.bgScanId, cards: st.cards, srcWidth: st.srcWidth, srcHeight: st.srcHeight,
+      fullSize: st.fullSize?.url ? st.fullSize : null };
+    _variantChoice = new Map(st.variantChoice || []);
+    _variantSuggest = new Map(st.variantSuggest || []);
+    _variantPicked = new Set(st.variantPicked || []);
+    _lotEdition = st.lotEdition || "";
+    _picker = new Map();
+    _stripMore = new Set();
+    _userEdits = false;
+    _showUnrecognised = st.showUnrecognised === true;
+    _showChoose = st.showChoose !== false;
+    _showSkipped = st.showSkipped === true;
+    _statusTail = st.statusTail || "";
+    closeBulk(false);
+    examStrip.hidden = true;
+    updateStats(_lastResult.cards);
+    renderResults();
+    showFullSizeOffer(_lastResult.fullSize);
+    refreshStatus(true);
+  } finally { _restoring = false; }
+  loadBestMatchPrices(_lastResult);
+  const mins = Math.max(0, Math.round((Date.now() - saved.savedAt) / 60000));
+  restoreText.textContent = `Restored your last scan (${mins < 1 ? "just now" : `${mins} min ago`}).`;
+  restoreNote.hidden = false;
+  resultsEl.querySelector(".choose-row [data-confirm-best], .choose-row [data-open-search]")?.focus();
+}
+restoreRescan.addEventListener("click", () => { restoreNote.hidden = true; scanPage(); });
+
+// On open: a scan still running (or finished while the window was closed) comes first, then the saved copy of this page.
+async function recoverLot() {
+  const state = await chrome.runtime.sendMessage({ action: "scanState" }).catch(() => null);
+  if (!state) return;
+  if (state.tabUrl) _lotUrl = state.tabUrl;
+  if (state.running) {
+    beginScanUi(state.progress ? `Scanning screen ${state.progress.screen} of ${state.progress.screens}…` : "Scanning…");
+    const reply = await chrome.runtime.sendMessage({ action: "awaitScan" }).catch(() => null);
+    if (reply?.data) applyScanResult(reply.data);
+    else showMessage(explainScanError(reply?.error || "Scan didn't finish. Try again."), true);
+    finishScan();
+    return;
+  }
+  const saved = await loadLot(lotArea(), state.tabUrl);
+  if (state.finishedAt && state.heldUrl && state.heldUrl === state.tabUrl && (!saved || state.finishedAt > saved.savedAt)) {
+    const reply = await chrome.runtime.sendMessage({ action: "awaitScan" }).catch(() => null);
+    if (reply?.data) { applyScanResult(reply.data); return; }
+  }
+  if (saved) {
+    restoreSession(saved);
+    _lotTabId = restoredLotTabId(state);
+  }
 }
 
 /* ─── Init ─── */
 
 (async () => {
   await loadFilters();
-  try { await checkReady(); }
+  try { await checkReady(); await recoverLot().catch(() => {}); }
   catch (err) {
     setupOverlay.style.display = "flex";
     setupStatus.textContent = explainScanError(err.message);

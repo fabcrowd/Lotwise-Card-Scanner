@@ -1,0 +1,57 @@
+{
+  "_note": "Redacted shape of Facebook Marketplace photo data, captured 2026-10-25 on listing 2625050071341628 (4 photos). Every signed or session query value is replaced by REDACTED; ids, file names, sizes, stp/cstp/ctp/_nc_sid/_nc_cat/ccb kept. No cookies, tokens or user ids.",
+  "loggedInInlineRelay": {
+    "_path": "script[type=application/json] -> $.require[0][3][0].__bbox.require[0][3][1].__bbox.result.data.viewer.marketplace_product_details_page.target.listing_photos",
+    "_preloader": "adp_MarketplacePDPC2CMediaViewerWithImagesQueryRelayPreloader_<hash> (queryName MarketplacePDPC2CMediaViewerWithImagesQuery, variables {targetId: <listing id>})",
+    "target": {
+      "__typename": "GroupCommerceProductItem",
+      "id": "2625050071341628",
+      "listing_photos": [
+        {
+          "__typename": "CatalogMarketplaceEnhancementTransformedImage",
+          "accessibility_caption": "No photo description available.",
+          "image": {
+            "height": 960,
+            "width": 720,
+            "uri": "https://scontent.fluk1-1.fna.fbcdn.net/v/t39.84726-6/856583123_2138501900090387_5200665921801088004_n.jpg?stp=dst-jpg_p720x720_tt6&_nc_cat=107&ccb=1-7&_nc_sid=92e707&_nc_ohc=REDACTED&_nc_oc=REDACTED&_nc_zt=REDACTED&_nc_ht=REDACTED&_nc_gid=REDACTED&_nc_ss=REDACTED&oh=REDACTED&oe=REDACTED"
+          },
+          "id": "2138501886757055"
+        },
+        {
+          "__typename": "ProductImage",
+          "accessibility_caption": "No photo description available.",
+          "image": {
+            "height": 720,
+            "width": 960,
+            "uri": "https://scontent.fluk1-1.fna.fbcdn.net/v/t45.5328-4/866898844_1655926579447134_3659232533552654360_n.jpg?stp=dst-jpg_s960x960_tt6&_nc_cat=101&ccb=1-7&_nc_sid=247b10&_nc_ohc=REDACTED&_nc_oc=REDACTED&_nc_zt=REDACTED&_nc_ht=REDACTED&_nc_gid=REDACTED&_nc_ss=REDACTED&oh=REDACTED&oe=REDACTED"
+          },
+          "id": "1655926576113801"
+        }
+      ],
+      "pre_recorded_videos": [],
+      "is_hidden": false
+    }
+  },
+  "liveDom": {
+    "ogImages": [],
+    "foregroundImg": {
+      "alt": "Product photo of Pokémon Graded and Singles",
+      "src": "https://scontent.fluk1-1.fna.fbcdn.net/v/t39.84726-6/856583123_2138501900090387_5200665921801088004_n.jpg?stp=dst-jpg_p720x720_tt6&_nc_cat=107&ccb=1-7&_nc_sid=92e707&_nc_ohc=REDACTED&_nc_oc=REDACTED&_nc_zt=REDACTED&_nc_ht=REDACTED&_nc_gid=REDACTED&_nc_ss=REDACTED&oh=REDACTED&oe=REDACTED",
+      "naturalWidth": 720,
+      "naturalHeight": 960,
+      "srcset": ""
+    }
+  },
+  "loggedOutHtmlHead": {
+    "_how": "fetch('https://www.facebook.com/marketplace/item/<id>/', { credentials: 'omit' }) -> 200, ~620 KB, no login wall; only the cover photo (listing_photos[0]) is named",
+    "metaOrder": ["og:type", "og:title", "og:description", "og:url", "og:image:alt", "og:image", "og:locale", "twitter:card", "twitter:title", "twitter:description", "twitter:image", "twitter:image:alt", "twitter:site"],
+    "html": "<meta property=\"og:image\" content=\"https://scontent.fluk1-1.fna.fbcdn.net/v/t39.84726-6/856583123_2138501900090387_5200665921801088004_n.jpg?stp=dst-jpg_tt6&amp;cstp=mx1536x2048&amp;ctp=p600x600&amp;_nc_cat=107&amp;ccb=1-7&amp;_nc_sid=c5055e&amp;_nc_ohc=REDACTED&amp;_nc_oc=REDACTED&amp;_nc_zt=REDACTED&amp;_nc_ht=REDACTED&amp;_nc_gid=REDACTED&amp;_nc_ss=REDACTED&amp;oh=REDACTED&amp;oe=REDACTED\" /><meta name=\"twitter:image\" content=\"https://scontent.fluk1-1.fna.fbcdn.net/v/t39.84726-6/856583123_2138501900090387_5200665921801088004_n.jpg?stp=dst-jpg_tt6&amp;cstp=mx1536x2048&amp;ctp=p600x600&amp;_nc_cat=107&amp;ccb=1-7&amp;_nc_sid=c5055e&amp;_nc_ohc=REDACTED&amp;_nc_oc=REDACTED&amp;_nc_zt=REDACTED&amp;_nc_ht=REDACTED&amp;_nc_gid=REDACTED&amp;_nc_ss=REDACTED&amp;oh=REDACTED&amp;oe=REDACTED\" />"
+  },
+  "measured": {
+    "ogImageAsIs": [600, 800],
+    "ogImageWithoutCtp": [1536, 2048],
+    "servedInPage": [720, 960],
+    "L1_1787225708972853": { "served": [720, 960], "ogWithoutCtp": [1537, 2048], "ogCstp": "mx1537x2048" },
+    "photos2to4": "no larger source found (720/960 only)"
+  }
+}

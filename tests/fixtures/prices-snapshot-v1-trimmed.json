@@ -1,0 +1,66 @@
+{
+  "_note": "Trimmed from the live prices.json (fabcrowd/card-scanner-data release prices, v1, 2026-10-24T20:05:44Z): public TCGplayer market prices via tcgcsv.com. 5 of 736 byCatalog cards, 3 of 1672 stamped rows, 2 of 31443 prices.",
+  "v": 1,
+  "updatedAt": "2026-10-24T20:05:44Z",
+  "prices": {
+    "42346": {
+      "Holofoil": 72.46
+    },
+    "42347": {
+      "Holofoil": 84.59
+    }
+  },
+  "byCatalog": {
+    "ex12-1": {
+      "Holofoil": 75.96,
+      "Reverse Holofoil": 162.49
+    },
+    "ex12-10": {
+      "Holofoil": 228.32,
+      "Reverse Holofoil": 200.9
+    },
+    "ex15-3": {
+      "Holofoil": 44.61,
+      "Reverse Holofoil": 104.84
+    },
+    "ex15-9": {
+      "Holofoil": 25.27,
+      "Reverse Holofoil": 48.98
+    },
+    "ex10-101": {
+      "Holofoil": 151.11
+    }
+  },
+  "stamped": [
+    {
+      "catalogId": "base2-1",
+      "low": 750,
+      "market": 248.33,
+      "mid": 887.5,
+      "productId": 154997,
+      "stamp": "prerelease",
+      "subtype": "Holofoil",
+      "tag": "Prerelease"
+    },
+    {
+      "catalogId": "ex11-64",
+      "low": 249.99,
+      "market": null,
+      "mid": 400,
+      "productId": 693054,
+      "stamp": "setlogo",
+      "subtype": "Reverse Holofoil",
+      "tag": "Squirtle Delta Species Stamped"
+    },
+    {
+      "catalogId": "bw1-25",
+      "low": 119.99,
+      "market": 125,
+      "mid": 169.99,
+      "productId": 228485,
+      "stamp": "staff",
+      "subtype": "Holofoil",
+      "tag": "Prerelease Staff"
+    }
+  ]
+}

@@ -17,9 +17,16 @@ const HEX16 = /^[0-9a-f]{16}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const STRIPES = ["high", "medium", "low", "none"];
-const SOURCES = ["pick", "wrong-card", "confirm"];
+/** Rows about a box rather than a card: a box the user drew, removed (X) or put back. They carry a detector. */
+export const SIGNAL_SOURCES = ["drawn", "removed", "put-back"];
+/** What a box was: one the scan made, or (for a drawn box) what the scan had there: nothing, a hidden entry, a too-small one. */
+export const BOX_KINDS = ["found", "missed", "hidden", "tooSmall"];
+const SOURCES = ["pick", "wrong-card", "confirm", ...SIGNAL_SOURCES];
 const TOP_KEYS = ["v", "install", "split", "photoId", "day", "model", "catalog", "cards"];
-const CARD_KEYS = ["box", "crop", "answer", "scanner", "source"];
+const CARD_KEYS = ["box", "crop", "answer", "scanner", "source", "detector"];
+const DETECTOR_KEYS = ["score", "aspect", "kind"];
+const MIN_ASPECT = 0.05;
+const MAX_ASPECT = 20;
 
 const pinPrefix = (name) => {
   const asset = ASSETS.find((a) => a.name === name);
@@ -36,6 +43,11 @@ export function modelTags() {
 export function cropSize(width, height) {
   const scale = CROP_LONG_SIDE / Math.max(width, height);
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+}
+
+/** True when the picture is smaller than the sent size, so sending it would mean upscaling it. */
+export function cropTooSmall(width, height) {
+  return Math.max(width, height) < CROP_LONG_SIDE;
 }
 
 export const dayOf = (date = new Date()) => date.toISOString().slice(0, 10);
@@ -57,6 +69,16 @@ export function scannerOf(card) {
   return { cardId, confidence, stripe: cardId && !card?.abstain ? confTier(confidence) : "none" };
 }
 
+/** What the detector said about a box: its confidence (null when none), width / height in photo pixels, and the kind. Null when no valid detector can be made. */
+export function detectorOf({ score, box, kind }) {
+  if (!BOX_KINDS.includes(kind) || !Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite)) return null;
+  const [x1, y1, x2, y2] = box;
+  if (!(x2 > x1 && y2 > y1)) return null;
+  const aspect = Math.round(((x2 - x1) / (y2 - y1)) * 1000) / 1000;
+  if (!(aspect >= MIN_ASPECT && aspect <= MAX_ASPECT)) return null;
+  return { score: Number.isFinite(score) ? Math.min(1, Math.max(0, score)) : null, aspect, kind };
+}
+
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const isFraction = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
 
@@ -68,6 +90,16 @@ function answerError(answer) {
   if (key === "cardId") return typeof answer.cardId === "string" && answer.cardId ? null : "answer.cardId must be a non-empty string";
   if (key === "notACard" || key === "unknown") return answer[key] === true ? null : `answer.${key} must be true`;
   return "answer must have exactly one of cardId, notACard, unknown";
+}
+
+function detectorError(detector) {
+  if (!isObject(detector)) return "detector must be an object";
+  const keys = Object.keys(detector);
+  if (keys.length !== DETECTOR_KEYS.length || !DETECTOR_KEYS.every((k) => keys.includes(k))) return `detector must have exactly the keys ${DETECTOR_KEYS.join(", ")}`;
+  if (detector.score !== null && !isFraction(detector.score)) return "detector.score must be null or within 0..1";
+  if (typeof detector.aspect !== "number" || !(detector.aspect >= MIN_ASPECT && detector.aspect <= MAX_ASPECT)) return `detector.aspect must be within ${MIN_ASPECT}..${MAX_ASPECT}`;
+  if (!BOX_KINDS.includes(detector.kind)) return `detector.kind must be one of ${BOX_KINDS.join(", ")}`;
+  return null;
 }
 
 function cardErrors(card, at) {
@@ -92,6 +124,14 @@ function cardErrors(card, at) {
     if (!STRIPES.includes(scanner.stripe)) fail(`scanner.stripe must be one of ${STRIPES.join(", ")}`);
   }
   if (!SOURCES.includes(card.source)) fail(`source must be one of ${SOURCES.join(", ")}`);
+  if (SIGNAL_SOURCES.includes(card.source)) {
+    const detector = "detector" in card ? detectorError(card.detector) : "detector is required on a box signal row";
+    if (detector) fail(detector);
+    if (isObject(card.answer) && "notACard" in card.answer) fail("answer.notACard is not allowed on a box signal row");
+    if (isObject(card.answer) && "cardId" in card.answer && card.source !== "drawn") fail("answer.cardId is only allowed on a drawn box");
+  } else if ("detector" in card) {
+    fail("detector is only allowed on a box signal row");
+  }
   return errors;
 }
 

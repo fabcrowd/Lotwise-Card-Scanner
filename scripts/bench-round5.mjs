@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const SPLIT_CROPS = 'C:\\Users\\daroo\\Desktop\\Repos\\cardscanner\\pokemon-auto-lister\\data\\split-crops';

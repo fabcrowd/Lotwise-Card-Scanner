@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { splitFor, validateBatch, validateContribution } from "../tools/relay/src/validate.js";
-import { contribution, card, jpegB64 } from "../tools/relay/test/builders.js";
+import { contribution, card, boxCard, detector, jpegB64 } from "../tools/relay/test/builders.js";
 
 const bad = (item, pattern) => {
   const r = validateContribution(item);
@@ -92,6 +92,79 @@ test("rejects bad enums, confidence and answers", () => {
   bad(contribution({ cards: [card({ answer: {} })] }), /answer/);
 });
 
+const withCards = (...cards) => contribution({ cards });
+
+test("a valid box signal row passes for each new source", () => {
+  for (const source of ["drawn", "removed", "put-back"]) {
+    assert.deepEqual(validateContribution(withCards(boxCard({ source }))), { ok: true }, source);
+  }
+  for (const kind of ["found", "missed", "hidden", "tooSmall"]) {
+    assert.equal(validateContribution(withCards(boxCard({ detector: detector({ kind }) }))).ok, true, kind);
+  }
+  assert.equal(validateContribution(withCards(boxCard({ detector: detector({ score: null }) }))).ok, true);
+  assert.equal(validateContribution(withCards(boxCard({ detector: detector({ score: 0, aspect: 0.05 }) }))).ok, true);
+  assert.equal(validateContribution(withCards(boxCard({ detector: detector({ score: 1, aspect: 20 }) }))).ok, true);
+});
+
+test("drawn may carry a cardId answer; removed and put-back may not", () => {
+  assert.equal(validateContribution(withCards(boxCard({ source: "drawn", answer: { cardId: "x-1" } }))).ok, true);
+  bad(withCards(boxCard({ source: "removed", answer: { cardId: "x-1" } })), /answer/);
+  bad(withCards(boxCard({ source: "put-back", answer: { cardId: "x-1" } })), /answer/);
+});
+
+test("notACard is refused on box signal rows", () => {
+  for (const source of ["drawn", "removed", "put-back"]) {
+    bad(withCards(boxCard({ source, answer: { notACard: true } })), /answer/);
+  }
+});
+
+test("box signal rows need a detector, and the old sources may not carry one", () => {
+  for (const source of ["drawn", "removed", "put-back"]) {
+    const noDetector = Object.fromEntries(Object.entries(boxCard({ source })).filter(([key]) => key !== "detector"));
+    bad(withCards(noDetector), /detector/);
+  }
+  for (const source of ["pick", "wrong-card", "confirm"]) {
+    bad(withCards(card({ source, detector: detector() })), /detector/);
+  }
+  bad(withCards(boxCard({ detector: null })), /detector/);
+});
+
+test("each malformed detector is refused", () => {
+  const cases = [
+    { ...detector(), extra: 1 },
+    { aspect: 0.7, kind: "found" },
+    { score: 0.5, kind: "found" },
+    { score: 0.5, aspect: 0.7 },
+    detector({ score: -0.1 }),
+    detector({ score: 1.1 }),
+    detector({ score: "0.5" }),
+    detector({ score: NaN }),
+    detector({ aspect: 0 }),
+    detector({ aspect: 0.04 }),
+    detector({ aspect: 21 }),
+    detector({ aspect: NaN }),
+    detector({ aspect: Infinity }),
+    detector({ aspect: "0.7" }),
+    detector({ kind: "lost" }),
+    detector({ kind: undefined }),
+    [],
+    "found",
+  ];
+  for (const d of cases) bad(withCards(boxCard({ detector: d })), /detector/);
+});
+
+test("an unknown source is still refused", () => {
+  bad(withCards(boxCard({ source: "guess" })), /source/);
+  bad(withCards(card({ source: "guess" })), /source/);
+});
+
+test("stored form revalidates box signal rows with the same rules", () => {
+  const stored = (c) => contribution({ install: "0123456789abcdef", received: "2026-10-15", cards: [c] });
+  assert.equal(validateContribution(stored(boxCard()), { stored: true }).ok, true);
+  assert.equal(validateContribution(stored(boxCard({ detector: undefined })), { stored: true }).ok, false);
+  assert.equal(validateContribution(stored(card({ detector: detector() })), { stored: true }).ok, false);
+});
+
 const NOW = new Date("2026-10-15T12:00:00Z");
 const badAt = (item, pattern) => {
   const r = validateContribution(item, { now: NOW });
@@ -124,6 +197,7 @@ test("crops must be small, plausible JPEGs that end properly", () => {
 test("stored form: hashed install and a server receipt time replace the raw install", () => {
   const stored = contribution({ install: "0123456789abcdef", received: "2026-10-15T12:00:00.000Z" });
   assert.equal(validateContribution(stored, { stored: true }).ok, true);
+  assert.equal(validateContribution({ ...stored, received: "2026-10-15" }, { stored: true }).ok, true, "the date-only form is what is kept now");
   assert.equal(validateContribution(contribution(), { stored: true }).ok, false);
   assert.equal(validateContribution({ ...stored, received: "yesterday" }, { stored: true }).ok, false);
   const noReceipt = { ...stored };

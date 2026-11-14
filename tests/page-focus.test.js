@@ -6,6 +6,7 @@ import {
   imageKey,
   isRelatedHeading,
   isSealedListing,
+  isSiblingPage,
   sameImageUrl,
   shouldSuppressCards,
 } from '../tools/extension-wasm/lib/page-focus.js';
@@ -325,4 +326,58 @@ test('a grid needs two rows: one row of comparable cards is only unknown', () =>
   assert.equal(choosePageFocus({ viewport: VIEWPORT, photos: one, cards: [] }).kind, 'unknown');
   const two = [...one, ...[0, 1, 2, 3].map((i) => entry(32 + i * 245, 760, 230, 320, { order: 10 + i }))];
   assert.equal(choosePageFocus({ viewport: VIEWPORT, photos: two, cards: [] }).kind, 'grid');
+});
+
+// --- other listings: tiles that link to a page shaped like this one ---
+
+test('a link to the same kind of page with another id is a sibling page (another listing)', () => {
+  const here = 'https://www.facebook.com/marketplace/item/2233602540730806/';
+  assert.equal(isSiblingPage('https://www.facebook.com/marketplace/item/1752834219639617/?ref=browse_tab', here), true);
+  assert.equal(isSiblingPage('https://www.ebay.com/itm/226512345678', 'https://www.ebay.com/itm/387654321098?hash=x'), true);
+  assert.equal(isSiblingPage('https://www.ebay.com/itm/Charizard-Base-Set/226512345678', 'https://www.ebay.com/itm/Pikachu-Lot/387654321098'), true);
+  assert.equal(isSiblingPage('https://www.mercari.com/us/item/m12345678901/', 'https://www.mercari.com/us/item/m98765432109/'), true);
+  // The page itself (another query), another site, another section, and a search page are not.
+  assert.equal(isSiblingPage(here + '?photo=2', here), false);
+  assert.equal(isSiblingPage('https://www.facebook.com/marketplace/item/1752834219639617/', 'https://m.facebook.com/marketplace/item/2233602540730806/'), false);
+  assert.equal(isSiblingPage('https://www.facebook.com/marketplace/item/1752834219639617/', 'https://www.facebook.com/marketplace/category/pokemon/'), false);
+  assert.equal(isSiblingPage('https://www.ebay.com/itm/226512345678', 'https://www.ebay.com/sch/i.html?_nkw=pokemon'), false);
+  assert.equal(isSiblingPage('https://www.pricecharting.com/game/pokemon-base-set/blastoise-2', 'https://www.pricecharting.com/game/pokemon-base-set/charizard-4'), false);
+  assert.equal(isSiblingPage('', here), false);
+  assert.equal(isSiblingPage('not a url', here), false);
+});
+
+const ITEM = 'https://www.facebook.com/marketplace/item/2233602540730806/';
+const tile = (x, y, size, id, extra = {}) => entry(x, y, size, size, { ...extra, ctx: { link: `https://www.facebook.com/marketplace/item/${id}/?ref=browse_tab` } });
+
+test('on a listing page, tiles that link to other listings are never scanned when the listing photo is not found', () => {
+  const tiles = [tile(10, 600, 250, 111111111), tile(270, 600, 250, 222222222), tile(530, 600, 250, 333333333),
+    tile(10, 860, 250, 444444444), tile(270, 860, 250, 555555555), tile(530, 860, 250, 666666666)];
+  const focus = choosePageFocus({ viewport: VIEWPORT, photos: tiles, cards: [], pageUrl: ITEM });
+  assert.equal(focus.kind, 'listing');
+  assert.equal(focus.main, null);
+  assert.deepEqual(focus.photos, []);
+  assert.deepEqual(focus.cards, []);
+  assert.deepEqual(focus.fallback, []);
+  // Today's picks lower down (off screen) say the same through the page's links.
+  const below = choosePageFocus({ viewport: VIEWPORT, photos: [], cards: [], pageUrl: ITEM,
+    pageLinks: ['https://www.facebook.com/marketplace/item/111111111/?ref=browse_tab'] });
+  assert.equal(below.kind, 'listing');
+  assert.deepEqual(below.photos, []);
+});
+
+test('a large tile linking to another listing never wins over the listing photo', () => {
+  const photo = entry(100, 100, 600, 450);
+  const big = tile(720, 100, 360, 777777777);
+  const focus = choosePageFocus({ viewport: VIEWPORT, photos: [photo, big], cards: [], pageUrl: ITEM });
+  assert.equal(focus.kind, 'listing');
+  assert.equal(focus.main, photo);
+  assert.ok(!focus.fallback.includes(big));
+});
+
+test('a search or category page whose tiles link to listings is still a grid', () => {
+  const tiles = [0, 1, 2, 3, 4, 5].map((i) => tile(10 + (i % 3) * 260, 300 + Math.floor(i / 3) * 260, 250, 100000 + i));
+  const focus = choosePageFocus({ viewport: VIEWPORT, photos: tiles, cards: [], pageUrl: 'https://www.facebook.com/marketplace/category/pokemon/',
+    pageLinks: tiles.map((t) => t.ctx.link) });
+  assert.equal(focus.kind, 'grid');
+  assert.equal(focus.photos.length, 6);
 });

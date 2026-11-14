@@ -233,7 +233,8 @@ async function main() {
 
       const ui = await scanner.evaluate(() => {
         const text = (el) => (el?.textContent || '').trim();
-        const rows = [...document.querySelectorAll('.card-row')].map((row) => ({
+        // Hidden ("not a card") rows are not detections.
+        const rows = [...document.querySelectorAll('.card-row')].filter((row) => !row.querySelector('[data-show-hidden]')).map((row) => ({
           name: text(row.querySelector('.card-name')),
           sub: text(row.querySelector('.card-sub')),
           stripe: row.querySelector('.conf-stripe')?.className.replace('conf-stripe', '').trim() || '',

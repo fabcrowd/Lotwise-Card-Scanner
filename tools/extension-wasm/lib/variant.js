@@ -150,12 +150,15 @@ export function finishSharedByNumber(cards, total) {
   return shared;
 }
 
-// One set each. Short words stay exact so a weight line cannot drift into them.
+// One set each. Short words stay exact so a weight line cannot drift into them. "DRAGON" is not a word of
+// Dragon Frontiers: it is also the Dragon set (ex3) and card text.
 const STAMP_SETS = [
   { code: "ex10", words: ["UNSEEN", "FORCES"] },
   { code: "ex11", words: ["SPECIES"] },
+  { code: "ex12", words: ["LEGEND", "MAKER"] },
   { code: "ex13", words: ["HOLON", "PHANTOMS"] },
   { code: "ex14", words: ["CRYSTAL", "GUARDIANS"] },
+  { code: "ex15", words: ["FRONTIERS"] },
   { code: "ex16", words: ["POWER", "KEEPERS"] },
 ];
 

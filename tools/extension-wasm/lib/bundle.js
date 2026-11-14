@@ -28,6 +28,9 @@
 //                 float = int8 * s. e' = normalize(e + U (Vt e)) for queries and catalog rows (adapter.js).
 //   check         header { v:1, dim:512, bias:b, threshold:t }, then dim float32 weights. p = sigmoid(w.e + b) on the
 //                 raw embedding of a detected box; the box is dropped when p < t.
+//                 v2: header { v:2, dim:512, hidden:H, extras:["det_conf","aspect"], extra_mean:[2], extra_std:[2],
+//                 bias2, threshold }, then float32 W1 (H x 514, row-major), b1 (H), w2 (H). x = [embedding,
+//                 z-scored det_conf, z-scored aspect]; p = sigmoid(w2 . max(W1 x + b1, 0) + bias2).
 //   catalogExtra  the memory layout plus header "cards": [{ id, name, set, setName, number, image }] parallel to
 //                 cardIds. Rows are appended to the catalog, and the cards to the metadata.
 
@@ -39,6 +42,7 @@ const DAY_MS = 24 * 3600 * 1000;
 export const MAX_PACK_BYTES = 64 * 1024 * 1024;
 export const MAX_SMALL_BYTES = 64 * 1024;
 export const MAX_ADAPTER_RANK = 64;
+export const MAX_CHECK_HIDDEN = 1024;
 const MAX_ENTRIES = 50000;
 const MAX_HEADER = 32 * 1024 * 1024;
 const MAX_MANIFEST_AGE_MS = 30 * DAY_MS;
@@ -53,7 +57,7 @@ export const ASSET_CAPS = {
   memory: MAX_PACK_BYTES,
   catalogExtra: MAX_PACK_BYTES,
   adapter: 4 + 1024 + 2 * EMBEDDING_DIM * MAX_ADAPTER_RANK + 4096,
-  check: 4 + 4096 + EMBEDDING_DIM * 4,
+  check: 4 + 4096 + 4 * (MAX_CHECK_HIDDEN * (EMBEDDING_DIM + 2) + 2 * MAX_CHECK_HIDDEN),
 };
 const ASSET_NAMES = Object.keys(ASSET_CAPS);
 
@@ -80,7 +84,7 @@ export async function verifySignature(data, signatureB64, publicKeyB64) {
 // ─── asset parsers ───────────────────────────────────────────────────────────
 
 /** The header JSON and where the body starts. */
-function splitFile(bytes, what) {
+function splitFile(bytes, what, versions = [1]) {
   const file = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   if (file.length < 4) throw new Error(`${what} is too short`);
   const headerLength = new DataView(file.buffer, file.byteOffset, file.byteLength).getUint32(0, true);
@@ -91,7 +95,7 @@ function splitFile(bytes, what) {
   } catch {
     throw new Error(`${what} header is not JSON`);
   }
-  if (!header || typeof header !== "object" || header.v !== 1 || header.dim !== EMBEDDING_DIM) throw new Error(`${what} header does not match this build`);
+  if (!header || typeof header !== "object" || !versions.includes(header.v) || header.dim !== EMBEDDING_DIM) throw new Error(`${what} header does not match this build`);
   return { file, header, bodyAt: 4 + headerLength };
 }
 
@@ -128,9 +132,45 @@ export function parseAdapter(bytes) {
   return { rank, u: widen(bodyAt), v: widen(bodyAt + count) };
 }
 
-/** { weights, bias, threshold } of the "is this a card" check. */
+const CHECK_EXTRAS = ["det_conf", "aspect"];
+const CHECK_INPUTS = EMBEDDING_DIM + CHECK_EXTRAS.length;
+const isFiniteNumber = (x) => typeof x === "number" && Number.isFinite(x);
+const finitePair = (x) => Array.isArray(x) && x.length === CHECK_EXTRAS.length && x.every(isFiniteNumber);
+
+/** v2 body: W1 (hidden x 514, row-major), b1 (hidden), w2 (hidden), float32 LE; the header carries the rest. */
+function parseCheckV2({ file, header, bodyAt }) {
+  const { hidden, extras, extra_mean: extraMean, extra_std: extraStd, bias2, threshold } = header;
+  if (!Number.isInteger(hidden) || hidden < 1 || hidden > MAX_CHECK_HIDDEN) throw new Error(`check hidden must be a whole number from 1 to ${MAX_CHECK_HIDDEN}`);
+  if (!Array.isArray(extras) || extras.length !== CHECK_EXTRAS.length || extras.some((name, i) => name !== CHECK_EXTRAS[i])) throw new Error("check extras must be det_conf and aspect");
+  if (!finitePair(extraMean)) throw new Error("check extra_mean must be 2 finite numbers");
+  if (!finitePair(extraStd) || extraStd.some((s) => s <= 0)) throw new Error("check extra_std must be 2 positive finite numbers");
+  if (!isFiniteNumber(bias2)) throw new Error("check bias2 must be a finite number");
+  if (!isFiniteNumber(threshold) || !(threshold > 0 && threshold < 1)) throw new Error("check threshold must be between 0 and 1");
+  const w1Count = hidden * CHECK_INPUTS;
+  if (file.length !== bodyAt + 4 * (w1Count + 2 * hidden)) throw new Error("check size does not match its header");
+  const floats = new Float32Array(file.slice(bodyAt).buffer);
+  if (floats.some((w) => !Number.isFinite(w))) throw new Error("check weights must be finite");
+  return {
+    v: 2,
+    hidden,
+    w1: floats.slice(0, w1Count),
+    b1: floats.slice(w1Count, w1Count + hidden),
+    w2: floats.slice(w1Count + hidden),
+    bias2,
+    extraMean: [...extraMean],
+    extraStd: [...extraStd],
+    threshold,
+  };
+}
+
+/**
+ * The "is this a card" check. v1: { weights, bias, threshold } (linear on the embedding). v2: { v: 2, hidden, w1, b1, w2,
+ * bias2, extraMean, extraStd, threshold } (one hidden ReLU layer on the embedding plus the detector's confidence and aspect).
+ */
 export function parseCheck(bytes) {
-  const { file, header, bodyAt } = splitFile(bytes, "check");
+  const parts = splitFile(bytes, "check", [1, 2]);
+  if (parts.header.v === 2) return parseCheckV2(parts);
+  const { file, header, bodyAt } = parts;
   const { bias, threshold } = header;
   if (typeof bias !== "number" || !Number.isFinite(bias)) throw new Error("check bias must be a finite number");
   if (typeof threshold !== "number" || !(threshold > 0 && threshold < 1)) throw new Error("check threshold must be between 0 and 1");
@@ -140,11 +180,66 @@ export function parseCheck(bytes) {
   return { weights, bias, threshold };
 }
 
-/** p that the crop embedded as `embedding` (raw, unadapted) is a card. */
-export function cardProbability(embedding, check) {
+/**
+ * The check that ships inside the extension (assets/check.bin + assets/check.json): the parseCheck fields plus { model, crop }.
+ * `meta` names the model (first 16 hex of its sha256) and crop version the check was fitted for.
+ */
+export function parsePackagedCheck(bytes, meta) {
+  if (!meta || typeof meta.model_tag16 !== "string" || !HEX16.test(meta.model_tag16) || !Number.isInteger(meta.crop_version)) {
+    throw new Error("packaged check has no model or crop");
+  }
+  return { ...parseCheck(bytes), model: meta.model_tag16, crop: meta.crop_version };
+}
+
+/**
+ * The check in use: a valid same-build bundle check wins; otherwise the packaged one, but only when it was fitted for
+ * this build's model and crop. A bundle that carries no check leaves the packaged one live.
+ */
+export function pickCheck(stored, packaged, expected) {
+  if (stored?.check) return stored.check;
+  return packaged && sameBuild(packaged, expected) ? packaged : null;
+}
+
+/**
+ * p that the crop embedded as `embedding` (raw, unadapted) is a card, or null when the check cannot run: a v2 check
+ * needs `extras` { detConf, aspect } (the detector's own confidence and w/h of the box), both finite numbers; either
+ * version gives null when the result is not finite.
+ */
+export function cardProbability(embedding, check, extras) {
+  const p = check.v === 2 ? probabilityV2(embedding, check, extras) : probabilityV1(embedding, check);
+  return Number.isFinite(p) ? p : null;
+}
+
+function probabilityV1(embedding, check) {
   let z = check.bias;
   for (let d = 0; d < EMBEDDING_DIM; d++) z += check.weights[d] * embedding[d];
   return 1 / (1 + Math.exp(-z));
+}
+
+function probabilityV2(embedding, check, extras) {
+  if (!isFiniteNumber(extras?.detConf) || !isFiniteNumber(extras?.aspect)) return null;
+  const x = new Float64Array(CHECK_INPUTS);
+  for (let d = 0; d < EMBEDDING_DIM; d++) x[d] = embedding[d];
+  x[EMBEDDING_DIM] = (extras.detConf - check.extraMean[0]) / check.extraStd[0];
+  x[EMBEDDING_DIM + 1] = (extras.aspect - check.extraMean[1]) / check.extraStd[1];
+  let logit = check.bias2;
+  for (let h = 0; h < check.hidden; h++) {
+    let z = check.b1[h];
+    const row = h * CHECK_INPUTS;
+    for (let d = 0; d < CHECK_INPUTS; d++) z += check.w1[row + d] * x[d];
+    if (z < 0) continue; // ReLU; a NaN z falls through so it poisons the result and the check reports it cannot run
+    logit += z * check.w2[h];
+  }
+  return 1 / (1 + Math.exp(-logit));
+}
+
+/**
+ * Whether a detected box stays: { keep, p }. keep is true when the check cannot run (p is null) or p >= threshold,
+ * false only when p < threshold.
+ */
+export function checkKeepsBox(embedding, check, extras) {
+  const p = cardProbability(embedding, check, extras);
+  return { keep: p === null || p >= check.threshold, p };
 }
 
 const text = (x) => typeof x === "string" && x.length > 0 && x.length <= 200;

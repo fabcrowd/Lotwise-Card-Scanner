@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   EMBEDDING_DIM,
   REFERENCE_MARGIN,
-  REFERENCE_MIN,
+  PACK_REFERENCE_MIN,
   correctionsToEmbed,
   decodeEmbedding,
   encodeEmbedding,
@@ -30,8 +30,8 @@ function unit(...head) {
 const at = (score) => unit(score, Math.sqrt(1 - score * score));
 const query = unit(1);
 
-test('the thresholds are conservative placeholders', () => {
-  assert.equal(REFERENCE_MIN, 0.93);
+test('the margin is measured and the pack keeps the old conservative cut', () => {
+  assert.equal(PACK_REFERENCE_MIN, 0.93);
   assert.equal(REFERENCE_MARGIN, 0.02);
 });
 
@@ -248,6 +248,14 @@ test('singleFlight reports a failing task and keeps going', async () => {
 
 test('referenceRow stamps the current embedding version', () => {
   assert.equal(referenceRow({ id: 's:0', pickedId: 'card-a', ts: 7 }, unit(1)).v, EMBEDDING_VERSION);
+});
+
+test('references embedded by the old recognizer (version 2) are ignored and re-embedded under clip v3', () => {
+  assert.equal(EMBEDDING_VERSION, 3);
+  const old = { id: 'a', cardId: 'x', ts: 1, v: 2, embedding: at(0.99) };
+  assert.equal(referenceHit(query, [old], 0.5), null);
+  assert.deepEqual(currentReferences([old], [{ id: 'a', ts: 1, pickedId: 'x' }]), []);
+  assert.deepEqual(correctionsToEmbed([{ id: 'a', ts: 1, pickedId: 'x', hasCrop: true }], [old]).map((c) => c.id), ['a']);
 });
 
 test('referenceHit ignores references made with an older or unknown crop', () => {

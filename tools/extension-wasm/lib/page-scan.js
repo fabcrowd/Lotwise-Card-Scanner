@@ -26,6 +26,16 @@ export function toDocBox(box, scroll) {
   return [box[0] + scroll.x, box[1] + scroll.y, box[2] + scroll.x, box[3] + scroll.y];
 }
 
+/**
+ * The document box a scanned card carries so later work (a drawn box) compares in page space: the slot's box on a
+ * whole-page scan, else the viewport box plus the scroll the scan was taken at (what the overlay computes without one).
+ * Null for a card with no slot, no box, or one read from another photo of the gallery (not on the page).
+ */
+export function docBoxFor(card, slot, wholePage, origin) {
+  if (!slot || !card || card.inGallery || !Array.isArray(card.box)) return null;
+  return wholePage ? slot.docBox : toDocBox(card.box, origin);
+}
+
 function iou(a, b) {
   const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
   const h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
@@ -46,6 +56,9 @@ export function judgeDuplicate(seen, card) {
   const index = seen.findIndex((other) => (card.anchor != null && card.anchor === other.anchor)
     || iou(card.docBox, other.docBox) > SAME_CARD_IOU);
   if (index < 0) return { verdict: "new" };
+  // A hidden ("not a card") view never holds a spot against a real one, and never replaces a real one.
+  if (seen[index].hidden && !card.hidden) return { verdict: "replace", index };
+  if (card.hidden && !seen[index].hidden) return { verdict: "skip" };
   return card.area > seen[index].area ? { verdict: "replace", index } : { verdict: "skip" };
 }
 

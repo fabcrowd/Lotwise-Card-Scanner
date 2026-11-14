@@ -5,6 +5,7 @@
 
 import { publicHttpsUrl } from "./net.js";
 import { sameImageUrl } from "./page-focus.js";
+import { isMeasuredRenditionHost, upgradeRenditionUrl } from "./rendition.js";
 
 const TARGET_SIDE = 1600;            // the rendition requested from CDNs that resize on demand
 const MAX_CANDIDATES = 4;            // each one costs a fetch, so only the likeliest few are tried
@@ -13,7 +14,7 @@ const ASPECT_TOLERANCE = 0.03;       // a rewrite that changes the shape is a di
 const IMAGE_EXTENSION = /\.(?:jpe?g|png|webp|gif|avif)$/i;
 
 // Rough size each kind of hint is expected to have, only used to order the tries.
-const ASSUMED = { rewrite: TARGET_SIDE, original: 1500, attribute: 1400, link: 1300, og: 1200 };
+const ASSUMED = { site: 2000, rewrite: TARGET_SIDE, original: 1500, attribute: 1400, link: 1300, og: 1200 };
 
 // Facebook's CDN. Its signed URLs refuse any change to the size in `stp`, but the `ctp` resize on the og:image is
 // outside the signature: without it the same URL serves the upload itself (a Marketplace photo shown at 720x960 came
@@ -36,6 +37,48 @@ export function facebookOriginal(raw) {
   if (url.protocol !== "https:" || !isFacebookCdn(url.hostname) || !url.searchParams.has("ctp")) return null;
   url.searchParams.delete("ctp");
   return url.href;
+}
+
+// A logged-in Marketplace item page has no og:image (2026-10-25); the same page fetched without cookies still names
+// the cover photo's upload in og:image/twitter:image. Only the cover: the other photos are named nowhere.
+const FACEBOOK_SITE = /^(?:[a-z0-9-]+\.)?facebook\.com$/i;
+const FACEBOOK_ITEM = /^\/marketplace\/item\/(\d{5,25})(?:\/|$)/;
+const SHARE_IMAGE_KEYS = new Set(["og:image", "og:image:secure_url", "twitter:image"]);
+
+/** The canonical URL of a Facebook Marketplace item page (no query, same host), or null for any other page. */
+export function facebookListingPage(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || !FACEBOOK_SITE.test(url.hostname)) return null;
+  const item = url.pathname.match(FACEBOOK_ITEM);
+  return item ? `https://${url.hostname.toLowerCase()}/marketplace/item/${item[1]}/` : null;
+}
+
+/** The share-page URL a scan should read: an item page whose own og:image names no Facebook upload. */
+export function needsShareImages(pageUrl, ogImages) {
+  const page = facebookListingPage(pageUrl);
+  if (!page) return null;
+  return (Array.isArray(ogImages) ? ogImages : []).some((og) => facebookOriginal(og)) ? null : page;
+}
+
+const decodeEntities = (text) => text.replace(/&(?:amp|#38|#x26);/gi, "&");
+
+/** The og:image, og:image:secure_url and twitter:image URLs of a page's HTML: decoded, https only, at most four. */
+export function shareImagesFromHtml(html) {
+  const out = [];
+  for (const [tag] of String(html || "").matchAll(/<meta\b[^>]*>/gi)) {
+    const key = tag.match(/\b(?:property|name)\s*=\s*(["'])(.*?)\1/i)?.[2]?.toLowerCase();
+    if (!SHARE_IMAGE_KEYS.has(key)) continue;
+    const content = tag.match(/\bcontent\s*=\s*(["'])(.*?)\1/i)?.[2];
+    const url = content ? publicHttpsUrl(decodeEntities(content)) : null;
+    if (url && !out.includes(url.href)) out.push(url.href);
+    if (out.length >= MAX_CANDIDATES) break;
+  }
+  return out;
 }
 
 function facebookSize(href) {
@@ -131,7 +174,9 @@ export function fullSizeCandidates({ src = "", currentSrc = "", naturalWidth = 0
 
   for (const raw of [src, currentSrc]) {
     const url = resolve(raw, base);
-    if (url) rewrites(url).forEach((entry) => add(entry.href, entry.size));
+    if (url && !isMeasuredRenditionHost(url.hostname)) rewrites(url).forEach((entry) => add(entry.href, entry.size));
+    const site = url && upgradeRenditionUrl(url.href);
+    if (site) add(site, ASSUMED.site);
     const original = url && facebookOriginal(url.href);
     if (original) add(original, facebookSize(original));
   }
@@ -202,6 +247,11 @@ export function largerRendition({ src = "", currentSrc = "", naturalWidth = 0, n
   for (const entry of parseSrcset(srcset, naturalWidth)) {
     if (!(naturalWidth > 0) || !/\s\d+(?:\.\d+)?w\b/.test(srcset)) break;
     if (entry.size >= naturalWidth * MIN_GROWTH) offer(resolve(entry.raw, base)?.href, Math.round(entry.size * (naturalHeight > 0 ? Math.max(1, naturalHeight / naturalWidth) : 1)));
+  }
+  for (const raw of [src, currentSrc]) {
+    const url = resolve(raw, base);
+    const site = url && upgradeRenditionUrl(url.href);
+    if (site) offer(site, null);
   }
   const facebook = [src, currentSrc, ...(Array.isArray(ogImages) ? ogImages.filter((og) => sameFacebookImage(og, src || currentSrc)) : [])];
   for (const raw of facebook) {
