@@ -19,6 +19,65 @@ work. Cursor conventions: `docs/autopilot/CURSOR.md`.
 
 Opus (the main session) researches, writes plans and briefs, reviews, verifies and commits. Sonnet subagents (`model: sonnet`) execute the plans: every code and file change, even one-liners. This is a token-saving measure: don't have Opus edit files or Sonnet invent plans. If a Sonnet agent hits a design decision not covered by its brief, it stops and reports instead of choosing.
 
+Standing owner rule (2026-11-13): do the work through subagents or a dynamic workflow (a script that orchestrates many subagents, https://code.claude.com/docs/en/workflows), whichever makes the work easier to break up. The main session keeps its own work to getting the data and orchestrating. On this PC keep a workflow's concurrent agents low (memory is tight and the owner uses the machine during runs).
+
+---
+
+## Where things live
+
+Use this map with Glob/Grep to find code before reading any file.
+
+Extension (the product), `tools/extension-wasm/`:
+- `manifest.json`, `background.js` (service worker, ~3,000 lines), `popup.html`/`popup.js` (~1,900), `options.html`/`options.js`.
+- `content.js` (~2,000) and `photo-detection.js`: page-side scripts, injected by the background (the manifest has no `content_scripts`).
+- `lib/` detection and crops: `detect.js`, `rectify.js`, `corners.js`, `corner-read.js`, `frame-shadow.js`, `tiny-card.js`, `card-back.js`, `page-scan.js`, `page-focus.js`, `page-target.js`.
+- `lib/` embedding and matching: `embed.js`, `search.js`, `adapter.js`, `refine.js`, `references.js`, `variant.js`, `variant-model.js`, `set-*.js`, `card-number.js`, `era.js`, `ocr.js`.
+- `lib/` fusion and confidence: `fusion.js` (thresholds, confirm rule), `stakes.js`, `why.js`, `why-text.js`, `title-prior.js`, `page-prior.js`.
+- `lib/` "is this a card" check and bundle: `not-card.js` (hidden entries), `bundle.js` (signed bundle), `assets/check.bin` and `assets/check.json`.
+- `lib/` sharing and contributions: `contribution.js`, `sharing.js`, `share-rows.js`, `share-store.js`, `upload-queue.js`, `photo-id.js`, `shared-config.js`.
+- `lib/` drawn boxes and overlay: `draw-box.js`, `drawn-examples-store.js` (dev build only), `overlay-toggle.js`, `overlay-remove.js`, `card-display.js`, `option-strip.js`.
+- `lib/` pricing: `pricing.js`, `price-prefs.js`, `price-snapshot.js`, `condition-pricing.js`, `batch-price.js`, `ppt-key.js`.
+- `lib/` corrections and choose flow: `choose-flow.js`, `card-picker.js`, `correction-*.js`, `corrections-store.js`, `memory-*.js`, `skip.js`, `lot-session.js`, `lot-export.js`.
+- `lib/` setup and store config: `setup.js` (model download, cache), `site-access.js`, `net.js`, `gallery.js`, `rendition.js`, `photo-fetch.js`; `vendor/` is onnxruntime-web, `assets/` holds the check model, `icons/` the icons.
+
+Build and packaging:
+- `scripts/build-wasm-extension.ps1` builds `dist/extension-wasm`, `-wasm-sealed` and `-wasm-store` (plus the store zip); never hand-edit `dist/`.
+- `scripts/lib/store-package.mjs`: the store transform (name, hosts, `STRIP_FILES`); `tools/extension-wasm-sealed/` is the sealed-score variant source.
+
+Tests:
+- `tests/*.test.js` (Node runner, one file per module). Contract pins: `store-build.test.js`, `store-clean.test.js`, `store-transform.test.js`, `extension-wasm-build.test.js`, `share-rows.test.js`, `share-queue.test.js`, `shared-data-pack.test.js`, `contribution.test.js`, `fusion.test.js`, `confirm-rule.test.js`, `bundle.test.js`, `packaged-check.test.js`, `relay-*.test.js`.
+- `tests/e2e/` Playwright specs and `*.mjs` live scripts; `tests/fixtures/`, `tests/helpers/`; config in `playwright.config.js`.
+
+Node server and sidecars:
+- `src/index.js` (wiring), `src/server.js` (routes); `src/{identify,scan,pricing,photos,pokegrade,tcgplayer,ebay,collectr,server}/`.
+- `tools/vellum-ai/`: Python sidecars `identify_server.py`, `server.py`, plus `detect/`, `vellum_ai/`, `catalog/`, `models/`, `tests/`, `scripts/`.
+- `tools/chrome-extension/` older dev extension; `tools/labeler/` labeling tool.
+
+Shared learning templates:
+- `tools/relay/` (Cloudflare worker: `src/{handler,validate,cron,github,config,ids}.js`, `test/`).
+- `tools/shared-data/` (Python `pipeline/` run, gate, signing, pack, train; `tests/`; `pins.json`).
+
+Scripts worth knowing (`scripts/`):
+- `realworld-run.mjs` real-world harness; `sealed-score.mjs` sealed totals; `references-dev-check.mjs`; `scan-pricing-smoke.mjs`; `bench-round*.mjs` older benchmarks; `lib/sealed-*.mjs` sealed-set helpers (never run against files in the sealed folder yourself).
+
+Docs and continuity:
+- `HANDOFF.md`, `docs/handoff-fable-5.2-hardening.md` (current), `docs/handoff-2026-10-24.md`, `docs/handoff-2026-10-22-clip-v3.md`, `tasks/todo.md`, `tasks/lessons.md`, `todo.md`, `detector-upgrade-handoff.md` (proposal, not a report).
+- `docs/plans/` (`shared-learning.md`, `self-learning.md`, `card-picker-and-sealed-test.md`, `launch.md`), `docs/store/` (listing, privacy policy, icons), `docs/blurry-training-plan.md`, `docs/known-limits.md`.
+
+Data and scratch:
+- `data/` is gitignored: `card-catalog/` (embeddings, id maps), `mercari-chrome-profile/`, `collectr-export.csv`. Do not open these. The rules below name `data/realworld/` and `data/extension-live-profile`; neither was present in this checkout on 2026-11-13.
+- `data/sealed-test/` is off-limits (see Gotchas). `.tmp/` is gitignored scratch, including the realworld `PROFILE` copy.
+- Sibling repo `C:\repos\projects\card-scanner-data`: `pipeline/` and `scripts/` (training, signing), `data/reports/<study>/README.md` (study results), `data/harvest-*.log`, `tasks/handoff.md`.
+
+## Token discipline
+
+- Find with this map and Glob/Grep first; read only the lines you need. `background.js`, `popup.js` and `content.js` are thousands of lines: Grep for the function, then read a short range.
+- Never open `dist/`, `node_modules/`, `data/`, `tools/vellum-ai/models/`, `.venv*`, model files (`*.bin`, `*.onnx`, `*.npy`, `*.faiss`) or screenshots under `tests/e2e/screenshots/`.
+- Study numbers come from the result files and each study's `README.md` under `card-scanner-data/data/reports/`; never recompute them in the main session.
+- Subagent reports and logs are summarized in a few lines, not pasted. Ask subagents for paths and counts, not file dumps.
+- Run the single relevant test file while working; run the full `npm test` once at the end.
+- Pull a harvest or run log through `Grep` for errors and the last lines; do not read it whole.
+
 ---
 
 ## 1. Commands
