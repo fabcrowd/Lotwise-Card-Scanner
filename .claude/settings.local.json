@@ -1,4 +1,8 @@
 {
+  "skillOverrides": {
+    "chrome-extension-dev": "on",
+    "extension-e2e-test": "on"
+  },
   "permissions": {
     "allow": [
       "PowerShell(Get-Content *)",

@@ -98,6 +98,7 @@ export default [
   {
     ignores: [
       'node_modules/**',
+      'mobile/**',
       'data/**',
       'dist/**',
       '.tmp/**',
