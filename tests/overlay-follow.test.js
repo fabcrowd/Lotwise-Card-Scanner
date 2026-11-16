@@ -132,7 +132,8 @@ test('D2: after the carousel swaps the photo src, the old photo\'s boxes and tag
   const { page, img } = l2Page();
   scanAndShow(page);
   assert.equal(page.rec.frames().length, 3);
-  assert.ok(page.rec.texts().some((t) => t.includes('Mega Dragonite')));
+  // At rest a card says only its price; the name comes with hover.
+  assert.ok(page.rec.texts().includes('$25.38'));
 
   img.attrs.src = L2_PHOTO2;
   img.src = L2_PHOTO2;
@@ -196,7 +197,6 @@ test('D10: nothing is drawn over a fixed site header that covers the top of the 
   // Hovering the top card opens its full label below the header, not under it.
   page.fire('mousemove', { clientX: 1400, clientY: 120 });
   page.flush();
-  // The full label's name line has no number; the small tag's title does.
   assert.ok(page.rec.texts().includes('Mega Dragonite ex'), 'the hovered card\'s label is drawn');
   for (const op of page.rec.visible()) {
     assert.ok(op.seen.y1 >= 56 - 0.01, `hover: ${op.kind}${op.text ? ` "${op.text}"` : ''} drawn at y ${op.seen.y1.toFixed(1)}, over the header`);
@@ -224,7 +224,7 @@ const L1_CARDS = [
   ['Gengar', 'SWSH241', [1285, 627, 1416, 824], '$8.21–$117.99'],
 ];
 
-test('D15: every card still visible under a fixed header keeps its tag, inside the visible part of its box', () => {
+test('D15: every card still visible under a fixed header keeps its price chip, inside the visible part of its box', () => {
   const page = loadPage();
   page.rec.ctx.measureText = (t) => ({ width: String(t).length * 8 });
   const slot = makeNode('DIV', page.body, {}, rectOf(...L1_PHOTO));
@@ -245,16 +245,15 @@ test('D15: every card still visible under a fixed header keeps its tag, inside t
   for (const el of [slot, img]) el.rect = rectOf(L1_PHOTO[0], L1_PHOTO[1] - 200, L1_PHOTO[2], L1_PHOTO[3]);
   page.fire('scroll');
   page.flush();
-  for (const [name, number, box] of L1_CARDS) {
+  for (const [name, number, box, price] of L1_CARDS) {
     const [x1, y1, x2, y2] = [box[0], box[1] - 200, box[2], box[3] - 200];
     const title = `${name} #${number}`;
-    // A card's tag starts at its box's left edge (kept on the photo): accent 4 + padding 7 + 2.
-    const textX = Math.max(x1, L1_PHOTO[0]) + 13;
-    const tag = page.rec.ops.find((o) => o.kind === 'text' && o.seen && o.text.startsWith(name) && Math.abs(o.seen.x1 - textX) <= 1);
-    assert.ok(tag, `${title}: no tag while its box shows y ${Math.max(56, y1)}..${y2}`);
-    assert.ok(tag.seen.y1 >= 56 && tag.seen.y1 === tag.rect.y1, `${title}: tag under the header at ${JSON.stringify(tag.seen)}`);
-    // A card whose top is under the header gets its tag inside the part of the box that shows.
-    if (y1 < 56) assert.ok(tag.seen.y2 <= y2 && tag.seen.x1 >= x1 && tag.seen.x1 < x2, `${title}: tag at ${JSON.stringify(tag.seen)}, box shows ${x1},56..${x2},${y2}`);
+    // The resting overlay says only the price, as a chip inside the card's bottom-right corner (one dollar sign in a range).
+    const want = typeof price === 'number' ? `$${price.toFixed(2)}` : price.replace('–$', '–');
+    const chip = page.rec.ops.find((o) => o.kind === 'text' && o.seen && o.text === want && o.rect.x1 >= x1 && o.rect.x2 <= x2 + 0.01 && o.rect.y1 >= y1 && o.rect.y1 <= y2);
+    assert.ok(chip, `${title}: no price chip while its box shows y ${Math.max(56, y1)}..${y2}`);
+    assert.ok(chip.seen.y1 >= 56 && chip.seen.y1 === chip.rect.y1, `${title}: chip under the header at ${JSON.stringify(chip.seen)}`);
+    assert.ok(!page.rec.texts().some((t) => t.startsWith(name)), `${title}: the name is for hover, not rest`);
   }
 });
 

@@ -21,6 +21,13 @@ export function acceptFromBackground(sender, extensionId) {
   return Boolean(sender) && sender.id === extensionId && !sender.tab;
 }
 
+/** A card pick (a click on a page card): from the background, or from a page's top frame that is the page of the lot the window holds. */
+export function acceptPickSender(sender, extensionId, lotUrl) {
+  if (acceptFromBackground(sender, extensionId)) return true;
+  if (!acceptPageSender(sender, extensionId)) return false;
+  return !lotUrl || isSamePage(lotUrl, sender.tab.url);
+}
+
 /** Whether the removal of card `index` is taken for the lot of `lotUrl`: the same page, and a card that can be removed. */
 export function acceptRemove(tabUrl, index, lotUrl, cards) {
   if (!isSamePage(lotUrl, tabUrl)) return false;

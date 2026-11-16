@@ -1,4 +1,4 @@
-# Pokémon Card Scanner — Install
+# Sweep — Install
 
 A Chrome extension that scans the Pokémon cards on any webpage and overlays
 market prices (NM / LP / MP / HP / DMG + graded).
@@ -21,7 +21,7 @@ Works fully offline after the one-time model download. No account required.
    `dist/extension-wasm/` folder you downloaded.
 
 5. **Pin the extension** so the icon is always visible: click the puzzle-piece
-   icon in Chrome's toolbar, find "Pokémon Card Scanner", click the pin.
+   icon in Chrome's toolbar, find "Sweep", click the pin.
 
 6. **First launch — download the models.**
    Click the scanner icon in the toolbar. A small window opens. Click

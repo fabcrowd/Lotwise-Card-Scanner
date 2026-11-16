@@ -1,4 +1,4 @@
-# Privacy Policy: Card Scanner & Price Checker for Pokémon TCG
+# Privacy Policy: Sweep
 
 Effective date: 2026-11-13
 

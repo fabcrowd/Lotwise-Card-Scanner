@@ -1,0 +1,274 @@
+/* Card Scanner options page. Colors, type and shape come from tokens.css; no hex colors here. */
+
+body {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+}
+
+/* HEADER */
+.page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.page-head-text { min-width: 0; }
+.logo-mark { flex-shrink: 0; }
+.logo-mark .lm-bracket { stroke: var(--ask-fill); }
+.logo-mark .lm-card { fill: var(--brand); }
+h1 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--ink);
+}
+.subtitle { margin-top: 2px; font-size: 14px; color: var(--ink-2); }
+
+.section-title {
+  margin: 28px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* CARDS */
+.source-card, details.advanced {
+  margin-bottom: 12px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+.source-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.source-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--none-fill);
+}
+.source-card.connected .source-dot, .source-card.always .source-dot { background: var(--ok-fill); }
+.source-name {
+  flex: 1;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--ink);
+}
+.source-desc { max-width: 62ch; margin-bottom: 10px; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+.source-desc small { font-size: 13px; color: var(--ink-3); }
+.source-body { padding-top: 6px; }
+
+/* STATUS CHIPS: off is a state, not an error */
+.source-status {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.source-status.always, .source-status.connected {
+  background: var(--ok-tint);
+  border-color: transparent;
+  color: var(--ok);
+}
+
+/* STEPS */
+.steps { counter-reset: step; list-style: none; margin: 10px 0 14px; }
+.steps li { display: flex; gap: 10px; padding: 4px 0; font-size: 14px; line-height: 1.5; color: var(--ink); }
+.steps li::before {
+  content: counter(step);
+  counter-increment: step;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+}
+a.link { color: var(--brand); font-size: 14px; font-weight: 600; text-decoration: none; }
+a.link:hover { text-decoration: underline; }
+
+/* FORM */
+label {
+  display: block;
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+input[type="text"], input[type="password"], select {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: var(--ink);
+  border-color: var(--border-strong);
+  border-radius: var(--radius);
+}
+input[type="text"], input[type="password"] { background: var(--surface-2); }
+#ppt-key { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+select {
+  padding-right: 36px;
+  background: var(--surface-2) var(--chevron) no-repeat right 12px center / 16px;
+}
+input[type="text"]:focus, input[type="password"]:focus, select:focus { border-color: var(--brand); }
+
+/* TOGGLES: the checkbox is drawn as a switch */
+label.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+label.toggle:has(input:disabled) { color: var(--ink-3); cursor: not-allowed; }
+label.toggle input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  background: var(--border-strong);
+  border-radius: 10px;
+  cursor: inherit;
+}
+label.toggle input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: transform var(--dur) var(--ease), background-color var(--dur) var(--ease);
+}
+label.toggle input[type="checkbox"]:checked { background: var(--primary-bg); }
+label.toggle input[type="checkbox"]:checked::before { transform: translateX(16px); background: var(--primary-fg); }
+label.toggle input[type="checkbox"]:disabled { opacity: .45; }
+
+/* Graded prices: four switches in a grid, two across below 560 px. The other children of the card span the full row. */
+#prices-card .source-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 12px; }
+#prices-card .source-body > * { grid-column: 1 / -1; }
+#prices-card .source-body > label.toggle { grid-column: auto; }
+@media (min-width: 560px) {
+  #prices-card .source-body { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* BUTTONS */
+.btn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+button.btn {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid var(--primary-bg);
+  border-radius: var(--radius);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+}
+button.btn:hover:not(:disabled) { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+button.btn:disabled { opacity: .45; cursor: not-allowed; }
+button.btn.secondary {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--ink);
+  font-family: var(--font-text);
+  font-weight: 600;
+}
+button.btn.secondary:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-strong); }
+button.btn.danger {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--danger);
+  font-family: var(--font-text);
+  font-weight: 600;
+}
+button.btn.danger:hover:not(:disabled) { background: var(--danger-tint); border-color: var(--danger); }
+
+/* STATUS LINES: an empty one takes no space */
+.test-result { margin-top: 8px; font-size: 13px; line-height: 1.5; }
+.test-result:empty { display: none; }
+.test-result.ok { color: var(--ok); }
+.test-result.err { padding: 8px 12px; border-radius: var(--radius); background: var(--danger-tint); color: var(--danger); }
+.test-result.info { color: var(--ink-2); }
+
+#share-id-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--ink-2); }
+#share-id-row button.btn { min-height: 32px; padding: 0 12px; font-size: 13px; }
+
+code {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .92em;
+  overflow-wrap: anywhere;
+}
+
+/* ADVANCED */
+details.advanced { padding: 14px 20px; }
+details.advanced[open] { padding-bottom: 20px; }
+details.advanced summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+details.advanced summary::-webkit-details-marker { display: none; }
+details.advanced summary::before {
+  content: "";
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin: 0 6px 0 2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur) var(--ease);
+}
+details.advanced[open] summary::before { transform: rotate(45deg); }
+details.advanced .adv-body { padding-top: 14px; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+
+/* Cards inside Advanced sit flat in the outer card. */
+#advanced-settings .adv-group { padding-top: 6px; }
+#advanced-settings .adv-group .source-card,
+#advanced-settings .adv-group details.advanced { background: transparent; box-shadow: none; }
+#advanced-settings .adv-group .section-title:first-child { margin-top: 14px; }
+
+.disclaimer { margin-top: 32px; font-size: 12px; line-height: 1.5; color: var(--ink-3); text-align: center; }
+
+/* WINDOWS HIGH CONTRAST: switches, filled buttons and the connected dot keep a system-color edge. */
+@media (forced-colors: active) {
+  label.toggle input[type="checkbox"] { border: 1px solid ButtonText; }
+  label.toggle input[type="checkbox"]::before { background: ButtonText; }
+  label.toggle input[type="checkbox"]:checked { background: Highlight; }
+  label.toggle input[type="checkbox"]:checked::before { background: HighlightText; }
+  button.btn { border: 1px solid ButtonText; }
+  .source-dot { forced-color-adjust: none; background: GrayText; }
+  .source-card.connected .source-dot, .source-card.always .source-dot { background: Highlight; }
+}

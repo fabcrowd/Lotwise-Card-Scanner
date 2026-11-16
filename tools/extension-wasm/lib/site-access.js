@@ -104,12 +104,8 @@ export async function requestSites(permissions, origins) {
 }
 
 /** Why the popup asks: what the scan could not read on this site, and what reading it gives. */
-export function accessOfferText({ site, galleryUnread = 0 }) {
-  const where = site ? ` on ${site}` : " on sites you scan";
-  const gallery = galleryUnread > 0
-    ? ` and the other ${galleryUnread} photo${galleryUnread === 1 ? "" : "s"} of this listing`
-    : "";
-  return `Card Scanner read a screenshot here. Allow it to read the original photos${where}${gallery}: small cards come out sharper, so more of them are named right.`;
+export function accessOfferText({ site }) {
+  return `Let Sweep read the original photos on ${site || "the sites you scan"}? It finds more cards.`;
 }
 
 /** Whether this site's offer was put off: by "Not now" on this site, or on any site before per-site answers. */

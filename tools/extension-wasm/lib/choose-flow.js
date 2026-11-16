@@ -2,11 +2,10 @@
 // CHOOSE (below the bar: the user picks from the closest cards, best one preselected, no name asserted, no price).
 // Card backs are neither: they are not cards to identify.
 
-import { isIdentified, needsPrinting } from "./card-display.js";
+import { isIdentified, needsPrinting, splitByRecognition } from "./card-display.js";
 import { escHtml, thumbUrl } from "./card-picker.js";
 import { choiceName } from "./set-choice.js";
 import { CLEAR_GAP } from "./fusion.js";
-import { leftOutLabel } from "./skip.js";
 
 /** 'confirmed' | 'choose' | 'back' | 'skipped'. A card the user just picked and is still pricing is already confirmed. */
 export function chooseState(card) {
@@ -103,16 +102,38 @@ export function bulkPairs(cards) {
 /**
  * The kept pairs whose confirm is saved as the user's correction. A pair the scanner already preselected as decisive
  * is only confirmed for this session; a "Check" pair counts as the user's own answer only when they ticked it
- * themselves, not through Tick all. Bulk-ticking never writes a correction the user did not decide.
+ * themselves. A tick the user did not make never writes a correction.
  */
 export function bulkRememberedPairs(kept, explicit) {
   return kept.filter((pair) => !pair.decisive && explicit.has(pair.idx));
 }
 
 export const chooseHeading = (count) => `To confirm (${count})`;
+export const pricedHeading = (count) => `Priced (${count})`;
+export const pickPrintingHeading = (count) => `Pick a version (${count})`;
+/** The bulk button: n is exactly the cards the review panel lists (bulkPairs). */
+export const reviewLabel = (count) => `Review these ${count} together`;
+export const ALL_PRICED_TEXT = "All cards priced";
+
+/** A priced row has a figure to show: no price error, and a market price or at least one priced printing. */
+const hasPriceFigure = (card) => !card.priceError
+  && (card.market_price != null || Object.keys(card.price_grid?.variants || {}).length > 0);
+
+/**
+ * The lot is done: over the cards the list shows as rows (hidden, unrecognised and skipped entries are not rows),
+ * at least one is priced and none waits for a choice, a printing, a price still loading, or a price that failed.
+ * `isFlagged(card, idx)` marks a card still flagged "High value, double-check": it blocks the done state until confirmed.
+ */
+export function allPriced(cards, isFlagged = () => false) {
+  const rows = splitByRecognition(cards).shown;
+  if (!rows.length) return false;
+  return rows.every((idx) => {
+    const card = cards[idx];
+    return chooseState(card) === "confirmed" && card.pricing !== true && !needsPrinting(card) && hasPriceFigure(card) && !isFlagged(card, idx);
+  });
+}
+export const doubleCheckText = (count) => `${count} to double-check`;
 export const confirmLabel = (count) => `Confirm ${count}`;
-/** The bulk panel's all-or-none toggle: it offers to tick everything until everything is ticked. */
-export const tickAllLabel = (allTicked) => (allTicked ? "Untick all" : "Tick all");
 
 /** The candidate buttons for one card to choose (already-escaped HTML): the first is preselected as the best match. */
 export function renderCandidateCards(card, idx) {
@@ -133,14 +154,14 @@ export function renderChooseGroup(rowsHtml, count, expanded, reviewCount = 0) {
   return `<section class="choose-group" aria-labelledby="choose-heading">
     <div class="choose-head">
       <button type="button" class="choose-toggle" id="choose-heading" data-choose-toggle aria-expanded="${expanded}" aria-controls="choose-list">${escHtml(chooseHeading(count))}</button>
-      ${reviewCount ? `<button type="button" class="choose-review" data-review-all>Review all ${reviewCount}</button>` : ""}
+      ${reviewCount ? `<button type="button" class="choose-review" data-review-all>${escHtml(reviewLabel(reviewCount))}</button>` : ""}
     </div>
     <div id="choose-list" class="choose-list"${expanded ? "" : " hidden"}>${rowsHtml}</div>
   </section>`;
 }
 
-export const skippedHeading = (count, removed = 0) => `${leftOutLabel(count, removed)} (${count})`;
-export const SKIP_LABEL = "Can't price this";
+export const skippedHeading = (count) => `Left out (${count})`;
+export const SKIP_LABEL = "Skip this card";
 export const SKIP_NAME = "I can't price it (not English, not a card)";
 
 /** The one-tap "Can't price this" button of a Choose row; highlighted when the crop looks like one skipped before. */
@@ -149,10 +170,10 @@ export function renderSkipButton(idx, highlighted = false) {
 }
 
 /** The collapsed "Skipped (N)" group at the bottom of the list; rows are already-escaped HTML. */
-export function renderSkippedGroup(rowsHtml, count, expanded, removed = 0) {
+export function renderSkippedGroup(rowsHtml, count, expanded) {
   if (!count) return "";
   return `<div class="skipped-group">
-    <button type="button" class="unrec-toggle skipped-toggle" id="skipped-heading" data-skipped-toggle aria-expanded="${expanded}" aria-controls="skipped-list">${escHtml(skippedHeading(count, removed))}</button>
+    <button type="button" class="unrec-toggle skipped-toggle" id="skipped-heading" data-skipped-toggle aria-expanded="${expanded}" aria-controls="skipped-list">${escHtml(skippedHeading(count))}</button>
     <div id="skipped-list" class="unrec-list"${expanded ? "" : " hidden"}>${rowsHtml}</div>
   </div>`;
 }
@@ -161,8 +182,8 @@ export function renderSkippedGroup(rowsHtml, count, expanded, removed = 0) {
 export function renderSkippedRow(idx, crop, removed = false, wasSkipped = false) {
   return `<div class="card-row unrec-row skipped-row" data-idx="${idx}">
     <div class="unrec-line">
-      ${crop ? `<img class="unrec-thumb" src="${escHtml(crop)}" alt="" width="34" height="48">` : ""}
-      <span class="unrec-name">Card ${idx + 1}: ${removed ? "removed" : "skipped"}</span>
+      ${crop ? `<button type="button" class="unrec-thumb" data-show-on-page data-idx="${idx}" title="Show this card on the page" aria-label="Show card ${idx + 1} on the page"><img src="${escHtml(crop)}" alt="" width="34" height="48"></button>` : ""}
+      <span class="unrec-name">Card ${idx + 1}: ${removed ? "Removed." : "Skipped."}</span>
       <button type="button" class="link-btn" data-put-back data-idx="${idx}" aria-label="${escHtml(`Put back card ${idx + 1}: ${removed ? (wasSkipped ? "return it to the skipped cards" : "return it to the lot") : "return it to the cards to confirm"}`)}">Put back</button>
     </div>
   </div>`;

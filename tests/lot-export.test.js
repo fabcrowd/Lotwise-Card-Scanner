@@ -242,10 +242,10 @@ test('the file name uses the local date, zero padded', () => {
 test('button labels name the count, the tooltip names what is left out, and nothing shows at 0', () => {
   assert.equal(lotExportLabels(0, 5), null);
   const l = lotExportLabels(3, 2);
-  assert.equal(l.copy, 'Copy 3 confirmed');
+  assert.equal(l.copy, 'Copy list (3)');
   assert.equal(l.csv, 'Download CSV (3)');
   assert.equal(l.tip, '2 more cards still need confirming and are not included');
-  assert.equal(l.copied, 'Copied 3 cards');
+  assert.equal(l.copied, 'Copied 3 cards · 2 unconfirmed left out');
   assert.equal(lotExportLabels(1, 1).tip, '1 more card still needs confirming and is not included');
   assert.equal(lotExportLabels(1, 0).copied, 'Copied 1 card');
   assert.match(CONDITION_TIP, /^Prices are Near Mint market prices unless your price-service key provides other conditions$/);

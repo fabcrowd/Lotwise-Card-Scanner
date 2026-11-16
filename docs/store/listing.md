@@ -2,7 +2,7 @@
 
 ## Name
 
-Card Scanner & Price Checker for Pokémon TCG
+Sweep: Card Scanner & Price Checker
 
 ## Short description (max 132 characters)
 
@@ -12,7 +12,7 @@ Find Pokémon cards in photos on the page you are viewing and see their prices. 
 
 ## Full description
 
-Card Scanner & Price Checker for Pokémon TCG finds Pokémon cards in the photos on a web page and shows what each one is and what it sells for.
+Sweep finds Pokémon cards in the photos on a web page and shows what each one is and what it sells for.
 
 How to use it
 1. Open a page with card photos, such as a listing, a lot, or a binder page.

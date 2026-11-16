@@ -43,10 +43,9 @@ export function putBackCard(card) {
 
 export const removedCount = (cards) => (cards || []).filter((card) => card?.removed === true).length;
 
-/** What the left-out cards are called: "Skipped", "Removed", or "Skipped or removed" when both are in the lot. */
-export function leftOutLabel(skipped, removed) {
-  if (!removed) return "Skipped";
-  return removed >= skipped ? "Removed" : "Skipped or removed";
+/** What the left-out cards are called, skipped or removed: "Left out", as the bottom group says. */
+export function leftOutLabel() {
+  return "Left out";
 }
 
 export const skippedCount = (cards) => (cards || []).filter((card) => card?.skipped === true).length;

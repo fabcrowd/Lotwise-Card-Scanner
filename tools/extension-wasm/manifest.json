@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Pokémon Card Scanner",
+  "name": "Sweep",
   "version": "3.1.0",
   "minimum_chrome_version": "116",
   "description": "Scan Pokémon cards on the page you are viewing. Card recognition runs on your device; prices come from public APIs.",

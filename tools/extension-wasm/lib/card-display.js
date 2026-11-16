@@ -104,8 +104,8 @@ export function printingNote(grid) {
   const names = listPrintings(grid);
   if (names.length <= 1) return null;
   const range = marketRange(grid);
-  if (!range || range.low === range.high) return `${names.length} variants`;
-  return `${names.length} variants · ${formatUsd(range.low)}–${formatUsd(range.high)}`;
+  if (!range || range.low === range.high) return `${names.length} versions`;
+  return `${names.length} versions · ${formatUsd(range.low)}–${formatUsd(range.high)}`;
 }
 
 export function ageLabel(updatedAt, now = Date.now()) {
@@ -353,13 +353,39 @@ export function scanStatus(cards) {
     if (needsPrinting(card)) printing += 1;
   }
   const parts = [
-    counts.identified ? `${counts.identified} identified${printing ? ` (${printing} to pick printing)` : ''}` : '',
+    counts.identified ? `${counts.identified} identified${printing ? ` (${printing} to pick a version)` : ''}` : '',
     counts.pick ? `${counts.pick} ${plural(counts.pick, 'needs', 'need')} your pick` : '',
     counts.unrecognised ? `${counts.unrecognised} not recognised` : '',
     counts.skipped ? `${counts.skipped} skipped` : '',
     removed ? `${removed} removed` : '',
   ].filter(Boolean);
   return `Found ${list.length} ${plural(list.length, 'card', 'cards')}: ${parts.join(', ')}`;
+}
+
+/**
+ * The counts every part of the journey agrees on: the lot card, the group headings, the review button, the toast and
+ * the scan summary. `found` is the cards the lot shows (hidden and removed entries are not); `toConfirm` is the cards
+ * to choose (the "To confirm" group); `toPick` is sure names with a version still open (the "Pick a version" group);
+ * `needYou` is the two together.
+ */
+export function lotCounts(cards) {
+  const out = { found: 0, toConfirm: 0, toPick: 0, needYou: 0 };
+  for (const card of cards || []) {
+    if (card?.notCard === true || card?.removed === true) continue;
+    out.found += 1;
+    const kind = classifyCard(card);
+    if (kind === 'pick' && card?.pricing !== true) out.toConfirm += 1;
+    else if (kind === 'identified' && needsPrinting(card)) out.toPick += 1;
+  }
+  out.needYou = out.toConfirm + out.toPick;
+  return out;
+}
+
+/** The short scan summary: "Found 9 cards · 4 need you". Cards to pick, and sure names with a version still open, need the user. */
+export function scanSummary(cards) {
+  const { found, needYou } = lotCounts(cards);
+  if (found === 0) return '';
+  return `Found ${found} ${plural(found, 'card', 'cards')}${needYou ? ` · ${needYou} ${plural(needYou, 'needs', 'need')} you` : ''}`;
 }
 
 // A $0, negative or NaN figure is a gap in the data, not a price.
@@ -465,11 +491,11 @@ export function lotEstimate(cards, choiceFor, enabledConditions = ['NM'], now = 
 /** The lot strip's note beside "Confirmed value": confirmed cards, those with no price data at all, and stale prices; the tooltip only when some lack a price. */
 export function sureNote(lot) {
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-  const parts = [String(lot.identified)];
+  const parts = [`${lot.identified} ${lot.identified === 1 ? 'card' : 'cards'}`];
   if (lot.noPrice) parts.push(`${lot.noPrice} without price`);
   if (lot.toCheck) parts.push(`${plural(lot.toCheck, 'old price', 'old prices')} to check`);
   const title = lot.noPrice ? `${lot.noPrice} confirmed ${lot.noPrice === 1 ? 'card has' : 'cards have'} no price data` : '';
-  return { text: `(${parts.join(', ')})`, title };
+  return { text: `· ${parts.join(' · ')}`, title };
 }
 
 /** The lot's value as "$12.50" or "$14.00–$30.00", with the "2 of 3 cards identified" detail; value is null while no card is identified. */
@@ -495,11 +521,11 @@ export function modelFileLabel(name) {
 export function explainScanError(message) {
   const raw = String(message || '');
   if (/receiving end does not exist|could not establish connection/i.test(raw)) {
-    return 'Reload the Card Scanner extension, then try again.';
+    return 'Reload Sweep at chrome://extensions, then press Scan Page.';
   }
   // The page can be read only after the user clicks the toolbar icon on it, or if site access was allowed.
   if (/cannot access (contents|a chrome)|must request permission|activetab|<all_urls>/i.test(raw)) {
-    return 'Card Scanner cannot read this tab. Click the Card Scanner icon while you are on the page you want to scan.';
+    return 'Sweep cannot read this tab. Click the Sweep icon while you are on the page you want to scan.';
   }
   if (/models not loaded/i.test(raw)) {
     return 'The card models are still downloading.';
@@ -511,6 +537,15 @@ export function explainScanError(message) {
 export const SMALL_READ_PX = 150;
 export function readFromSmallCrop(card) {
   return card?.readHeight > 0 && card.readHeight < SMALL_READ_PX;
+}
+
+/**
+ * A priced row collapses to one line when nothing on it asks the user: no high-value check waiting for Confirm, no open
+ * change, search or picker, no price range (a version still to pick), no version suggested but not confirmed, and no
+ * "same name found several times" warning asking the user to check the card.
+ */
+export function isSettledRow({ inPriced, doubleCheck, changing, searchOpen, priceIsRange, versionSuggestedUnconfirmed, repeatedName } = {}) {
+  return inPriced === true && !doubleCheck && !changing && !searchOpen && !priceIsRange && !versionSuggestedUnconfirmed && !repeatedName;
 }
 
 /** Whole days since the grid's own date when the grid is stale, else null. */

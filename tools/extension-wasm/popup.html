@@ -2,682 +2,60 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Card Scanner</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      width: 100%;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      background: #08090d;
-      color: #dde1ee;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 13px;
-      overflow: hidden;
-      user-select: none;
-    }
-    body > * { flex-shrink: 0; }
-    .results { user-select: text; }
-
-    /* HEADER */
-    .header {
-      display: flex;
-      align-items: center;
-      padding: 0 16px;
-      height: 44px;
-      background: #0e1018;
-      border-bottom: 1px solid #1e2130;
-    }
-    .logo {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.6px;
-      text-transform: uppercase;
-      color: #c5cadc;
-    }
-    .header-actions {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    #open-options {
-      background: transparent;
-      border: 1px solid #1e2130;
-      color: #50566e;
-      font-size: 11px;
-      padding: 4px 10px;
-      border-radius: 12px;
-      cursor: pointer;
-    }
-    #open-options:hover { color: #c5cadc; border-color: #2d3352; }
-
-    .hint-dismiss {
-      background: transparent;
-      border: none;
-      color: #50566e;
-      cursor: pointer;
-      font-size: 14px;
-      padding: 0 4px;
-      line-height: 1;
-    }
-    .hint-dismiss:hover { color: #c5cadc; }
-
-    /* EXAM PROMPT: one light question after a scan of a photo the user is helping to check */
-    .exam-strip {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 16px;
-      background: #0e1018;
-      border-bottom: 1px solid #1a1d2a;
-      font-size: 12px;
-      color: #c5cadc;
-    }
-    .exam-strip[hidden] { display: none; }
-    .exam-strip .exam-text { flex: 1; min-width: 0; }
-    .exam-yes {
-      background: transparent;
-      border: 1px solid #6366f1;
-      border-radius: 6px;
-      color: #c7c9ff;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 700;
-      padding: 4px 10px;
-    }
-    .exam-yes:hover { background: #6366f122; }
-    .exam-yes:focus-visible, .exam-strip .hint-dismiss:focus-visible { outline: 2px solid #8b8ff7; outline-offset: 2px; }
-
-    /* ACTION BAR */
-    .action-bar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 14px 16px 8px;
-      background: #0b0c12;
-    }
-    #btn-scan {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0 22px;
-      height: 42px;
-      border-radius: 8px;
-      border: none;
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      cursor: pointer;
-      color: #fff;
-      background: linear-gradient(135deg, #5b5ef4 0%, #8b5cf6 100%);
-      box-shadow: 0 2px 14px #5b5ef430;
-      transition: box-shadow 0.2s, opacity 0.15s, transform 0.1s;
-      flex-shrink: 0;
-    }
-    #btn-scan:hover  { box-shadow: 0 2px 20px #5b5ef450; }
-    #btn-scan:active { transform: scale(0.97); }
-    #btn-scan[disabled] { opacity: 0.5; cursor: wait; }
-    #btn-scan.scanning { animation: scan-glow 1.4s ease-in-out infinite; }
-    @keyframes scan-glow { 0%,100% { box-shadow: 0 0 0 0 #6366f166; } 50% { box-shadow: 0 0 0 10px #6366f100; } }
-
-    #btn-clear {
-      padding: 0 14px;
-      height: 42px;
-      border-radius: 8px;
-      border: 1px solid #1e2130;
-      background: transparent;
-      color: #50566e;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.8px;
-      text-transform: uppercase;
-      cursor: pointer;
-      flex-shrink: 0;
-    }
-    #btn-clear:hover { color: #c5cadc; border-color: #2d3352; }
-
-    .stat-block { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-    .stat-block .val { font-size: 15px; font-weight: 700; line-height: 1; color: #8b92ab; }
-    .stat-block .val.green { color: #10b981; }
-    .picker-sub { font-size: 11px; color: #8b92ab; margin: 0 0 4px; }
-    .stat-block .lbl { font-size: 9px; font-weight: 600; letter-spacing: 0.7px; text-transform: uppercase; color: #8b92ab; }
-
-    .era-select {
-      font-family: inherit;
-      font-size: 11px;
-      font-weight: 700;
-      height: 42px;
-      min-width: 0;
-      max-width: 96px;
-      padding: 0 6px;
-      border-radius: 8px;
-      border: 1px solid #1e2130;
-      background: #0e1018;
-      color: #c5cadc;
-      cursor: pointer;
-    }
-    .era-select:disabled { opacity: 0.5; cursor: wait; }
-
-    /* OVERLAY TOGGLE — "Show boxes on page" hides the page overlay, keeps the results */
-    .overlay-row { display: flex; align-items: center; padding: 0 16px 8px; background: #0b0c12; }
-    .overlay-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #8b92ab; cursor: pointer; }
-    .overlay-toggle input { width: 14px; height: 14px; margin: 0; accent-color: #6366f1; cursor: pointer; }
-    .overlay-toggle input:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-    .overlay-row .draw-btn { margin-left: auto; align-self: center; font-size: 11px; font-weight: 600; color: #a5b4fc; }
-
-    /* SITE ACCESS NOTICE — offered after a screenshot scan that lacked site access */
-    .access-notice {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px 10px;
-      padding: 8px 16px;
-      background: #0e1018;
-      border-top: 1px solid #1a1d2a;
-      font-size: 11px;
-      color: #8b92ab;
-    }
-    .access-notice[hidden] { display: none; }
-    .access-notice .access-text { flex: 1 1 100%; margin: 0; }
-    .access-notice .access-text:empty { display: none; }
-    .access-notice .access-btn {
-      background: #6366f1;
-      border: none;
-      border-radius: 6px;
-      color: #fff;
-      cursor: pointer;
-      font: inherit;
-      font-weight: 700;
-      padding: 4px 10px;
-    }
-    .access-notice .access-btn:hover { background: #7578f3; }
-    .access-notice .access-skip { color: #8b92ab; }
-    .access-notice button:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
-    .access-notice .access-btn:focus-visible { outline-color: #c5cadc; }
-
-    /* LOT TOTALS — sure, guesses (~), together */
-    .lot-totals { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 16px; border-top: 1px solid #1a1d2a; font-size: 11px; color: #8b92ab; }
-    .lot-totals[hidden] { display: none; }
-    .lot-totals b { color: #c5cadc; }
-    .lot-totals .lt-guess b { color: #e9d6a8; font-style: italic; }
-    .lot-totals .lt-lbl { text-transform: uppercase; letter-spacing: 0.6px; font-size: 9px; font-weight: 700; }
-    .lot-totals .lt-n { color: #5d6480; }
-    .lot-totals .lt-cond, .stat-block .cond-tag { font-size: 9px; font-weight: 700; letter-spacing: 0.6px; color: #8b92ab; border: 1px solid #2a2f45; border-radius: 4px; padding: 0 4px; margin-left: 2px; cursor: help; }
-    .stat-block .cond-tag[hidden] { display: none; }
-    .lot-totals .lt-actions { display: flex; gap: 6px; margin-left: auto; }
-    .lot-totals .lt-btn { font-family: inherit; font-size: 11px; font-weight: 700; height: 24px; padding: 0 8px; border-radius: 8px; border: 1px solid #2a2f45; background: #0e1018; color: #c5cadc; cursor: pointer; }
-    .lot-totals .lt-unconfirmed { font-size: 11px; color: #8b92ab; }
-    .lot-totals .lt-btn:hover { border-color: #6366f1; }
-    .lot-totals .lt-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-    .lot-edition { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 16px; border-top: 1px solid #1a1d2a; font-size: 11px; color: #8b92ab; }
-    .lot-edition[hidden] { display: none; }
-    .lot-edition label { text-transform: uppercase; letter-spacing: 0.6px; font-size: 9px; font-weight: 700; }
-    .lot-edition select { font-family: inherit; font-size: 11px; font-weight: 700; height: 26px; padding: 0 6px; border-radius: 8px; border: 1px solid #1e2130; background: #0e1018; color: #c5cadc; cursor: pointer; }
-    .lot-edition select:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-
-    /* CHOOSE ROWS — a card below the bar: pick from the closest cards, no name and no price until picked */
-    .value-chip { font-size: 9px; color: #fcd34d; border: 1px solid #7a5a12; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
-    .memory-chip { font-size: 9px; color: #86efac; border: 1px solid #1f5d3a; border-radius: 4px; padding: 0 4px; margin-left: 4px; white-space: nowrap; }
-    .why-row { padding: 0 12px 2px 20px; }
-    .why-btn { font-size: 11px; }
-    .why-pop { margin: 2px 12px 6px 20px; padding: 6px 8px; font-size: 11px; line-height: 1.4; color: #c5cadc; background: #171a28; border: 1px solid #2a2e40; border-radius: 6px; }
-    .small-chip { font-size: 9px; color: #8b92ab; border: 1px solid #2a2e40; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
-    .card-row.flash { outline: 2px solid #6366f1; outline-offset: -2px; transition: outline-color 0.4s; }
-
-    /* MESSAGE BAR */
-    .msg-bar {
-      padding: 8px 16px;
-      font-size: 11px;
-      color: #8b92ab;
-      background: #0b0c12;
-      border-top: 1px solid #1a1d2a;
-      min-height: 30px;
-      display: flex;
-      align-items: center;
-    }
-    .msg-bar.error { color: #ef4444; }
-    .msg-bar.hidden { display: none; }
-
-    /* RESULTS PANEL */
-    .results {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow-y: auto;
-      background: #07080c;
-      border-top: 1px solid #1a1d2a;
-    }
-    /* Rows grow with a widened or maximized scanner window. */
-    @media (min-width: 640px)  { .results > * { zoom: 1.25; } }
-    @media (min-width: 900px)  { .results > * { zoom: 1.5; } }
-    @media (min-width: 1200px) { .results > * { zoom: 1.8; } }
-    @media (min-width: 1600px) { .results > * { zoom: 2.1; } }
-    .results::-webkit-scrollbar { width: 3px; }
-    .results::-webkit-scrollbar-thumb { background: #1e2130; border-radius: 2px; }
-
-    .empty-hint {
-      padding: 24px 16px;
-      font-size: 11px;
-      color: #8b92ab;
-      font-style: italic;
-      text-align: center;
-      line-height: 1.6;
-    }
-
-    .card-row {
-      padding: 10px 16px;
-      border-bottom: 1px solid #0e1018;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .card-row:last-child { border-bottom: none; }
-    .card-head {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .conf-stripe {
-      width: 3px;
-      align-self: stretch;
-      border-radius: 2px;
-      flex-shrink: 0;
-    }
-    .conf-stripe.high   { background: #10b981; }
-    .conf-stripe.medium { background: #f59e0b; }
-    .conf-stripe.low, .conf-stripe.abstain { background: #2d3352; }
-
-    .card-meta { flex: 1; min-width: 0; }
-    .card-name { font-size: 13px; font-weight: 700; color: #c5cadc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .card-price { font-size: 14px; font-weight: 700; color: #10b981; white-space: nowrap; text-align: right; flex-shrink: 0; }
-    .repeat-mark { color: #f59e0b; margin-left: 4px; cursor: help; }
-    .card-sub { font-size: 11px; color: #3d4460; margin-top: 2px; }
-    .set-chip {
-      display: inline-block;
-      padding: 1px 5px;
-      border-radius: 3px;
-      background: #6366f118;
-      color: #6366f1;
-      font-weight: 700;
-      font-size: 10px;
-      letter-spacing: 0.3px;
-      margin-right: 4px;
-    }
-    .card-number {
-      display: inline-block;
-      font-weight: 700;
-      color: #8b92ab;
-      margin-left: 2px;
-    }
-    .no-price { font-size: 11px; color: #8b92ab; text-align: center; padding: 4px; }
-
-    /* GRADED GRID */
-    .graded-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      margin-left: 13px;
-      margin-top: 4px;
-    }
-    .graded-cell {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 10px;
-      padding: 3px 8px;
-      border-radius: 10px;
-      background: #0b0c12;
-      border: 1px solid #0e1018;
-    }
-    .graded-cell .g-lbl { color: #8b92ab; font-weight: 700; }
-    .graded-cell .g-val { color: #10b981; font-weight: 700; }
-
-    .variant-select-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-left: 13px;
-      flex-wrap: wrap;
-    }
-    .variant-select-row .lbl {
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.6px;
-      text-transform: uppercase;
-      color: #8b92ab;
-    }
-    .variant-select-row .variant-note { font-size: 11px; color: #fcd34d; }
-    .photo-chip { display:inline-block; margin-left:6px; font-size:10px; color:#475569; background:#f1f5f9; border-radius:8px; padding:0 6px; }
-    .variant-select-row .lbl.pick-printing {
-      color: #1d4ed8;
-      background: #e0e7ff;
-      border-radius: 8px;
-      padding: 1px 6px;
-    }
-
-    /* CARD PICKER */
-    .link-btn {
-      background: none;
-      border: none;
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      padding: 4px 2px;
-      font: inherit;
-      font-size: 10px;
-      color: #8b92ab;
-      text-decoration: underline;
-      cursor: pointer;
-      flex-shrink: 0;
-      align-self: flex-start;
-    }
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      padding: 0;
-      overflow: hidden;
-      clip: rect(0 0 0 0);
-      white-space: nowrap;
-      border: 0;
-    }
-    .link-btn:hover { color: #c5cadc; }
-    .guess-mark { background: none; border: 1px solid #3b4160; border-radius: 50%; color: #8a90a8; cursor: pointer; font-size: 9px; font-weight: 700; height: 14px; width: 14px; line-height: 12px; padding: 0; margin-left: 4px; vertical-align: 1px; }
-    .guess-mark:hover { color: #c5cadc; border-color: #6366f1; }
-    .guess-mark:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-    .unrec { border-top: 1px solid #0e1018; }
-    .unrec-toggle {
-      display: flex;
-      align-items: center;
-      width: 100%;
-      min-height: 36px;
-      padding: 8px 16px;
-      background: #0b0c12;
-      border: none;
-      border-bottom: 1px solid #0e1018;
-      font: inherit;
-      font-size: 11px;
-      font-weight: 600;
-      color: #c5cadc;
-      text-align: left;
-      cursor: pointer;
-    }
-    .unrec-toggle:hover { background: #10121c; }
-    .unrec-toggle:focus-visible { outline: 2px solid #6366f1; outline-offset: -2px; }
-    .unrec-list[hidden] { display: none; }
-    .unrec-row { padding: 6px 16px; gap: 4px; }
-    .unrec-line { display: flex; align-items: center; gap: 10px; min-height: 28px; }
-    .unrec-thumb { display: block; width: 34px; height: 48px; border-radius: 3px; background: #14172a; object-fit: cover; flex-shrink: 0; }
-    .unrec-name { flex: 1; min-width: 0; font-size: 11px; color: #8b92ab; }
-    .unrec-line .link-btn { align-self: center; }
-    .picker { display: flex; flex-direction: column; gap: 6px; margin-left: 13px; }
-    .picker-title { font-size: 10px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: #f59e0b; }
-    .pick-row { display: flex; flex-wrap: wrap; gap: 6px; }
-    .pick-card {
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 2px;
-      width: 72px;
-      padding: 4px;
-      background: #0b0c12;
-      border: 1px solid #1e2130;
-      border-radius: 6px;
-      color: #c5cadc;
-      font: inherit;
-      text-align: left;
-      cursor: pointer;
-    }
-    .pick-card:hover { border-color: #6366f1; }
-    .pick-card-guess { border-color: #f59e0b; }
-    .pick-guess { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #f59e0b; text-align: center; }
-    .pick-card img, .pick-blank { display: block; width: 62px; height: 87px; margin: 0 auto; border-radius: 3px; background: #14172a; object-fit: cover; }
-    /* A neutral skeleton behind candidate art, so an empty box reads as "loading", not broken. */
-    .pick-card img, .scanned-card img, .pick-blank { background: #1b2036; border: 1px solid #262c47; box-sizing: border-box; }
-    .pick-name, .pick-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .pick-name { font-size: 10px; font-weight: 700; }
-    .pick-sub { font-size: 9px; color: #8b92ab; }
-    /* IMAGE PICKERS: printings and versions are strips of card art, finishes are chips that carry their price. */
-    .strip-row { align-items: flex-start; }
-    .strip-row .lbl { flex: 0 0 auto; }
-    .strip { display: flex; gap: 6px; flex: 1 1 100%; min-width: 0; max-width: 100%; overflow-x: auto; scroll-snap-type: x proximity; padding: 3px 3px 6px; margin: -3px; scrollbar-width: thin; scrollbar-color: #262c47 transparent; }
-    .strip-tile {
-      flex: 0 0 76px; scroll-snap-align: start; display: flex; flex-direction: column; align-items: stretch; gap: 2px;
-      padding: 4px; background: #0b0c12; border: 1px solid #1e2130; border-radius: 6px; color: #c5cadc; font: inherit; text-align: left; cursor: pointer;
-    }
-    .strip-tile:hover { border-color: #6366f1; }
-    .strip-tile[aria-disabled="true"] { cursor: wait; opacity: 0.6; }
-    .strip-checked { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; background: #12152a; }
-    .strip-suggested { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b; }
-    .strip-art { position: relative; display: block; width: 62px; height: 87px; margin: 0 auto; border-radius: 3px; background: #1b2036; border: 1px solid #262c47; box-sizing: border-box; overflow: hidden; }
-    .strip-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
-    .strip-fallback { display: none; position: absolute; inset: 0; padding: 4px; font-size: 9px; font-weight: 700; line-height: 1.25; color: #c5cadc; overflow: hidden; word-break: break-word; }
-    .strip-art.no-art .strip-fallback { display: block; }
-    .strip-tag { display: block; }
-    .strip-more { flex: 0 0 56px; scroll-snap-align: start; align-self: stretch; background: #0b0c12; border: 1px dashed #3b4160; border-radius: 6px; color: #c5cadc; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
-    .strip-more:hover { border-color: #6366f1; }
-    .chip-wrap { display: flex; align-items: center; gap: 4px; flex: 1 1 100%; min-width: 0; }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-    .chip {
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-width: 84px; min-height: 44px;
-      padding: 6px 12px; background: #0b0c12; border: 1px solid #1e2130; border-radius: 10px; color: #c5cadc; font: inherit; cursor: pointer;
-    }
-    .chip:hover { border-color: #6366f1; }
-    .chip-label { font-size: 11px; font-weight: 700; }
-    .chip-price { font-size: 14px; font-weight: 800; color: #10b981; }
-    .chip-checked { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; background: #12152a; }
-    .chip-suggested { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b; }
-    .strip-tile:focus-visible, .strip-more:focus-visible, .chip:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-    .picker-bar { display: flex; align-items: center; gap: 8px; }
-    .picker-input {
-      flex: 1;
-      min-width: 0;
-      padding: 5px 8px;
-      background: #0b0c12;
-      border: 1px solid #6b7290;
-      border-radius: 6px;
-      color: #c5cadc;
-      font: inherit;
-      font-size: 11px;
-    }
-    .picker-input::placeholder { color: #8b92ab; }
-    .link-btn:focus-visible, .pick-card:focus-visible, .picker-input:focus-visible, .scanned-card:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-    .scanned-card {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      width: 72px;
-      padding: 4px;
-      margin-right: 6px;
-      background: #6366f114;
-      border: 2px solid #6366f1;
-      border-radius: 6px;
-      color: #c7c9ff;
-      font: inherit;
-      cursor: pointer;
-    }
-    .scanned-card img, .scanned-card .pick-blank { display: block; width: 62px; height: 87px; border-radius: 3px; background: #14172a; object-fit: cover; }
-    .scanned-label { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
-    .card-row.asking:hover, .card-row.asking:focus-within { background: #0c0d16; }
-    .choose-group { border-bottom: 1px solid #1a1d2a; }
-    .choose-head { display: flex; align-items: center; background: #0b0c12; border-bottom: 1px solid #0e1018; }
-    .choose-toggle { flex: 1; display: flex; align-items: center; min-height: 36px; padding: 8px 16px; background: none; border: none; font: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #fcd34d; text-align: left; cursor: pointer; }
-    .choose-toggle::before { content: "\25BE"; margin-right: 6px; }
-    .choose-toggle[aria-expanded="false"]::before { content: "\25B8"; }
-    .choose-row .card-price { color: #8b92ab; font-size: 12px; font-style: italic; }
-    .choose-review { margin-right: 12px; min-height: 28px; padding: 4px 10px; font: inherit; font-size: 11px; font-weight: 700; color: #c7c9ff; background: #6366f114; border: 1px solid #6366f1; border-radius: 6px; cursor: pointer; }
-    .choose-list[hidden] { display: none; }
-    .choose-toggle:focus-visible, .choose-review:focus-visible, .choose-confirm:focus-visible, .bulk-keep:focus-visible, .bulk-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-    .choose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
-    .choose-confirm { min-height: 28px; max-width: 100%; padding: 4px 12px; font: inherit; font-size: 11px; font-weight: 700; color: #fff; background: #4f46e5; border: none; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .choose-confirm:hover { background: #5b5ef4; }
-    .skip-btn-hot { color: #fcd34d; font-weight: 700; border: 1px solid #f59e0b; border-radius: 6px; padding: 2px 8px; text-decoration: none; }
-    .skip-btn:focus-visible, .skipped-toggle:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-    .lot-totals .lt-skipped b { color: #8b92ab; }
-    /* The row's X: top-right corner, inside space reserved on the right so it never sits on the price or a button. */
-    .card-row:has(> .remove-btn) { position: relative; padding-right: 42px; }
-    .remove-btn { position: absolute; top: 6px; right: 10px; width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; font: inherit; font-size: 16px; line-height: 1; color: #6b7390; background: transparent; border: none; border-radius: 50%; cursor: pointer; }
-    .remove-btn:hover { color: #fca5a5; background: rgba(248,113,113,0.14); }
-    .remove-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
-    .pick-best-card { border-color: #f59e0b; }
-    .pick-best { font-size: 8px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #f59e0b; text-align: center; }
-    .pick-agree { display: block; font-size: 8px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: #34d399; text-align: center; }
-    .pick-choice { width: 76px; }
-    .bulk-panel { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #08090d; }
-    .bulk-panel[hidden] { display: none; }
-    .bulk-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #1a1d2a; }
-    .bulk-title { flex: 1; margin: 0; font-size: 13px; font-weight: 700; color: #e4e6f0; }
-    .bulk-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 16px; font-size: 11px; color: #8b92ab; }
-    .bulk-tick-all { min-height: 28px; padding: 3px 10px; font-size: 11px; flex-shrink: 0; }
-    .bulk-list { flex: 1; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
-    .bulk-pair { border-bottom: 1px solid #0e1018; }
-    .bulk-pair.skipped { opacity: 0.8; }
-    .bulk-label { display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer; }
-    .bulk-keep { width: 18px; height: 18px; flex-shrink: 0; accent-color: #6366f1; }
-    .bulk-img { display: block; width: 63px; height: 88px; flex-shrink: 0; border-radius: 3px; background: #14172a; object-fit: cover; }
-    .bulk-arrow { color: #5d6480; }
-    .bulk-text { min-width: 0; font-size: 11px; color: #c5cadc; }
-    .bulk-text b { font-weight: 700; }
-    .bulk-text .pick-agree { display: inline; }
-    .bulk-check { display: inline-block; padding: 0 5px; font-size: 10px; font-weight: 700; color: #f5c26b; border: 1px solid #5a4620; border-radius: 3px; }
-    .bulk-hint { flex: 1; align-self: center; font-size: 11px; color: #f5c26b; }
-    .bulk-hint[hidden] { display: none; }
-    .bulk-sub { font-size: 10px; color: #8b92ab; }
-    .bulk-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid #1a1d2a; }
-    .bulk-btn { min-height: 32px; padding: 6px 14px; font: inherit; font-size: 12px; font-weight: 700; color: #c5cadc; background: #0e1018; border: 1px solid #2a2e40; border-radius: 6px; cursor: pointer; }
-    .bulk-btn.primary { color: #fff; background: #4f46e5; border-color: #4f46e5; }
-    .bulk-btn:disabled { opacity: 0.45; cursor: default; }
-
-    /* SETUP OVERLAY */
-    .setup-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      z-index: 100;
-      background: rgba(8, 9, 13, 0.93);
-      backdrop-filter: blur(6px);
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 20px;
-      padding: 32px 28px;
-    }
-    .setup-title { font-size: 15px; font-weight: 700; color: #c5cadc; text-align: center; }
-    .setup-desc { font-size: 12px; color: #50566e; text-align: center; max-width: 380px; line-height: 1.6; }
-    #btn-setup, #btn-wiz-upgrade, #btn-wiz-access {
-      padding: 0 32px;
-      height: 40px;
-      border-radius: 8px;
-      border: none;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.8px;
-      cursor: pointer;
-      color: #fff;
-      background: linear-gradient(135deg, #5b5ef4 0%, #8b5cf6 100%);
-    }
-    #btn-setup { text-transform: uppercase; }
-    #btn-setup:disabled { opacity: 0.5; cursor: not-allowed; }
-    #setup-status { font-size: 11px; color: #50566e; min-height: 16px; }
-    .setup-bars { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 8px; }
-    .setup-file { display: flex; align-items: center; gap: 8px; }
-    .setup-file-name { font-size: 11px; color: #50566e; width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .setup-file-track { flex: 1; height: 4px; background: #1e2130; border-radius: 2px; overflow: hidden; }
-    .setup-file-fill { height: 100%; background: linear-gradient(90deg, #5b5ef4, #8b5cf6); border-radius: 2px; width: 0; transition: width 0.15s; }
-    .setup-file-pct { font-size: 10px; color: #2d3352; width: 30px; text-align: right; }
-
-    /* WIZARD STEP INDICATORS */
-    .wiz-steps {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 4px;
-    }
-    .wiz-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #2d3352;
-      transition: background 0.2s, box-shadow 0.2s;
-    }
-    .wiz-dot.active { background: #6366f1; box-shadow: 0 0 8px #6366f166; }
-    .wiz-dot.done   { background: #10b981; }
-    .wiz-line { width: 16px; height: 2px; background: #1e2130; }
-    .wiz-line.done { background: #10b981; }
-
-    .wiz-bullets {
-      list-style: none;
-      padding: 0;
-      margin: 10px 0;
-      font-size: 12px;
-      color: #c5cadc;
-      line-height: 1.6;
-    }
-    .wiz-bullets li {
-      padding: 2px 0;
-      display: flex;
-      gap: 8px;
-      align-items: baseline;
-    }
-    .wiz-bullets li::before { content: "✓"; color: #10b981; font-weight: 700; }
-    .wiz-section { display: none; flex-direction: column; align-items: center; gap: 14px; max-width: 400px; text-align: center; }
-    .wiz-section.active { display: flex; }
-    .wiz-row { display: flex; gap: 10px; align-items: center; }
-    .wiz-skip {
-      background: transparent;
-      border: none;
-      color: #50566e;
-      font-size: 11px;
-      cursor: pointer;
-      padding: 4px 8px;
-      text-decoration: underline;
-    }
-    .wiz-skip:hover { color: #c5cadc; }
-  </style>
+  <meta name="color-scheme" content="light dark" />
+  <title>Sweep</title>
+  <link rel="stylesheet" href="ui/tokens.css" />
+  <link rel="stylesheet" href="ui/popup.css" />
 </head>
 <body>
   <div class="header">
     <div class="logo">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-        <circle cx="10" cy="10" r="9" stroke="#6366f1" stroke-width="1.2"/>
-        <line x1="1" y1="10" x2="19" y2="10" stroke="#6366f1" stroke-width="1.2"/>
-        <circle cx="10" cy="10" r="3" fill="#13151f" stroke="#6366f1" stroke-width="1.2"/>
+      <svg class="logo-mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <g class="lm-bracket" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 11V7a3 3 0 0 1 3-3h4"/><path d="M21 4h4a3 3 0 0 1 3 3v4"/><path d="M28 21v4a3 3 0 0 1-3 3h-4"/><path d="M11 28H7a3 3 0 0 1-3-3v-4"/>
+        </g>
+        <g transform="rotate(-8 16 16)">
+          <rect class="lm-card" x="10.5" y="7.5" width="11" height="17" rx="2.2"/>
+          <rect x="12.4" y="9.6" width="7.2" height="6.2" rx="1" fill="#fff" fill-opacity=".92"/>
+          <path d="M12.8 18.6h6.4M12.8 21h4" stroke="#fff" stroke-opacity=".75" stroke-width="1.3" stroke-linecap="round"/>
+        </g>
       </svg>
-      Card Scanner
+      Sweep
     </div>
     <div class="header-actions">
-      <button id="open-options" title="Settings">⚙</button>
+      <label class="overlay-toggle" title="Show or hide the boxes on the page"><input type="checkbox" id="overlay-shown" checked> Show boxes on page</label>
+      <button type="button" class="link-btn draw-btn" id="btn-draw" title="Add card: missed one? Drag a box around it on the page to read it."><svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg><span class="draw-label">Add card</span></button>
+      <div class="size-ctl" id="size-ctl" title="Picture size">
+        <svg class="size-icon" width="12" height="16" viewBox="0 0 12 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="13" rx="1.8"/></svg>
+        <input type="range" id="card-size" min="0.8" max="1.6" step="0.05" value="1" aria-label="Card size">
+        <svg class="size-icon" width="18" height="24" viewBox="0 0 12 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="13" rx="1.8"/></svg>
+      </div>
+      <button id="open-options" type="button" aria-label="Settings" title="Settings">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
     </div>
   </div>
 
   <div class="action-bar">
-    <button id="btn-scan" disabled><span id="btn-label">SCAN PAGE</span></button>
+    <button id="btn-scan" disabled><svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="2.5"/></svg><span id="btn-label">SCAN PAGE</span></button>
     <button id="btn-clear">CLEAR</button>
     <select id="era-select" class="era-select" aria-label="Era" title="When the cards are from. Picking an era makes sets much more accurate.">
       <option value="">Any era</option>
     </select>
     <div class="stat-block" id="stat-value" role="group"><div class="val green" id="s-value">—</div><div class="lbl">est. value <span class="cond-tag" id="s-cond" title="Prices are Near Mint market prices unless your price-service key provides other conditions" hidden>NM</span></div></div>
   </div>
-  <div class="overlay-row">
-    <label class="overlay-toggle" title="Hides the boxes and tags on the page. Your results stay here."><input type="checkbox" id="overlay-shown" checked> Show boxes on page</label>
-    <button type="button" class="link-btn draw-btn" id="btn-draw" title="Missed a card? Drag a box around it on the page to read it.">Draw a box</button>
-  </div>
+  <p class="scan-status" id="scan-status" role="status" hidden></p>
+  <main class="scroll">
+  <div class="msg-bar hidden" id="msg-bar" role="status"></div>
 
+  <div class="side">
   <div class="access-notice" id="restore-note" hidden>
     <p class="access-text" id="restore-text" role="status"></p>
     <button type="button" class="access-btn" id="restore-rescan" title="Scanning again starts the list over">Scan again</button>
   </div>
 
   <div class="access-notice" id="access-notice" hidden>
-    <p class="access-text" id="access-text">Allow reading full-size photos on sites you scan — finds more cards in lots and binders.</p>
+    <p class="access-text" id="access-text">Let Sweep read the original photos on the sites you scan? It finds more cards.</p>
     <p class="access-text" id="access-outcome" role="status"></p>
     <button type="button" class="access-btn" id="access-allow">Allow</button>
     <button type="button" class="link-btn access-skip" id="access-allow-all" hidden>All sites</button>
@@ -687,101 +65,142 @@
 
   <div class="fullsize-notice access-notice" id="fullsize-notice" hidden>
     <p class="access-text" id="fullsize-text"></p>
-    <button type="button" class="access-btn" id="fullsize-open">Open full-size photo for better results</button>
+    <button type="button" class="access-btn" id="fullsize-open">Open photo</button>
   </div>
-
-  <div class="msg-bar hidden" id="msg-bar" role="status"></div>
 
   <div class="lot-totals" id="lot-totals" role="group" aria-label="Lot value" aria-live="polite" aria-atomic="true" hidden></div>
 
   <div class="lot-edition" id="lot-edition" role="group" aria-label="Base Set editions" hidden>
     <label for="lot-edition-select">Base Set editions</label>
-    <select id="lot-edition-select" title="Applies this edition to every Base Set card you have not set yourself. A card's own Variant menu wins."><option value="">Apply to all…</option></select>
+    <select id="lot-edition-select" title="Applies this to every Base Set card you have not set yourself. A card's own choice wins."><option value="">All Base Set cards are…</option></select>
   </div>
 
   <div class="exam-strip" id="exam-strip" role="group" aria-label="Help check the results" hidden>
     <span class="exam-text">Help check: is every card here right?</span>
     <button type="button" class="exam-yes" id="exam-yes">All right</button>
-    <button type="button" class="hint-dismiss" id="exam-dismiss" aria-label="Dismiss" title="Dismiss">&#10005;</button>
+    <button type="button" class="hint-dismiss" id="exam-dismiss" aria-label="Dismiss" title="Dismiss"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+
+  <div class="compare-dock" id="compare-dock" aria-hidden="true" hidden>
+    <div class="dock-cap" id="dock-cap"></div>
+    <img id="dock-img" alt="">
+  </div>
   </div>
 
   <div class="results" id="results">
     <div class="empty-hint" id="empty-hint">
-      Open a page with Pokémon cards, then press <b>Scan Page</b>.<br>
-      Detections and prices appear here and overlay on the page.
+      <svg class="empty-mark" width="96" height="96" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+        <g class="lm-bracket" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 33V21a9 9 0 0 1 9-9h12"/><path d="M63 12h12a9 9 0 0 1 9 9v12"/><path d="M84 63v12a9 9 0 0 1-9 9H63"/><path d="M33 84H21a9 9 0 0 1-9-9V63"/>
+        </g>
+        <g transform="rotate(-8 48 48)">
+          <rect class="es-card" x="31.5" y="22.5" width="33" height="51" rx="6.6"/>
+          <path class="es-lines" d="M38 56h20M38 63h12" stroke-width="3" stroke-linecap="round"/>
+          <path class="es-scan" d="M35 28h26"/>
+        </g>
+      </svg>
+      <p class="empty-text" id="empty-text">
+        Open a page with Pokémon cards, then press <b>Scan Page</b>.
+      </p>
+      <p class="empty-why" id="empty-why" hidden></p>
     </div>
   </div>
+  </main>
 
   <div class="setup-overlay" id="setup-overlay">
 
     <!-- Step 1 — download models -->
     <div class="wiz-section" id="wiz-step-1">
-      <div class="wiz-steps">
-        <div class="wiz-dot active"></div><div class="wiz-line"></div><div class="wiz-dot"></div><div class="wiz-line"></div><div class="wiz-dot"></div>
-      </div>
-      <div class="setup-title">Download the AI models</div>
+      <svg class="logo-mark wiz-mark" width="56" height="56" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <g class="lm-bracket" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 11V7a3 3 0 0 1 3-3h4"/><path d="M21 4h4a3 3 0 0 1 3 3v4"/><path d="M28 21v4a3 3 0 0 1-3 3h-4"/><path d="M11 28H7a3 3 0 0 1-3-3v-4"/>
+        </g>
+        <g transform="rotate(-8 16 16)">
+          <rect class="lm-card" x="10.5" y="7.5" width="11" height="17" rx="2.2"/>
+          <rect x="12.4" y="9.6" width="7.2" height="6.2" rx="1" fill="#fff" fill-opacity=".92"/>
+          <path d="M12.8 18.6h6.4M12.8 21h4" stroke="#fff" stroke-opacity=".75" stroke-width="1.3" stroke-linecap="round"/>
+        </g>
+      </svg>
+      <div class="wiz-dots" aria-hidden="true"><span class="wiz-dot is-current"></span><span class="wiz-dot"></span><span class="wiz-dot"></span></div>
+      <div class="setup-title">Set up Sweep</div>
       <div class="setup-desc">
-        One-time download, <b id="setup-size">about 147 MB</b>.<br>
-        After this, scanning runs fully on your device — no server, no account.
+        One-time download (<b id="setup-size">about 147 MB</b>). After that, everything runs on your computer. No account needed.
       </div>
-      <button id="btn-setup">Download models</button>
-      <div id="setup-status"></div>
+      <button id="btn-setup">Download</button>
+      <div id="setup-status" role="status"></div>
+      <div class="setup-keep" id="setup-keep" hidden>Keep this window open</div>
+      <button id="btn-setup-retry" hidden>Retry</button>
       <div class="setup-bars" id="setup-bars"></div>
     </div>
 
     <!-- Step 2 — optional site access -->
     <div class="wiz-section" id="wiz-step-access">
-      <div class="wiz-steps">
-        <div class="wiz-dot done"></div><div class="wiz-line done"></div><div class="wiz-dot active"></div><div class="wiz-line"></div><div class="wiz-dot"></div>
+      <svg class="logo-mark wiz-mark" width="56" height="56" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <g class="lm-bracket" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 11V7a3 3 0 0 1 3-3h4"/><path d="M21 4h4a3 3 0 0 1 3 3v4"/><path d="M28 21v4a3 3 0 0 1-3 3h-4"/><path d="M11 28H7a3 3 0 0 1-3-3v-4"/>
+        </g>
+        <g transform="rotate(-8 16 16)">
+          <rect class="lm-card" x="10.5" y="7.5" width="11" height="17" rx="2.2"/>
+          <rect x="12.4" y="9.6" width="7.2" height="6.2" rx="1" fill="#fff" fill-opacity=".92"/>
+          <path d="M12.8 18.6h6.4M12.8 21h4" stroke="#fff" stroke-opacity=".75" stroke-width="1.3" stroke-linecap="round"/>
+        </g>
+      </svg>
+      <div class="wiz-dots" aria-hidden="true"><span class="wiz-dot is-done"></span><span class="wiz-dot is-current"></span><span class="wiz-dot"></span></div>
+      <div class="setup-title">Sharper photos <span class="wiz-optional">Optional</span></div>
+      <div class="setup-desc" title="Photos are fetched without your cookies and analyzed on this device. You can change this any time in Settings.">
+        Read the original, sharper photos on Marketplace? It finds more cards.
       </div>
-      <div class="setup-title">Read full-size photos (optional)</div>
-      <div class="setup-desc">
-        By default the scanner reads a screenshot of the page you scan.
-        Allow it to read photos on the sites you scan and it can use the full-size picture, which is more accurate.
-      </div>
-      <div class="setup-desc" style="margin-top:-4px"><small>Photos are fetched without your cookies and analyzed on this device. You can change this any time in Settings.</small></div>
+      <div class="setup-desc setup-note"><small>You can change this any time in Settings.</small></div>
       <div class="wiz-row">
-        <button id="btn-wiz-access">Allow</button>
+        <button id="btn-wiz-access" title="Photos are fetched without your cookies and analyzed on this device.">Allow</button>
         <button class="wiz-skip" id="btn-wiz-access-skip">Not now</button>
       </div>
     </div>
 
     <!-- Step 3 — optional PPT upgrade -->
     <div class="wiz-section" id="wiz-step-2">
-      <div class="wiz-steps">
-        <div class="wiz-dot done"></div><div class="wiz-line done"></div><div class="wiz-dot done"></div><div class="wiz-line done"></div><div class="wiz-dot active"></div>
-      </div>
-      <div class="setup-title">Unlock full prices (optional)</div>
+      <svg class="logo-mark wiz-mark" width="56" height="56" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <g class="lm-bracket" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 11V7a3 3 0 0 1 3-3h4"/><path d="M21 4h4a3 3 0 0 1 3 3v4"/><path d="M28 21v4a3 3 0 0 1-3 3h-4"/><path d="M11 28H7a3 3 0 0 1-3-3v-4"/>
+        </g>
+        <g transform="rotate(-8 16 16)">
+          <rect class="lm-card" x="10.5" y="7.5" width="11" height="17" rx="2.2"/>
+          <rect x="12.4" y="9.6" width="7.2" height="6.2" rx="1" fill="#fff" fill-opacity=".92"/>
+          <path d="M12.8 18.6h6.4M12.8 21h4" stroke="#fff" stroke-opacity=".75" stroke-width="1.3" stroke-linecap="round"/>
+        </g>
+      </svg>
+      <div class="wiz-dots" aria-hidden="true"><span class="wiz-dot is-done"></span><span class="wiz-dot is-done"></span><span class="wiz-dot is-current"></span></div>
+      <div class="setup-title">Unlock full prices <span class="wiz-optional">Optional</span></div>
       <div class="setup-desc">
-        Out of the box, you'll see one market price per card.
-        Add a free API key to also see:
+        Out of the box, you see one market price per card.
+        Add a free price key to also see prices by condition and for graded cards.
       </div>
-      <ul class="wiz-bullets">
-        <li><b>NM / LP / MP / HP / DMG</b> per card</li>
-        <li>Graded prices (<b>PSA / BGS / CGC / SGC</b>)</li>
-      </ul>
-      <div class="setup-desc" style="margin-top:-4px"><small>Takes 30 seconds. No credit card. Free tier: 100 cards/day.</small></div>
+      <div class="setup-desc setup-note"><small>Takes 30 seconds. No credit card. Free tier: 100 cards/day.</small></div>
       <div class="wiz-row">
         <button id="btn-wiz-upgrade">Get free key →</button>
-        <button class="wiz-skip" id="btn-wiz-skip">I'll do this later</button>
+        <button class="wiz-skip" id="btn-wiz-skip">Skip</button>
       </div>
     </div>
 
   </div>
 
   <div class="bulk-panel" id="bulk-panel" role="dialog" aria-modal="true" aria-labelledby="bulk-title" hidden>
-    <div class="bulk-head">
-      <h2 class="bulk-title" id="bulk-title">Review and confirm</h2>
-      <button type="button" class="bulk-btn" id="bulk-close" aria-label="Close review">&#10005;</button>
-    </div>
-    <div class="bulk-note">Ticked pairs look like clear matches; check the others yourself. <button type="button" class="bulk-btn bulk-tick-all" id="bulk-tick-all">Tick all</button></div>
-    <ul class="bulk-list" id="bulk-list"></ul>
-    <div class="bulk-foot">
-      <span class="bulk-hint" id="bulk-hint" hidden>Tick the ones that look right</span>
-      <button type="button" class="bulk-btn" id="bulk-cancel">Cancel</button>
-      <button type="button" class="bulk-btn primary" id="bulk-confirm" aria-describedby="bulk-hint">Confirm 0</button>
+    <div class="bulk-sheet">
+      <div class="bulk-head">
+        <h2 class="bulk-title" id="bulk-title">Review and confirm</h2>
+        <button type="button" class="bulk-btn bulk-close" id="bulk-close" aria-label="Close review"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="bulk-note">Ticked pairs look like clear matches; check the others yourself.</div>
+      <ul class="bulk-list" id="bulk-list"></ul>
+      <div class="bulk-foot">
+        <span class="bulk-hint" id="bulk-hint" hidden>Tick the ones that look right</span>
+        <button type="button" class="bulk-btn" id="bulk-cancel">Cancel</button>
+        <button type="button" class="bulk-btn primary" id="bulk-confirm" aria-describedby="bulk-hint">Confirm 0</button>
+      </div>
     </div>
   </div>
+
+  <div id="loupe" class="loupe" hidden></div>
 
   <script type="module" src="popup.js"></script>
 </body>

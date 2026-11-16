@@ -34,7 +34,7 @@ import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
 import { applyBatchedPrices as applyBatchedPricesWith, batchPriceCards as batchPriceCardsWith, collectBatchIds, createPriceCache, createRetryLoader } from "./lib/batch-price.js";
 import { looksLikeCard, mergeSourceRead, sourceRefineOrder, tileSource } from "./lib/refine.js";
-import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage, wrongIdOf } from "./lib/card-picker.js";
+import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage, titleChoiceIds, wrongIdOf } from "./lib/card-picker.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, cropTooSmall, modelTags } from "./lib/contribution.js";
@@ -57,6 +57,8 @@ import { DRAWN_KINDS, createDrawnExamplesStore, newExampleId } from "./lib/drawn
 // dev-only:end
 import { captureWithoutOverlay, sendToTab } from "./lib/tab-messaging.js";
 import { loadOverlayShown, tabMessageFor } from "./lib/overlay-toggle.js";
+import { clearPendingShow, savePendingFullSize, savePendingShow } from "./lib/pending-show.js";
+import { createScannerOpener } from "./lib/scanner-window.js";
 import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, largerRendition, loadFullSize, needsShareImages, shareImagesFromHtml } from "./lib/full-size.js";
 import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
 import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
@@ -146,44 +148,24 @@ function _isInternalUrl(url) {
 
 // ─── icon click → open popup window (gets camera permission prompt) ──────────
 
+// Focuses the scanner window, or opens it; `targetTab` becomes the scan target. Resolves true when it opened a new window.
+// Used by the toolbar button and by a click on a card on the page; calls are serialized (lib/scanner-window.js).
+const _scannerWindow = createScannerOpener({
+  windows: chrome.windows,
+  getContexts: (filter) => chrome.runtime.getContexts(filter),
+  popupUrl: chrome.runtime.getURL("popup.html"),
+  setTargetTab: _setTargetTabId,
+  isInternalUrl: _isInternalUrl,
+  getWinId: () => _popupWinId,
+  setWinId: (id) => { _popupWinId = id; },
+});
+const openOrFocusScanner = (targetTab, beforeCreate, onCreateFailed) => _scannerWindow.open(targetTab, beforeCreate, onCreateFailed);
+
 chrome.action.onClicked.addListener(async (clickedTab) => {
   // The tab the icon was clicked on is the one activeTab was granted for. Asking the browser for "the
   // current tab" instead could return the scanner window if that was the last thing focused.
   const activeTab = clickedTab ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
-  // Nothing is injected here: the page is touched only when the user presses Scan.
-  if (activeTab && !_isInternalUrl(activeTab.url)) _setTargetTabId(activeTab.id);
-
-  if (_popupWinId !== null) {
-    try {
-      await chrome.windows.update(_popupWinId, { focused: true });
-      return;
-    } catch {
-      _popupWinId = null;
-    }
-  }
-
-  // After a SW restart _popupWinId is null even if the window still exists — find it.
-  const popupUrl = chrome.runtime.getURL("popup.html");
-  const [existingTab] = await chrome.runtime.getContexts({ contextTypes: ["TAB"], documentUrls: [popupUrl] });
-  if (existingTab?.windowId != null && existingTab.windowId >= 0) {
-    _popupWinId = existingTab.windowId;
-    try {
-      await chrome.windows.update(_popupWinId, { focused: true });
-      return;
-    } catch {
-      _popupWinId = null;
-    }
-  }
-
-  // Keep the popup narrow and tall so it docks on the right without obscuring the page content.
-  const win = await chrome.windows.create({
-    url: popupUrl,
-    type: "popup",
-    width: 500,
-    height: 680,
-    focused: true,
-  });
-  _popupWinId = win.id;
+  await openOrFocusScanner(activeTab);
 });
 
 chrome.windows.onRemoved.addListener((id) => {
@@ -377,7 +359,7 @@ async function numberReaderReady() {
 // ─── message handler ─────────────────────────────────────────────────────────
 
 // Messages that drive the scanner come only from this extension's own pages. A page's content script may
-// send newCardsDetected, the box it drew (drawnBox) and the X on a card (overlayRemove), each checked in its own case.
+// send newCardsDetected, the box it drew (drawnBox), the X on a card (overlayRemove) and a click on a card (overlayPick), each checked in its own case.
 const OWN_PAGE_ONLY = new Set([
   "checkReady", "startSetup", "detect", "priceCard", "scanPage", "scanState", "awaitScan",
   "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard", "setOverlayShown", "drawBox", "cancelDraw",
@@ -496,6 +478,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         .then((ok) => sendResponse({ ok }))
         .catch((err) => { console.error("[BG] overlayRemove failed", err?.message || err); sendResponse({ ok: false }); });
       return true;
+
+    case "overlayPick":
+      // A click on a highlighted card on the page: bring the scanner to that card. An open window shows the card from the
+      // page's own message. Only when this call has to open the window is the card (and its page) stored, just before the
+      // window is created, for the window to read once its lot is restored.
+      if (!acceptPageSender(sender, chrome.runtime.id) || !Number.isInteger(msg.index) || msg.index < 0) return false;
+      openOrFocusScanner(sender.tab, () => savePendingShow(chrome.storage.session, { index: msg.index, url: sender.tab.url }), () => clearPendingShow(chrome.storage.session))
+        .catch((err) => console.error("[BG] overlayPick failed", err?.message || err));
+      return false;
+
+    case "overlayFullSize":
+      // The page's "Open full-size photo" pill: the scanner window does what its own button does (site access, a new tab, the scan).
+      // An open window takes the page's message itself; this only brings the window forward. When this call has to open the
+      // window, the click waits (like a card index) for the window to apply it once its lot is restored.
+      if (!acceptPageSender(sender, chrome.runtime.id)) return false;
+      openOrFocusScanner(sender.tab, () => savePendingFullSize(chrome.storage.session, { url: sender.tab.url }), () => clearPendingShow(chrome.storage.session))
+        .catch((err) => console.error("[BG] overlayFullSize failed", err?.message || err));
+      return false;
 
     case "newCardsDetected":
       // Content script saw new card-shaped images load (lazy/infinite scroll).
@@ -624,7 +624,7 @@ async function handleScanPage(sendResponse, era) {
     else {
       sendResponse({
         error: choice.reason === "unreadable"
-          ? "Card Scanner cannot read this tab. Click the Card Scanner icon while you are on the page you want to scan."
+          ? "Sweep cannot read this tab. Click the Sweep icon while you are on the page you want to scan."
           : "No scannable tab — open a webpage first",
       });
       return;
@@ -789,6 +789,7 @@ async function handleScanPage(sendResponse, era) {
     const wholePage = stops.length > 1;
     const origin = { x: domResp.scrollX || 0, y: domResp.scrollY || 0 };
     let scrolled = false;
+    let boxesFound = 0; // card boxes found so far: the popup's "Reading 6 cards…" line
     const startUrl = targetTab.url;
     let navigated = false;
     const stayOnPage = async () => {
@@ -812,7 +813,7 @@ async function handleScanPage(sendResponse, era) {
         let domCards = sealed ? [] : pageFocus.cards;
         if (wholePage) {
           if (cardRoom(keptRealCount(cards, dropped)) <= 0) { capped = true; break; }
-          (_held && (_held.progress = { screen: stop + 1, screens: stops.length }), chrome.runtime.sendMessage({ action: "scanProgress", screen: stop + 1, screens: stops.length })).catch(() => {});
+          (_held && (_held.progress = { screen: stop + 1, screens: stops.length }), chrome.runtime.sendMessage({ action: "scanProgress", tabId: targetTab.id, screen: stop + 1, screens: stops.length })).catch(() => {});
           scrolled = true;
           await sendToTab(chrome, targetTab.id, { action: "scrollTo", x: origin.x, y });
           await stayOnPage();
@@ -994,6 +995,8 @@ async function handleScanPage(sendResponse, era) {
                           boxes.length ? "(scores: " + boxes.map(b => b.score.toFixed(2)).join(",") + ")" : "");
 
               if (!boxes.length) continue;
+              boxesFound += boxes.length;
+              chrome.runtime.sendMessage({ action: "scanProgress", tabId: targetTab.id, found: boxesFound }).catch(() => {});
               console.log("[BG]   splitting", boxes.length, "cards");
               if (!hero) preemptedPhotoKeys.add(_photoKey(ph));
               const photoPixels = readBitmap(photoBitmap);
@@ -1273,7 +1276,7 @@ async function handleScanPage(sendResponse, era) {
     const encoded = await Promise.all(crops);
     await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded, shares })
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
-    // An asked card carries the picture it was read from, so the user can see which card the question is about.
+    // Every card carries the picture it was read from: an asked card shows which card the question is about, and a confirmed row keeps its page picture.
     // `ranked` (id, rank, cosine score) rides along so the popup can judge how far the first candidate leads; the set prior ran before.
     const withCandidates = cards.map(({ rankedScores, ...card }, i) => (card.notCard && card.hiddenRead
       // A hidden card keeps its read with the same candidates a Choose row gets, for "Show it". No price is fetched for it.
@@ -1281,7 +1284,7 @@ async function handleScanPage(sendResponse, era) {
       : card.notCard ? { ...card, crop: encoded[i] ?? null }
       : isUnsure(card)
       ? { ...card, candidates: candidatesFor(card, _meta, 5, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
-      : card));
+      : { ...card, crop: encoded[i] ?? null }));
     function hiddenReadWithCandidates({ rankedScores, ...read }) {
       const asChoose = { ...read, unsure: true };
       return { ...read, candidates: candidatesFor(asChoose, _meta, 5, era), ...(read.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) };
@@ -1340,7 +1343,7 @@ async function startDrawBox(msg) {
   } catch (err) {
     _drawTabId = null;
     console.error("[BG] draw mode failed:", err?.message || err);
-    return { error: "Card Scanner cannot draw on this tab." };
+    return { error: "Sweep cannot draw on this tab." };
   }
 }
 
@@ -2237,9 +2240,20 @@ async function checkTitle(result, cardCanvas, height, era) {
     console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name ?? "-"), "- asked with that name");
     return guessFromTitle(_meta[hit.index], hits, result);
   }
-  if (!name) return result;
+  // The title's own printings are only offered in the list (lib/card-picker.js candidatesFor); nothing here is decided by them.
+  // embedSerial is cached per canvas, so this does not embed again. (tests/lookalike-setting.test.js pins the count of
+  // the searchBoth call sites by their argument text, so the first embedding is not kept in a variable.)
+  const titleChoices = titleChoicesFor(verdict.titleName, await embedSerial(cardCanvas), era);
+  const offered = titleChoices.length ? { titleChoices } : {};
+  // No picture name to contradict: the title's cards join the list, and nothing is marked as contradicted or preselected.
+  if (!name) return { ...result, ...offered };
   console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name), "- asked");
-  return { ...result, confidence: Math.min(result.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP), unsure: true, titleContradicts: verdict.titleName };
+  return { ...result, confidence: Math.min(result.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP), unsure: true, titleContradicts: verdict.titleName, ...offered };
+}
+
+// Catalog ids of the best-looking printings of the card the title spelled, for the list the user chooses from.
+function titleChoicesFor(titleName, embedding, era) {
+  return titleChoiceIds(physicalHits(scoreIndices(embedding, printingsOf(titleName)), _meta), _meta, { era });
 }
 
 async function guessFromTitle(card, hits, before) {

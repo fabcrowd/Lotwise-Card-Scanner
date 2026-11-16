@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const STORE_NAME = 'Card Scanner & Price Checker for Pokémon TCG';
+export const STORE_NAME = 'Sweep: Card Scanner & Price Checker';
 export const STORE_DESCRIPTION =
   'Find Pokémon cards in photos on the page you are viewing and see their prices. Card recognition runs on your device.';
 

@@ -50,9 +50,10 @@ function pageWithCanvas() {
 const chooseCard = { box: [300, 100, 500, 380], identity: null, abstain: true, display: { state: 'choose', guess: { name: 'Entei', price: 3.1 } } };
 const show = (page, extra = {}) => { page.send({ action: 'showOverlay', cards: [chooseCard], srcWidth: 2504, srcHeight: 1287, ...extra }); page.flush(); };
 
+// The Choose chip of chooseCard: "? ~$3.10" in the bottom-right corner, x 423..496, y 354..376 (the fake canvas measures 7 px a character).
 function clickTag(page) {
   let prevented = false;
-  page.fire('click', { isTrusted: true, clientX: 310, clientY: 110, preventDefault() { prevented = true; }, stopPropagation() {} });
+  page.fire('click', { isTrusted: true, clientX: 450, clientY: 365, preventDefault() { prevented = true; }, stopPropagation() {} });
   return prevented;
 }
 

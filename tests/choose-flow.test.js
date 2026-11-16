@@ -212,9 +212,9 @@ test('bulkPairs carries the decisive flag for the default tick', () => {
 test('bulk confirm remembers only a Check pair the user ticked on its own, never a preselected one', () => {
   const decisive = { idx: 0, candidate: cand('a-1', 'Pidgey'), decisive: true };
   const check = { idx: 1, candidate: cand('b-2', 'Rattata'), decisive: false };
-  const checkTickAll = { idx: 2, candidate: cand('c-3', 'Zubat'), decisive: false };
-  const kept = [decisive, check, checkTickAll];
-  // Pair 1 was ticked by hand; pair 2 only got its tick from Tick all.
+  const checkUnticked = { idx: 2, candidate: cand('c-3', 'Zubat'), decisive: false };
+  const kept = [decisive, check, checkUnticked];
+  // Pair 1 was ticked by hand; pair 2 was kept without a tick of the user's own.
   assert.deepEqual(flow.bulkRememberedPairs(kept, new Set([1])).map((p) => p.idx), [1]);
   assert.deepEqual(flow.bulkRememberedPairs(kept, new Set()).map((p) => p.idx), []);
   // A decisive pair is the scanner's own preselection: ticking it by hand does not make it a correction.

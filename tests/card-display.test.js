@@ -57,7 +57,7 @@ test('one printing is quoted and counted', () => {
 test('several printings are not quoted until the user picks one', () => {
   assert.equal(isPrintingConfirmed(charizard.price_grid, null), false);
   assert.equal(quotedPrice(charizard, null), null);
-  assert.match(printingNote(charizard.price_grid), /3 variants/);
+  assert.match(printingNote(charizard.price_grid), /3 versions/);
   assert.match(printingNote(charizard.price_grid), /\$928\.00/);
   assert.match(printingNote(charizard.price_grid), /\$38,?000\.00|\$38000\.00/);
 });
@@ -159,13 +159,14 @@ test('model download rows use plain names', () => {
 });
 
 test('scan failures are explained without service-worker jargon', () => {
-  assert.match(explainScanError('Could not establish connection. Receiving end does not exist.'), /Reload the Card Scanner extension/);
+  // The error names the action: where to reload, then what to press.
+  assert.equal(explainScanError('Could not establish connection. Receiving end does not exist.'), 'Reload Sweep at chrome://extensions, then press Scan Page.');
   assert.match(explainScanError('Models not loaded'), /downloading/);
   assert.equal(explainScanError('No scannable tab — open a webpage first'), 'No scannable tab — open a webpage first');
 });
 
 test('a tab the extension was not opened on says how to give it access', () => {
-  const advice = /Click the Card Scanner icon/;
+  const advice = /Click the Sweep icon/;
   assert.match(explainScanError('Could not query page for cards: Cannot access contents of the page. Extension manifest must request permission to access the respective host.'), advice);
   assert.match(explainScanError("Either the '<all_urls>' or 'activeTab' permission is required."), advice);
   assert.match(explainScanError('Cannot access a chrome:// URL'), advice);
@@ -180,7 +181,7 @@ test('a Shadowless border is shown but never picks the higher Shadowless price',
   assert.equal(editionNote(card), 'Shadowless border');
 });
 
-import { classifyCard, isIdentified, lotEstimate, scanStatus, splitByRecognition, sureNote } from '../tools/extension-wasm/lib/card-display.js';
+import { classifyCard, isIdentified, isSettledRow, lotEstimate, scanStatus, scanSummary, splitByRecognition, sureNote } from '../tools/extension-wasm/lib/card-display.js';
 
 const named = (extra = {}) => ({ identity: { id: 'a-1', name: 'Pikachu' }, confidence: 0.9, abstain: false, ...extra });
 const blank = (extra = {}) => ({ identity: {}, confidence: 0, abstain: true, candidates: [], ...extra });
@@ -227,7 +228,19 @@ test('a sure name with its printing open counts as identified, with the printing
   assert.equal(needsPrinting({ ...open, setConfirmed: true }), false);
   assert.equal(needsPrinting({ ...open, setChoices: [{ id: 'base1-4' }] }), false);
   assert.equal(needsPrinting({ ...open, unsure: true }), false);
-  assert.equal(scanStatus([open, named()]), 'Found 2 cards: 2 identified (1 to pick printing)');
+  assert.equal(scanStatus([open, named()]), 'Found 2 cards: 2 identified (1 to pick a version)');
+});
+
+test('scanSummary is short: how many were found and how many need the user', () => {
+  assert.equal(scanSummary([]), '');
+  assert.equal(scanSummary([named()]), 'Found 1 card');
+  assert.equal(scanSummary([named(), unsure(), blank()]), 'Found 3 cards · 2 need you');
+  assert.equal(scanSummary([named(), unsure()]), 'Found 2 cards · 1 needs you');
+  const open = { identity: { id: 'base1-4', name: 'Charizard' }, confidence: 0.79, abstain: false,
+    setChoices: [{ id: 'base1-4' }, { id: 'base4-4' }], setRange: { low: 120, high: 950, count: 2 } };
+  // A sure name with its version open still needs the user; a card back and a skipped card do not.
+  assert.equal(scanSummary([open, named(), { cardBack: true, abstain: true }, { ...named(), skipped: true }]), 'Found 4 cards · 1 needs you');
+  assert.equal(scanSummary([...Array.from({ length: 5 }, () => named()), ...Array.from({ length: 4 }, () => unsure())]), 'Found 9 cards · 4 need you');
 });
 
 test('scanStatus words every count and drops empty parts', () => {
@@ -553,8 +566,18 @@ test('lotEstimate: a card whose price is still loading is not "without price"', 
 });
 
 test('sureNote: the count, then cards without price, then old prices; a tooltip only when some lack a price', () => {
-  assert.deepEqual(sureNote({ identified: 3, noPrice: 0, toCheck: 0 }), { text: '(3)', title: '' });
-  assert.deepEqual(sureNote({ identified: 3, noPrice: 1, toCheck: 0 }), { text: '(3, 1 without price)', title: '1 confirmed card has no price data' });
-  assert.deepEqual(sureNote({ identified: 5, noPrice: 2, toCheck: 1 }), { text: '(5, 2 without price, 1 old price to check)', title: '2 confirmed cards have no price data' });
-  assert.deepEqual(sureNote({ identified: 2, noPrice: 0, toCheck: 2 }), { text: '(2, 2 old prices to check)', title: '' });
+  assert.deepEqual(sureNote({ identified: 3, noPrice: 0, toCheck: 0 }), { text: '· 3 cards', title: '' });
+  assert.deepEqual(sureNote({ identified: 1, noPrice: 0, toCheck: 0 }), { text: '· 1 card', title: '' });
+  assert.deepEqual(sureNote({ identified: 3, noPrice: 1, toCheck: 0 }), { text: '· 3 cards · 1 without price', title: '1 confirmed card has no price data' });
+  assert.deepEqual(sureNote({ identified: 5, noPrice: 2, toCheck: 1 }), { text: '· 5 cards · 2 without price · 1 old price to check', title: '2 confirmed cards have no price data' });
+  assert.deepEqual(sureNote({ identified: 2, noPrice: 0, toCheck: 2 }), { text: '· 2 cards · 2 old prices to check', title: '' });
+});
+
+test('isSettledRow: only a priced row with nothing asking the user collapses', () => {
+  assert.equal(isSettledRow({ inPriced: true }), true);
+  assert.equal(isSettledRow({}), false);
+  assert.equal(isSettledRow({ inPriced: false }), false);
+  for (const flag of ['doubleCheck', 'changing', 'searchOpen', 'priceIsRange', 'versionSuggestedUnconfirmed', 'repeatedName']) {
+    assert.equal(isSettledRow({ inPriced: true, [flag]: true }), false, flag);
+  }
 });

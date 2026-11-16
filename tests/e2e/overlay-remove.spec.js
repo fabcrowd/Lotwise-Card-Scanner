@@ -111,7 +111,7 @@ test.describe('Remove a card with the X', () => {
   async function drawOver(i, rows) {
     const r = cardRect(i);
     await popup.locator('#btn-draw').click();
-    await page.waitForFunction(() => [...document.querySelectorAll('div')].some((d) => d.textContent === 'Drag a box around the card. Esc to cancel.'), null, { timeout: 10_000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('span')].some((d) => d.textContent === 'Drag a box around the card. Esc to cancel.'), null, { timeout: 10_000 });
     await page.mouse.move(r.x1 + 3, r.y1 + 3);
     await page.mouse.down();
     await page.mouse.move((r.x1 + r.x2) / 2, (r.y1 + r.y2) / 2, { steps: 5 });
@@ -152,8 +152,8 @@ test.describe('Remove a card with the X', () => {
     await shot(page, 'x-hover.png');
 
     await page.mouse.click(x2, y1);
-    await expect(popup.locator('#skipped-heading')).toHaveText('Removed (1)');
-    await expect(popup.locator('#lot-totals .lt-skipped')).toContainText('Removed');
+    await expect(popup.locator('#skipped-heading')).toHaveText('Left out (1)');
+    await expect(popup.locator('#lot-totals .lt-skipped')).toContainText('Left out');
     await expect(popup.locator('#lot-totals .lt-skipped b')).toHaveText('1');
     expect(await totals()).not.toBe(before);
     expect(await overlayBox(0)).toBeNull();
@@ -161,12 +161,57 @@ test.describe('Remove a card with the X', () => {
     await shot(popup, 'popup-removed.png');
 
     await popup.locator('#skipped-heading').click();
-    await expect(popup.locator('.skipped-row .unrec-name')).toHaveText('Card 1: removed');
+    await expect(popup.locator('.skipped-row .unrec-name')).toHaveText('Card 1: Removed.');
     await popup.locator('.skipped-row [data-put-back]').click();
     await expect(popup.locator('#skipped-heading')).toHaveCount(0);
     await expect(popup.locator('#lot-totals .lt-skipped')).toHaveCount(0);
     expect(await totals()).toBe(before);
     expect(await overlayBox(0)).toBeTruthy();
+    await popup.close();
+    await page.close();
+  });
+
+  // Section 10: the toast after a removal offers Put back; the page's cursor and hover reach the scanner window (rules 4 and 5).
+  test('10: the X on a page card leaves a Put back button in the toast, and pressing it restores the card', async () => {
+    test.skip(Boolean(skip), skip);
+    await twoCards('toast-put-back');
+    const before = await totals();
+    const [x1, y1, x2, y2] = await overlayBox(0);
+    await page.mouse.move((x1 + x2) / 2, (y1 + y2) / 2);
+    await page.waitForTimeout(400);
+    await page.mouse.move(x2, y1, { steps: 3 });
+    await page.waitForTimeout(400);
+    await page.mouse.click(x2, y1);
+    const toast = popup.locator('#msg-bar');
+    await expect(toast).toContainText('Removed card 1. It is left out of the total.');
+    await expect(toast).not.toContainText('Put it back from');
+    await expect(toast.locator('button.toast-action')).toHaveText('Put back');
+    await toast.locator('button.toast-action').click();
+    await expect(popup.locator('#skipped-heading')).toHaveCount(0);
+    expect(await totals()).toBe(before);
+    expect(await overlayBox(0)).toBeTruthy();
+    await popup.close();
+    await page.close();
+  });
+
+  test('10: hovering a card on the page links its row in the scanner window without scrolling, and the page cursor is a pointer only over it', async () => {
+    test.skip(Boolean(skip), skip);
+    await twoCards('hover-link');
+    const [x1, y1, x2, y2] = await overlayBox(1);
+    const cursor = () => page.evaluate(() => document.documentElement.style.cursor);
+    expect(await cursor()).toBe('');
+    const scrolled = await popup.evaluate(() => document.querySelector('#results')?.closest('.main, body')?.scrollTop ?? window.scrollY);
+    await page.mouse.move((x1 + x2) / 2 - 10, (y1 + y2) / 2);
+    await page.waitForTimeout(300);
+    await page.mouse.move((x1 + x2) / 2, (y1 + y2) / 2, { steps: 3 });
+    await expect(popup.locator('.card-row[data-idx="1"]')).toHaveClass(/page-linked/);
+    await expect(popup.locator('.card-row.page-linked')).toHaveCount(1);
+    expect(await cursor()).toBe('pointer');
+    expect(await popup.evaluate(() => document.querySelector('#results')?.closest('.main, body')?.scrollTop ?? window.scrollY)).toBe(scrolled);
+    await shot(popup, 'popup-page-linked.png');
+    await page.mouse.move(1150, 800, { steps: 3 });
+    await expect(popup.locator('.card-row.page-linked')).toHaveCount(0);
+    expect(await cursor()).toBe('');
     await popup.close();
     await page.close();
   });
@@ -180,7 +225,7 @@ test.describe('Remove a card with the X', () => {
     await shot(popup, 'popup-x.png');
     const idx = Number(await buttons.first().getAttribute('data-idx'));
     await buttons.first().click();
-    await expect(popup.locator('#skipped-heading')).toHaveText('Removed (1)');
+    await expect(popup.locator('#skipped-heading')).toHaveText('Left out (1)');
     expect(await totals()).not.toBe(before);
     expect(await overlayBox(idx)).toBeNull();
     // Focus lands on the other row's X, never on the page body.
@@ -214,6 +259,44 @@ test.describe('Remove a card with the X', () => {
     await expect(popup.locator('#skipped-heading')).toHaveCount(0);
     await popup.waitForFunction(() => !document.getElementById('btn-scan')?.disabled, null, { timeout: 120_000 });
     await expect(popup.locator('#lot-totals .lt-skipped')).toHaveCount(0);
+    await popup.close();
+    await page.close();
+  });
+
+  // The real path of "click a card on the page": a real tab, the content script's click handler, the background's
+  // overlayPick case and the scanner window (spec 8.5). Nothing here is faked.
+  async function hoverAndClickCard(box) {
+    const [x1, y1, x2, y2] = box;
+    const cx = (x1 + x2) / 2;
+    const cy = (y1 + y2) / 2;
+    await page.mouse.move(cx - 10, cy);
+    await page.waitForTimeout(300);
+    await page.mouse.move(cx, cy, { steps: 3 });
+    await page.waitForTimeout(400);
+    await page.mouse.click(cx, cy);
+  }
+
+  test('a click on a hovered page card shows its row in the open scanner window', async () => {
+    test.skip(Boolean(skip), skip);
+    await twoCards('page-click-open');
+    await hoverAndClickCard(await overlayBox(1));
+    await expect(popup.locator('.card-row[data-idx="1"]')).toHaveClass(/flash/);
+    await popup.close();
+    await page.close();
+  });
+
+  test('a click on a hovered page card with the scanner window closed opens it at that card, once', async () => {
+    test.skip(Boolean(skip), skip);
+    await twoCards('page-click-closed');
+    const box = await overlayBox(1);
+    await popup.close();
+    const opened = context.waitForEvent('page', { predicate: (p) => p.url().includes('/popup.html'), timeout: 20_000 });
+    await hoverAndClickCard(box);
+    popup = await opened;
+    await expect(popup.locator('.card-row[data-idx="1"]')).toHaveClass(/flash/, { timeout: 20_000 });
+    // One window only, and the stored index is used up.
+    expect(context.pages().filter((p) => p.url().includes('/popup.html'))).toHaveLength(1);
+    await expect.poll(() => popup.evaluate(async () => (await chrome.storage.session.get('pendingShow')).pendingShow ?? null)).toBeNull();
     await popup.close();
     await page.close();
   });

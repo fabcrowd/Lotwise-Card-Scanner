@@ -1,6 +1,7 @@
 import { pptCardUrl } from "./lib/condition-pricing.js";
 import { clearPptKey, getPptKey, savePptKey } from "./lib/ppt-key.js";
 import { DEFAULT_FILTERS, mergeFilters, primaryCondition, withCondition, withGrader } from "./lib/price-prefs.js";
+import { referencesCountText } from "./lib/journey.js";
 import { hasAllSites, releaseAllSites, requestAllSites, watchAllSites } from "./lib/site-access.js";
 // dev-only:start
 import { LIMITS, describeSize } from "./lib/test-photos.js";
@@ -181,10 +182,10 @@ function showCorrectionsStatus(text, kind = "info") {
 async function refreshCorrectionCount() {
   const resp = await chrome.runtime.sendMessage({ action: "countCorrections" }).catch(() => null);
   const known = typeof resp?.count === "number";
-  correctionsCount.textContent = known ? `Corrections: ${resp.count} saved` : "Corrections: unavailable";
+  correctionsCount.textContent = known ? `Fixes: ${resp.count} saved` : "Fixes: unavailable";
   btnExportCorrections.disabled = !known || resp.count === 0;
   btnClearCorrections.disabled = !known || resp.count === 0;
-  if (!known) showCorrectionsStatus("Couldn't read the saved corrections. Reload this page to try again.", "err");
+  if (!known) showCorrectionsStatus("Couldn't read the saved fixes. Reload this page to try again.", "err");
 }
 
 // The first export of corrections that have no fingerprint yet loads the models and embeds them, which takes a while.
@@ -215,18 +216,18 @@ btnExportCorrections.addEventListener("click", async () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
   showCorrectionsStatus(
-    `Exported ${resp.corrections.length} corrections.` + (resp.failed ? ` ${resp.failed} had no usable picture and were exported without a fingerprint.` : ""),
+    `Exported ${resp.corrections.length} fixes.` + (resp.failed ? ` ${resp.failed} had no usable picture and were exported without a fingerprint.` : ""),
     resp.failed ? "err" : "ok",
   );
 });
 
 btnClearCorrections.addEventListener("click", async () => {
-  if (!window.confirm("Delete every saved correction? Export first if you want to keep them.")) return;
+  if (!window.confirm("Delete every saved fix? Export first if you want to keep them.")) return;
   const resp = await chrome.runtime.sendMessage({ action: "clearCorrections" }).catch(() => null);
-  if (!resp?.ok) { showCorrectionsStatus("Couldn't clear the corrections. Try again.", "err"); return; }
+  if (!resp?.ok) { showCorrectionsStatus("Couldn't clear the fixes. Try again.", "err"); return; }
   await refreshCorrectionCount();
   await refreshReferenceCount();
-  showCorrectionsStatus("Cleared. 0 corrections saved.", "ok");
+  showCorrectionsStatus("Cleared. 0 fixes saved.", "ok");
 });
 
 const referencesToggle = document.getElementById("use-references");
@@ -234,7 +235,7 @@ const referencesCount  = document.getElementById("references-count");
 
 async function refreshReferenceCount() {
   const resp = await chrome.runtime.sendMessage({ action: "countReferences" }).catch(() => null);
-  referencesCount.textContent = typeof resp?.count === "number" ? `${resp.count} references` : "References: unavailable";
+  referencesCount.textContent = typeof resp?.count === "number" ? referencesCountText(resp.count) : "Cards remembered: unavailable";
 }
 
 async function loadReferencesToggle() {
@@ -248,7 +249,7 @@ referencesToggle.addEventListener("change", async () => {
     await chrome.runtime.sendMessage({ action: "startReferences" }).catch(() => null);
     setTimeout(refreshReferenceCount, 3000);
   }
-  showCorrectionsStatus(referencesToggle.checked ? "Scans will now look for cards you corrected before." : "Scans use the catalog only.", "ok");
+  showCorrectionsStatus(referencesToggle.checked ? "Scans will now look for cards you fixed before." : "Scans use the catalog only.", "ok");
 });
 
 /* ─── Shared learning (opt-in) ─── */
