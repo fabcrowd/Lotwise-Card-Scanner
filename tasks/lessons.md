@@ -139,7 +139,9 @@ Rule: every smoke test captures screenshots of the page overlay and of the popup
 ## Nothing goes to the owner before a full smoke and QA pass
 On 2026-10-25 the owner found, from his own screenshots, that overlay boxes do not sit on the cards (boxes stretched outward from the photo centre on a letterboxed Facebook photo) and that slabs are not detected. Our smoke had reported counts and prices only.
 
-Rule: the owner is the client. Before any result, build or 'ready' message goes to him, run the release QA gate in `tasks/todo.md` on real listings found by us (Playwright in his Chrome; never ask him for links), with screenshots checked by the director. Correct identifications with misplaced boxes is a failed release.
+Rule: the owner is the client. Before a build, or anything else he will load or look at in the browser, is presented to him as ready, run the release QA gate in `tasks/todo.md` on real listings found by us (Playwright in his Chrome; never ask him for links), with screenshots checked by the director. Correct identifications with misplaced boxes is a failed release.
+
+Scope (the agent's wording, first added 2026-11-14; on 2026-11-15 the owner approved folding it into the rule above): reports of test runs, study results, reviews and doc changes do not wait for this gate.
 
 ## QA verdicts come from on-screen screenshots, not the overlay canvas
 Gate 3 (2026-10-25) passed the L2 resize check from the extension's canvas dump, which held 3 correct boxes, while the real on-screen screenshot showed no boxes at all (the canvas was not visible after the resize).

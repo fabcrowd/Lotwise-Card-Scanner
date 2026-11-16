@@ -367,3 +367,112 @@ Owner chose: all phases, set-logo stamps first. Plan and evidence: `.tmp/stamps/
 - [x] Tilt gate and blur arms: tilt training skipped, no blur model qualifies, model E stays. Report: `card-scanner-data/data/reports/geo/README.md`.
 - [ ] Fresh test set, 600 boxes: 663 photos from 169 lots harvested (`card-scanner-data/data/harvest-20261108` and `harvest-20261108b`). Test set done: 875 agreed boxes, 133 final obscured (two blind tag passes). obscure50 degrader built, calibrated on dev, tested; pilot preregistered (`data/reports/obscure/PREREGISTRATION.md`). Pilot done (the degrader adds little beyond longer training). Recognition-gap follow-up: a corner model trained on real photos passed on a fresh blind set (+5.3 top-1; `card-scanner-data/data/reports/fresh-20261111/README.md`).
 - [ ] Port the corner model behind a Chrome A/B (owner OK 2026-11-12). Started: `tools/extension-wasm/lib/corners.js`, warp in `lib/rectify.js`. Remaining steps are listed in `card-scanner-data/tasks/handoff.md` ("Owner chose 2026-11-12"). Handoff: `card-scanner-data/tasks/handoff.md`. Plan: `card-scanner-data/data/reports/obscure/PLAN.md`.
+
+## Extension UI redesign (2026-11-14, built, not committed)
+Spec: `docs/plans/extension-ui-redesign.md`. Owner asked for a consumer-ready redesign of the popup, wizard and options page. Nothing is committed until the owner asks.
+- [x] Research: scanner apps and card sites (summary in the spec, section 1).
+- [x] Audit of the current UI, its script hooks and test pins.
+- [x] Screenshot harness `tests/e2e/ui-states.mjs` (`node tests/e2e/ui-states.mjs <label>` writes 47 PNGs to `.tmp/ui-shots/<label>/`: every popup and options state, light, dark, 420 px, 360 px, forced colors). "Before" set: `.tmp/ui-shots/before/`; final set: `.tmp/ui-shots/final/`.
+- [x] Fonts, `ui/tokens.css`, `ui/popup.css`, popup markup (logo, icons, row thumbnail, price classes, one scroller, state rail).
+- [x] Options page on the shared tokens (`ui/options.css`).
+- [x] Accessibility pass: contrast computed for every token pair, forced-colors blocks, tab order, reduced motion, names never cut.
+- [x] Live run with the real models (`.tmp/ui-shots/live/`): page boxes and popup rails agree before and after a printing pick.
+- [x] Gate: `npm test` 1712 pass, 0 fail, 1 skipped; `npm run lint` clean; dev and `-Store` builds; popup Playwright spec 75 of 75; overlay-remove 3 of 3; draw-box 3 of 3.
+- [x] Cold adversary review of the diff; its two should-fix items fixed (put-back focus with a new test, thumbnail name).
+- [ ] Owner: look at it in Chrome (load `dist/extension-wasm`), then decide on commit. Not done by the agent: a smoke on live Facebook or Mercari listings (the `data/` profile is not in this checkout).
+- [ ] Follow-ups found and left alone because they change scripts, wording or tests (owner decision): the setup wizard does not trap focus or hide the page behind it from the keyboard; four buttons have an `aria-label` that does not start with their visible text; `aria-label` on the price `div` is ignored by screen readers; the "More" button sits inside a `radiogroup`; `#stat-value` is now hidden by CSS and can be removed with its tests; the store listing's promo image and screenshots still show the old popup.
+
+## Extension UI redesign, round 2 (2026-11-14, owner request: bigger cards, scaling, less text)
+Spec: `docs/plans/extension-ui-redesign.md` section 7.
+- [x] Inspiration captured: `.tmp/inspiration/` (dextcg, pkmn.gg, cardelyx, dribbble).
+- [x] Slice A: layout and declutter (header icons, toast, lot card, row icon cluster, choose row, empty state), responsive panes and grid, card-size slider, tile hover motion.
+- [x] Slice B: hover compare preview (`lib/loupe.js`, 19 unit tests; three Playwright tests).
+- [x] Wide-window fixes: candidate grid fills the row at 1920 px; lot figure stays on one line in the side panel.
+- [x] Screenshots at 500, 900, 1440 and 1920 px wide, light and dark, sizes small and large, preview open (`.tmp/ui-shots/final2/`, 66 PNGs, 0 failed).
+- [x] Gate (2026-11-15): `npm test` 1731 pass, 0 fail, 1 skipped; lint clean; dev and `-Store` builds; popup spec 78 of 78; overlay-remove 3 of 3; draw-box 3 of 3.
+- [x] First cold review: preview stayed open after a re-render; a saved large card size applied under 440 px. Both fixed with failing-first tests. Second review: closing the preview on every re-render made it vanish as prices arrived; fixed with `refresh()`, which keeps the preview on the tile under a resting mouse.
+- [x] Third cold review: `refresh()` closed a keyboard-opened preview on each re-render (no pointer position), and the 150 ms scroll window could leave the preview beside a tile that had moved.
+- [x] Fix: the preview remembers whether pointer or focus opened it and re-aims at that tile; every scroll re-aims instead of closing; the re-render Playwright test waits on a real re-render instead of a fixed sleep.
+- [x] Final cold review: ship. Its polish items done: a same-card scroll only moves the preview (no image reload) and resizes the kept images; Escape, blur and focus-away pinned by unit tests; the new browser tests clean up in `finally`.
+- [x] Final gate (2026-11-15): `npm test` 1740 pass, 0 fail, 1 skipped; `tests/loupe.test.js` 28 of 28; lint clean; dev and `-Store` builds; popup spec 79 of 79; overlay-remove 3 of 3; draw-box 3 of 3.
+- [ ] Owner: try it in Chrome (load `dist/extension-wasm`) and decide on commit.
+
+## Extension UI redesign, round 3 (2026-11-15, owner request: the page overlay)
+Spec: `docs/plans/extension-ui-redesign.md` section 8. The owner's binder screenshot showed two-line tags covering every card's name and art.
+- [x] Spec: corner brackets plus a bottom-right price chip at rest; the name card on hover, outside the card.
+- [x] Build (builder, test-first) with a before/after screenshot harness `tests/e2e/overlay-states.mjs` (`.tmp/overlay-shots/before|after/`; "before" is a reconstruction, a visual reference only). Overlay unit files 82 of 82; `npm test` 1749 pass, 0 fail, 1 skipped; lint clean; overlay-remove 3, draw-box 3.
+- [x] Cold review: ship. Follow-ups done test-first (overlay unit files 86 of 86, lint clean): the inside-fallback name card no longer covers the chip; 3x3 and 5x5 grid tests that no chips overlap; a test that the X wins over the name card.
+- [x] Owner reference look (2026-11-15): the in-progress narrow popup, saved as `.tmp/reference/owner-favorite-2026-11-15.png`, spec 9.7.
+- [x] `scan-smoke` rerun alone (2026-11-15): it still fails, and the cause predates this work. It waits for `window.updateResults` in the `dist/extension-wasm` popup (`tests/e2e/scan-smoke.spec.js:143`), but no committed `tools/extension-wasm` code ever defined that function (`git grep updateResults HEAD -- tools/extension-wasm` and the same at d175adb find nothing). The spec was written for the older dev extension's hook. Owner decision: fix the spec to drive the popup the way `extension-wasm-popup.spec.js` does, or retire it.
+- [x] Popup side (spec section 9), from the owner's full-width screenshot of a priced binder page: auto-identified cards reach the popup without a page crop (`background.js` ~1282 attaches it only to unsure cards), so their rows have no picture and the compare preview has nothing beside the candidate; the wide grid overflows; names wrap to three lines; no clear end point.
+- [x] Build: every card carries its crop; one row structure at every width; "Pick printing (n)" and "Priced (n)" groups and "All cards priced"; a visible "Change" that reopens the choice with Cancel; the compare dock (spec 9.5). `npm test` 1758 pass, 0 fail, 1 skipped; lint clean; both builds; popup spec 92; overlay-remove 3; draw-box 3; `node tests/e2e/ui-states.mjs round3` 82 PNGs, 0 failed.
+- [x] Builder's own call, kept: cards with an open printing sit under "Pick printing (n)", never as priced rows.
+- [x] Cold review of the popup diff: fix first. All five items fixed test-first. Removing or skipping a card in Change no longer leaves it stuck open. "All cards priced" counts only the shown cards and needs a real price. A same-card pick from Change is a Cancel and saves no correction. Only one row is in Change at a time. The dock image ends above the status toast.
+- [x] Final gate (2026-11-15, both builds together): `npm test` 1759 pass, 0 fail, 1 skipped; lint clean; `-Store` and dev builds; popup spec 96 of 96; overlay-remove 3 of 3; draw-box 3 of 3; `node tests/e2e/ui-states.mjs round3` 82 PNGs, 0 failed; `node tests/e2e/overlay-states.mjs final` 8 PNGs.
+- [ ] Owner: try it in Chrome on a real listing (reload `dist/extension-wasm`), then decide on commit.
+- [x] Click a card on the page to open the scanner at it (spec 8.5), plus the high-value double-check row with Confirm (spec 9.8), the printing-tile focus and the popup sender check. `npm test` 1775 pass, 0 fail, 1 skipped; lint clean; both builds; popup spec 105; overlay-remove 3; draw-box 3.
+- [x] Cold review fixes, three rounds (2026-11-15):
+  - Site UI over a card keeps its clicks. The rule: the top element is site UI only when it is unrelated to the photo AND is interactive or has visible text. A transparent text-free layer, a text-free link, or a shadow-DOM photo still counts as the photo.
+  - One window on a quick double-click (serialized opener, `lib/scanner-window.js`).
+  - The pending card is stored only when a window is created, with its page URL, and is cleared if create fails. It is taken at popup start and applied after the restore.
+  - A page click from another tab is ignored (`acceptPickSender`).
+  - Focus for skipped rows. A placeholder for a failed catalog image. A bounded text probe.
+  - Evidence: `npm test` 1808 pass, 0 fail; lint clean; overlay-remove 5 of 5.
+- [x] Options page, spec 11.7 options part:
+  - Prices / Photos / Help improve Card Scanner, then a collapsed Advanced. The look-alike switch is hidden. "Remember my fixes" and "Use my saved fixes".
+  - Evidence: `tests/options-layout.test.js` 13 of 13; popup spec 106 of 106. Screenshots `.tmp/options-shots/`.
+- [x] Interaction model, spec section 10, built:
+  - Page pointer cursor and an X hover ring.
+  - Page hover links the popup row (`overlayHover`).
+  - The pill goes through the popup's full-size path.
+  - Draw mode: a click without a drag stays in draw mode; Cancel button; the crosshair toggles.
+  - Crop brackets brighten. A check badge on candidate tiles. `.unrec-thumb` is a button.
+  - Focus preview in the review dialog.
+  - Toasts with Change or Put back (8 s, hold on hover).
+  - Evidence: `npm test` 1826 pass, 0 fail; popup spec 117; overlay-remove 7; draw-box 4; store tests 24 of 24.
+- [x] Section 10 cold review: accept with fixes. All four fixed:
+  - Toast actions check the lot and the card state. Clear, a new scan and a restore close an action toast.
+  - The full-size pill: if access is granted, it runs the whole path; if not, it focuses the popup button. With the window closed, it uses a pending `{kind:"fullsize"}` record.
+  - The linked ring resets on a lot change and on pagehide.
+  - The text probe skips script and style.
+  - Evidence: `npm test` 1832 pass, 0 fail; lint clean; store tests 27 of 27; popup spec 121; overlay-remove 7; draw-box 4.
+  - The dev build holds `<all_urls>`, so the no-access pill path is shown only with a stub.
+- [x] Section 11 slice A (11.1-11.3) built.
+  - Built:
+    - Wizard wording, plus Optional / Skip / Retry.
+    - Reason line for a disabled Scan Page.
+    - Status line while scanning, and a short summary toast.
+    - One notice at a time.
+    - "Scan again".
+    - First-scan legend pill.
+    - "Pick" chip, "Pick a version", "Click to pick".
+  - Results: `npm test` 1851 pass, 0 fail; popup spec 127; overlay-remove 7; draw-box 4.
+  - Kept: "about 147 MB", the computed figure pinned by `popup-markup.test.js`.
+  - Kept: the unreadable-tab reason does not disable the button.
+- [x] Slice A review fixes done: `npm test` 1859 pass, 0 fail; popup spec 130; overlay-remove 7; draw-box 4; shots `.tmp/ui-shots/slice-a2`, `.tmp/overlay-shots/slice-a2`. Fixed:
+  - the status line on a rescan (`#scan-status` under the Scan button);
+  - setup Retry after a thrown call;
+  - a stale access notice;
+  - a `scanProgress` scan guard;
+  - the legend placed outside the photo (above, else below, else inside with an 8 s auto-close), with the text "Amber: pick the card".
+- [x] Slice B (11.4-11.7 + summary count + options leftovers) built: one `lotCounts` feeds the lot card, headings, review button and toast; Skip this card; no-match search open; version wording; high-value chip; Copy list / Download CSV; Clear with Undo; Not read / Not a card / Left out; Add card. `npm test` 1870 pass, 0 fail; popup spec 140; overlay-remove 7; draw-box 4.
+- [x] Slice B review fixes done. `npm test` 1876 pass, 0 fail (rerun by the main session); lint clean; store + options tests 37; popup spec 145; overlay-remove 7; draw-box 4; shots `.tmp/ui-shots/slice-b2`. Fixed: Undo re-requests in-flight prices; Undo refuses when the page changed; snapshot `_showNotCard` + status; list press keeps the scan summary; clear `_autoSearch` per lot; "Picked:" only for user picks; "Not read (4)" with one row; header title never wraps ("Add card" text at 560 px+); lot card "Left out".
+- [ ] Known, left as is: the copy toast's "unconfirmed left out" can differ from the lot card's unconfirmed count by cards whose price is still loading.
+- [x] Whole-diff cold review: accept with fixes; nothing blocks. Owner rules hold (`via` values identical to HEAD); store tests 24 of 24.
+- [x] Final fixes done and reviewed (accept, nothing blocks). Evidence: `npm test` 1881 pass, 0 fail, 1 skipped (rerun by the main session); lint clean; both builds; store + options tests 37; popup spec 147; overlay-remove 7; draw-box 4; shots `.tmp/ui-shots/final/` (94), `.tmp/overlay-shots/final/`. Fixed:
+  - one `resetLotUiState()` on every lot replacement path (`_whyOpen` and `_showNotCard` leaks);
+  - the X always wins over `photoOnTop`;
+  - `_sentHover` reset on teardown;
+  - visible "printing", "variant" and "finish" changed to "version" (CSV headers kept for existing spreadsheets).
+- [ ] Owner, nearby and pre-existing (not changed): the popup's `rescanResult`, `drawnCard`/`drawnFailed` and `scanProgress` listeners have no sender check (present at HEAD, `popup.js` 307/489/572). A content script on another page could send a `rescanResult` and replace the lot. Suggested fix: accept them only from the extension's background.
+- [ ] Then: screenshots to the owner, handoff update; commit only when the owner asks.
+  - (B) 11.4-11.7: to confirm, versions, the final screen, the header, plus the options leftovers. The fixes card says "unless you turn on shared learning above" (should name "Help improve recognition for everyone"). "0 references" should read e.g. "0 cards remembered".
+- [ ] Owner question from the audit: swapping a card's version saves no correction, but picking its set does (popup.js ~1527-1529).
+- [ ] Owner decisions 2026-11-15 ("behave the same"; sender check "if you think that's best"), with a builder:
+  - a version swap to a definite card saves a correction like a set pick (via "candidates", an existing via); one printed in several sets saves nothing until its set is picked;
+  - `saveSetCorrection` carries `drawnFields(card)`, so a drawn row's set or version pick saves its own crop (before, the set pick sent the scan's crop at that index);
+  - the `rescanResult`, `drawnCard`/`drawnFailed` and `scanProgress` listeners accept only `acceptFromBackground`.
+  - Then: a cold adversary review. Still open for the owner: "Tick all", the full-size pill's extra click, scan-smoke.
+  - Built: popup spec 150 pass (3 new), `npm test` 1881 pass 0 fail 1 skipped, lint clean (builder report). Cold review folded into the section 12 review.
+- [ ] Spec section 12 (owner, 2026-11-15): settled Priced rows collapse to one line (photo, name, set #number, value); click to expand. Also 12.5: "Tick all" removed, `scan-smoke.spec.js` and `public/scan-test.html` deleted. Built (photo = stock image with crop fallback, owner 2026-11-15): `npm test` 1888 pass 0 fail 1 skipped, popup spec 158, overlay-remove 7, store tests 10, lint clean (builder report); shots `.tmp/ui-shots/collapse/` (8), viewed by the main session. Cold review: accept with fixes. Fixed: `repeatedName` keeps a row open (12.1), whitespace in playwright.config.js and README restored, `results-printing-picked` shot opens the row. Smoke-spec deletion was the owner's ask. Not changed (matches set picks, as the owner asked): a version swap's guess is the current row and carries no price. Evidence: `npm test` 1888 pass 0 fail 1 skipped and lint clean (rerun by the main session); popup spec 159; shots `.tmp/ui-shots/final2/` (102).
+- [ ] Commit only when the owner asks ("commit the UI redesign").

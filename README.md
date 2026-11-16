@@ -1,4 +1,4 @@
-# Pokémon Card Scanner
+# Sweep
 
 Personal Windows toolkit that finds Pokémon TCG cards in photos, names them and shows prices.
 
@@ -13,10 +13,15 @@ Shared learning is an opt-in loop. The extension can send crops and corrections 
 
 ## Current status
 
-This section follows `HANDOFF.md` ("Current state", 2026-11-14).
+This section follows `HANDOFF.md` ("Current state", 2026-11-14) and the UI redesign of 2026-11-15.
 
 - The extension is at manifest version 3.1.0. Pull requests #2 and #3 were merged into `main` on 2026-11-14.
-- The extension scans a page, names cards, lets you confirm or choose the printing, draw a box around a missed card and remove a card with an X. The price follows the card you pick and appears only once a card is confirmed.
+- The extension scans a page, names cards, lets you confirm a card or choose it and its version, draw a box around a missed card and remove a card with an X. The price follows the card you pick, and an unconfirmed price is always marked as unconfirmed.
+- **UI redesign (2026-11-15), built but not committed.** It is on branch `feat/price-follows-pick` as uncommitted changes, and it is described in [Using the scanner](#using-the-scanner). The spec is [`docs/plans/extension-ui-redesign.md`](docs/plans/extension-ui-redesign.md). The evidence on 2026-11-15:
+  - `npm test`: 1888 pass, 0 fail, 1 skipped. Lint clean.
+  - Popup Playwright spec: 159 passed.
+  - Every slice had a cold review.
+  - It is committed only when the owner asks. The new `ui/` folder and four new `lib/` modules are untracked until then.
 - Sharing is opt-in and off by default. With it on, the extension also sends the boxes you drew, removed and put back, on photos you teach it.
 - The relay and the nightly job are deployed. The nightly job counts the box signals and strips them before consensus, the exam and training, so nothing trains on them yet.
 - No real box signal row has been sent yet; that is the remaining end-to-end check.
@@ -44,7 +49,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension
 
 ### Load unpacked and first run
 
-Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick `dist/extension-wasm`. On first launch the popup asks you to click **Download models** (about 147 MB, one time); **SCAN PAGE** stays off until that finishes. Full steps are in [`tools/extension-wasm/INSTALL.md`](tools/extension-wasm/INSTALL.md).
+Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick `dist/extension-wasm`. On first launch the scanner window shows "Set up Sweep": click **Download** (about 147 MB, one time). After that everything runs on your computer. **Scan Page** stays off until the download finishes. Full steps are in [`tools/extension-wasm/INSTALL.md`](tools/extension-wasm/INSTALL.md).
 
 ### Build variants
 
@@ -54,15 +59,66 @@ Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**,
 
 ### What it does today
 
-- Scans a page, or a whole long page, and overlays name, set and price on each card it finds.
-- Lets you confirm a guess or choose the card, including the printing (set and version) when several are close.
+- Scans a page, or a whole long page, and marks each card it finds on the page with a small price chip.
+- Lets you confirm each card, or choose the right card and its version when several are close.
 - Lets you draw a box around a card it missed.
 - Lets you remove a card with the X, and bring back a box the "is this a card" check hid.
-- Skips a card it cannot price instead of guessing a price.
-- Copies or downloads the lot with one estimated lot value.
+- Leaves out a card it cannot price instead of guessing a price.
+- Copies or downloads the lot with one confirmed lot value.
 - Offers opt-in sharing, "Help improve recognition for everyone", which is off until you turn it on. See [`docs/store/privacy-policy.md`](docs/store/privacy-policy.md) for what is sent and [`docs/plans/shared-learning.md`](docs/plans/shared-learning.md) for the design.
 
-The popup shows one price per card; condition chips (NM, LP, MP, HP, DMG) live in Settings. Confidence thresholds, the picker rules and the full-size photo upgrade are described in `CLAUDE.md` and `docs/plans/`.
+The popup shows one price per card. Which price ("Price shown") and the condition chips (NM, LP, MP, HP, DMG) are set in Settings. Confidence thresholds, the picker rules and the full-size photo upgrade are described in `CLAUDE.md` and `docs/plans/`.
+
+### Using the scanner
+
+This is the flow after the 2026-11-15 redesign. The spec is [`docs/plans/extension-ui-redesign.md`](docs/plans/extension-ui-redesign.md), sections 8 to 12.
+
+**Before the first scan.** On first launch a setup screen downloads the models (about 147 MB, once). Optional steps can be skipped, and a failed step offers Retry. When Scan Page cannot run on a tab, a line under the button says why.
+
+**Scanning.**
+- Click **Scan Page**. A status line under the button shows "Looking for cards…", then "Reading 6 cards…".
+- When it finishes, a short message says what it found, for example "Found 9 cards · 4 need you."
+- Only one notice shows at a time.
+
+**On the page.** The extension draws over the listing photo; it never covers a card's name or art.
+- **At rest:** each card has corner brackets and a small price chip in its bottom-right corner. A card waiting for you shows "Pick". On very small cards the chip is a dot.
+- **On hover:** the card's name shows just outside the card, and its row is highlighted in the scanner. Hover only previews.
+- **On click:** clicking a card opens the scanner at that card, or brings the scanner forward if it is already open, and opens that card's row. Clicking acts.
+- **Site menus:** if the site puts its own menu or button over a card, the site keeps that click.
+- **The X:** the X on a card removes it from the lot, and it always wins over the card click.
+- **Color key:** the first scan shows a one-time color key ("Amber: pick the card"). It sits above or below the photo, not over the cards.
+
+**In the scanner window.** The lot card at the top shows the confirmed value, the card count and the condition. It says "All cards priced" once nothing is left to confirm. The list has these groups:
+- **To confirm:** cards the scanner is not sure of. Each one shows the page photo beside the best matches. A price here is marked unconfirmed.
+  - Pick the right card or confirm the best match. Focus then moves to the next card.
+  - A card with no close match opens a search.
+  - "Skip this card" leaves a card out.
+  - "Review all" shows the clear matches together, pre-ticked. A pre-ticked pair you did not tick yourself saves no correction.
+- **Versions to pick:** the card is known but its version is not. The row shows a price range until you pick a version from the picture tiles.
+- **Priced:** confirmed cards.
+  - **Collapsed by default:** each one is a single line with the card's stock image from the catalog, its name, the set and `#number`, the price and an arrow. Click the line to open the full row: the page photo, Change, "Why this card?", Remove and the version pickers. Click again to close it.
+  - **Confirming collapses:** confirming a card collapses its row.
+  - **Stays open:** a row stays open while it still asks you something. That means a high-value check, a price range, a version or set the scanner guessed (`?`), a name found several times in the photo (⚠ "Check it"), or an open change.
+- **High value:** a card whose typical price is $50 or more shows "High value · check the match". It shows the page crop beside the card it was matched to, with **Confirm** and **Change**.
+- **Not read, Left out and Not a card:** these groups are collapsed at the bottom. "Show it" brings back a box the "is this a card" check hid.
+
+**Undo everywhere.**
+- Every pick, skip or removal shows a short message with **Change**, **Put back** or **Undo**. The message stays for 8 seconds, longer while you hover it.
+- **Clear** empties the lot and offers Undo. Undo refuses if the page changed.
+
+**Finishing.** **Copy list (n)** and **Download CSV (n)** export the confirmed cards. Unconfirmed cards are left out and the message says so. The CSV column headers are unchanged, so existing spreadsheets keep working.
+
+**Header and settings.**
+- The header has four controls:
+  - the eye: show or hide the boxes on the page;
+  - the crosshair, "Add card": draw a box around a missed card. The text label shows at 560 px wide and up;
+  - a card-size slider;
+  - Settings.
+- Settings are grouped as Prices, Photos and "Help improve Sweep", plus a collapsed Advanced section. Advanced holds straightening, "Remember my fixes" and the developer-only controls.
+
+**What your choices teach it.** Picking a card, picking a set or version, or confirming a match saves a local correction, with the existing `via` values. These corrections stay on this device unless sharing is on.
+
+**Wording.** Visible text uses "version", "unconfirmed" and "skip". It does not use "printing", "variant" or "finish".
 
 ### Shared learning
 
@@ -180,7 +236,11 @@ npm run test:vellum                       # VellumAI Python tests (tools/vellum-
 npx playwright test                       # E2E, headless Chromium (skips the extension specs listed in playwright.config.js)
 npx playwright test --project=extension   # extension E2E (headed, needs real Chrome)
 npx playwright test --project=demo        # demo overlay (headed)
+node tests/e2e/ui-states.mjs <name>       # popup screenshots of every UI state -> .tmp/ui-shots/<name>/ (ONLY=<state> for a subset)
+node tests/e2e/overlay-states.mjs <name>  # page overlay screenshots -> .tmp/overlay-shots/<name>/
 ```
+
+Run the extension specs and the screenshot scripts one at a time; each starts its own Chrome.
 
 Playwright and the real-world harness (`node scripts/realworld-run.mjs <pages.json>`, always with an explicit pages file) load `dist/`, so rebuild the extension first. The shared-data Python tests live in `tools/shared-data/tests/` and run with `unittest`.
 
@@ -190,6 +250,7 @@ Playwright and the real-world harness (`node scripts/realworld-run.mjs <pages.js
 - [`CLAUDE.md`](CLAUDE.md): rules, commands and gotchas for agents working in this repo.
 - [`docs/handoff-fable-5.2-hardening.md`](docs/handoff-fable-5.2-hardening.md): the current hardening handoff.
 - [`tasks/lessons.md`](tasks/lessons.md): corrections and non-obvious decisions.
+- [`docs/plans/extension-ui-redesign.md`](docs/plans/extension-ui-redesign.md): the popup, overlay and options redesign spec (sections 1 to 12).
 - [`docs/store/`](docs/store/): store listing and privacy policy.
 - [`docs/known-limits.md`](docs/known-limits.md): what the extension cannot do yet.
 - [`CHANGELOG.md`](CHANGELOG.md): notable changes.
@@ -213,20 +274,20 @@ Orientation:
 - Run the single relevant test file while working; run the full `npm test` once at the end. Shell is PowerShell: no `&&`.
 - A Cursor agent may commit concurrently: run `git status` first and stage specific files.
 
-Counts below are tracked files (729 in total).
+Counts below are tracked files once the 2026-11-15 UI redesign is committed (753 in total; 730 at `f55a327`). The redesign adds 25 files, all marked *(new)* below, and deletes `tests/e2e/scan-smoke.spec.js` and `public/scan-test.html`.
 
 ### Top level
 
 | Path | Purpose |
 |---|---|
-| `tools/` (345) | The extension (the product), the VellumAI sidecar, the relay, the shared-data pipeline, an older extension, a labeling tool |
-| `tests/` (185) | `node:test` files, Playwright specs, fixtures, helpers |
+| `tools/` (357) | The extension (the product), the VellumAI sidecar, the relay, the shared-data pipeline, an older extension, a labeling tool |
+| `tests/` (197) | `node:test` files, Playwright specs, screenshot scripts, fixtures, helpers |
 | `scripts/` (54) | Build, vendor, benchmark, sealed-set and real-world scripts |
-| `docs/` (44) | Plans, handoffs, store listing and privacy policy, archive, autopilot PRDs |
+| `docs/` (45) | Plans, handoffs, store listing and privacy policy, archive, autopilot PRDs |
 | `tasks/` (52) | Task history, lessons, research notes, QA smoke evidence in `tasks/qa-smoke/` |
 | `src/` (28) | Node dashboard and JSON API (plain ESM, no framework) |
 | `public/` (3) | Static dashboard: `index.html`, `app.js`, `styles.css` |
-| `.claude/` (5) | Claude Code project settings, a scheduler lock file, two planning notes |
+| `.claude/` (4) | Claude Code project settings (`settings.json`, `settings.local.json`) and two planning notes |
 | `CLAUDE.md` | Agent rules, commands, "Where things live" |
 | `HANDOFF.md` | Current state, next steps, decisions |
 | `README.md` | This file |
@@ -239,7 +300,7 @@ Counts below are tracked files (729 in total).
 | `.env.example` | Template of environment keys; copy to `.env` |
 | `.cursorignore` | Cursor ignore list |
 
-### Extension: `tools/extension-wasm/` (90 tracked files)
+### Extension: `tools/extension-wasm/` (102 tracked files)
 
 Chrome MV3 source. The manifest has no `content_scripts`; `content.js` and `photo-detection.js` are injected by the background.
 
@@ -248,17 +309,18 @@ Entry files (folder root):
 | File | Purpose |
 |---|---|
 | `manifest.json` | MV3 manifest |
-| `background.js` | Service worker (about 3,000 lines): detection pipeline with onnxruntime-web on `globalThis.ort`, page scans, pricing, corrections |
-| `popup.html`, `popup.js` | Popup markup and logic (`popup.js` about 1,900 lines; has `// dev-only:start` and `// dev-only:end` blocks) |
-| `options.html`, `options.js` | Options page: PokemonPriceTracker key, price filters, site access (has dev-only blocks) |
-| `content.js` | Page-side overlay (IIFE, guarded against double injection): boxes and labels over the scanned page |
+| `background.js` | Service worker (about 2,900 lines): detection pipeline with onnxruntime-web on `globalThis.ort`, page scans, pricing, corrections |
+| `popup.html`, `popup.js` | The scanner window: markup and logic (`popup.js` about 2,400 lines; has `// dev-only:start` and `// dev-only:end` blocks). Its message listeners accept only the background, or the lot's own page for page clicks |
+| `options.html`, `options.js` | Settings: Prices (sources, PokemonPriceTracker key, "Price shown"), Photos (full-size photos, site access), "Help improve Sweep" (sharing), and a collapsed Advanced section (has dev-only blocks) |
+| `content.js` | Page-side overlay (about 2,200 lines; IIFE, guarded against double injection): corner brackets, price chips, the hover name card, the X and draw mode, on a canvas that ignores pointer events |
+| `ui/` *(new)* | `tokens.css` (the shared design tokens), `popup.css` and `options.css`, and `fonts/` (Bricolage Grotesque and Figtree, variable woff2, with their OFL licenses) |
 | `photo-detection.js` | Page-side window detection of one upright card, or one tilted up to 45 degrees or lying sideways |
 | `INSTALL.md` | Install steps for the unpacked extension |
 | `assets/` | `check.bin` (the "is this a card" model) and `check.json` |
 | `icons/` | 16, 48 and 128 px PNG icons |
 | `vendor/` | onnxruntime-web files; not tracked, fetched by `scripts/setup_vendor.ps1` |
 
-`lib/` (76 files). ESM modules imported by the background, popup, options or content script. File names below are under `tools/extension-wasm/lib/`.
+`lib/` (80 files). ESM modules imported by the background, popup, options or content script. File names below are under `tools/extension-wasm/lib/`.
 
 Detection and crops:
 - `detect.js`: YOLO card detection through onnxruntime-web (input 640, confidence and NMS constants).
@@ -322,9 +384,15 @@ Drawn boxes and overlay:
 - `draw-box.js`: pure parts of "Draw a box": maps the drawn rectangle to photo pixels and builds the entry.
 - `drawn-examples-store.js`: developer build only; drawn boxes kept locally as training examples, never uploaded.
 - `overlay-toggle.js`: the popup's "Show boxes on page" toggle.
-- `overlay-remove.js`: removes a card from the scan and the lot total when its overlay X is clicked.
-- `card-display.js`: what the popup and overlay may show as a price (no price for an unconfirmed card).
-- `option-strip.js`: image-first pickers for printings, versions and finishes on a confirmed row.
+- `overlay-remove.js`: removes a card from the scan and the lot total when its overlay X is clicked; also holds the sender checks (`acceptPageSender`, `acceptFromBackground`, `acceptPickSender`).
+- `card-display.js`: what the popup and overlay may show as a price (an unconfirmed price is marked), `lotCounts` (the one count behind the lot card, headings, review button and scan message), `swapVersion`, and `isSettledRow` (whether a Priced row collapses).
+- `option-strip.js`: image-first tiles for picking a card's version on a row.
+
+Scanner window (popup UI):
+- `journey.js` *(new)*: the visible text of the user journey (scan status, notices, version wording, Clear and Undo), plus `scanProgressUpdate`.
+- `loupe.js` *(new)*: the hover preview of a card picture and the compare dock, plus `focusTile`.
+- `pending-show.js` *(new)*: a click on a page card while the scanner is closed. It is stored for 10 seconds and taken once when the scanner opens.
+- `scanner-window.js` *(new)*: opens or focuses the one scanner window, one request at a time.
 
 Pricing:
 - `pricing.js`: market price from pokemontcg.io with a 24-hour `chrome.storage.local` cache.
@@ -339,7 +407,7 @@ Corrections and choose flow:
 - `corrections-store.js`: saved corrections and recent scan pictures in IndexedDB.
 - `card-picker.js`: ask-the-user logic: which cards to offer for a guess, and manual catalog search.
 - `memory-ui.js`: memory chips on a row and the "Why this card?" panel markup (escaped).
-- `skip.js`: "Can't price this" for cards the English catalog cannot name; keeps scan data, excludes from pricing.
+- `skip.js`: "Skip this card" for cards the English catalog cannot name. It keeps the scan data, excludes the card from pricing, and lists it under "Left out".
 - `lot-session.js`: the saved lot per page, kept 24 hours in `chrome.storage.session`.
 - `lot-export.js`: the confirmed lot as rows for a sheet (pure).
 - `test-photos.js`: test photo records (detector picture plus drawn boxes) for labeling; no identity or price.
@@ -424,17 +492,18 @@ Top level:
 
 `scripts/archive/` (13): a README and 12 one-off diagnostic and Playwright scripts from October 2026, kept for history; not run by the test suite.
 
-### `tests/` (185 files)
+### `tests/` (197 files)
 
-- Naming: `tests/<name>.test.js` by convention covers the module with the same base name (`fusion.test.js` for `lib/fusion.js`, `relay-validate.test.js` for the relay's `validate.js`). It is a convention, not enforced; some files cover several modules. There are 141 `*.test.js` files at the top of `tests/`, all run by `npm test`.
-- `tests/e2e/`: Playwright specs (`check-live`, `demo-overlay`, `draw-box`, `extension-chrome`, `extension-overlay`, `extension-visual`, `extension-wasm-popup`, `overlay-remove`, `screen-card-detection`), `live-scan.mjs`, and `screenshots/` (PNGs; do not open). `scan-smoke.spec.js` and `public/scan-test.html` are untracked local files; `playwright.config.js` names the spec, and the spec loads the page.
+- Naming: `tests/<name>.test.js` by convention covers the module with the same base name (`fusion.test.js` for `lib/fusion.js`, `relay-validate.test.js` for the relay's `validate.js`). It is a convention, not enforced; some files cover several modules. There are 151 `*.test.js` files at the top of `tests/`, all run by `npm test`.
+- New with the UI redesign: `collapse-rows`, `interaction-model`, `journey-fixes`, `journey-text`, `loupe`, `options-layout`, `pending-show`, `priced-screen`, `scan-crop-wiring` and `scanner-window`.
+- `tests/e2e/`: Playwright specs (`check-live`, `demo-overlay`, `draw-box`, `extension-chrome`, `extension-overlay`, `extension-visual`, `extension-wasm-popup`, `overlay-remove`, `screen-card-detection`), `live-scan.mjs`, the screenshot scripts `ui-states.mjs` and `overlay-states.mjs` *(new)*, and `screenshots/` (PNGs; do not open). `extension-wasm-popup.spec.js` is the main popup spec, with 159 tests on 2026-11-15.
 - `tests/fixtures/` (6): check-model and corner parity files, Facebook photo sizes, a trimmed price snapshot. `tests/helpers/` (2): `fake-idb.js`, `fake-page.js`.
 - Contract pins (each fails when a shared contract drifts): `store-build.test.js` (exact store permissions and hosts), `store-clean.test.js` (package cleanliness), `store-transform.test.js` (`stripDevBlocks`), `sealed-build.test.js` (sealed build differs from shipped only in the source-URL check; Windows only), `extension-wasm-build.test.js`, `share-rows.test.js`, `share-queue.test.js`, `shared-data-pack.test.js` (extension reads the Python pack format), `contribution.test.js`, `fusion.test.js`, `confirm-rule.test.js`, `bundle.test.js`, `packaged-check.test.js`, `relay-handler.test.js`, `relay-validate.test.js`, `relay-cron.test.js`, `box-signal-wiring.test.js`, `hidden-cards-wiring.test.js`.
 
-### `docs/` (44 files)
+### `docs/` (45 files)
 
 - Current: `handoff-fable-5.2-hardening.md` (hardening handoff), `known-limits.md`, `blurry-training-plan.md`, `blurry-training-review.md`, `improvement-plan.md`, `publish-v3.0.md`, `release-v3.0-notes.md`, `team-goals.md`.
-- `plans/`: `shared-learning.md` (schema and relay design), `launch.md` (store launch plan), `self-learning.md`, `card-picker-and-sealed-test.md`.
+- `plans/`: `extension-ui-redesign.md` *(new; the popup, overlay and options redesign spec)*, `shared-learning.md` (schema and relay design), `launch.md` (store launch plan), `self-learning.md`, `card-picker-and-sealed-test.md`.
 - `store/`: `listing.md`, `privacy-policy.md`, `icon.svg`, `icon-small.svg`, `promo-small-440x280.png`.
 - `archive/` (8): old handoffs and plans (`README.md` says they are superseded history; it does not list them). `autopilot/` (19): Cursor notes, `queue.json`, and PRDs for two earlier projects.
 
@@ -456,8 +525,8 @@ Top level:
 
 | Playwright project | Selection (from `playwright.config.js`) | Mode |
 |---|---|---|
-| `chromium` | every spec in `tests/e2e/` except `extension-chrome`, `extension-visual`, `scan-smoke`, `draw-box`, `overlay-remove`, `check-live` | headless |
-| `extension` | `extension-chrome`, `extension-visual`, `extension-wasm-popup`, `scan-smoke`, `draw-box`, `overlay-remove`, `check-live` | headed |
+| `chromium` | every spec in `tests/e2e/` except `extension-chrome`, `extension-visual`, `draw-box`, `overlay-remove`, `check-live` | headless |
+| `extension` | `extension-chrome`, `extension-visual`, `extension-wasm-popup`, `draw-box`, `overlay-remove`, `check-live` | headed |
 | `demo` | `demo-overlay.spec.js` | headed |
 
 ### Where to change what
@@ -479,3 +548,7 @@ Top level:
 | Community pack format | `tools/shared-data/pipeline/pack.py` and `parsePack` in `tools/extension-wasm/lib/bundle.js` | `tests/shared-data-pack.test.js`, `tools/shared-data/tests/test_pack.py` |
 | Build variants (dev, sealed, store) | `scripts/build-wasm-extension.ps1` | `tests/extension-wasm-build.test.js`, `tests/sealed-build.test.js`; never hand-edit `dist/` |
 | Playwright projects and spec selection | `playwright.config.js` | `tests/e2e/` |
+| Popup look (colors, type, spacing) | `tools/extension-wasm/ui/tokens.css`, `ui/popup.css`, `ui/options.css` | `docs/plans/extension-ui-redesign.md` sections 3 and 9.7; `node tests/e2e/ui-states.mjs <name>` |
+| Popup wording | `tools/extension-wasm/lib/journey.js`, `lib/choose-flow.js` | `tests/journey-text.test.js`; use "version", "unconfirmed" and "skip" |
+| Which confirmed rows collapse | `isSettledRow` in `tools/extension-wasm/lib/card-display.js`; the call in `renderCardRow` (`popup.js`) | `tests/card-display.test.js`, `tests/collapse-rows.test.js`; spec section 12 |
+| Page overlay look and clicks | `tools/extension-wasm/content.js` | `tests/overlay-labels.test.js`, `tests/interaction-model.test.js`, `tests/e2e/overlay-remove.spec.js`; spec sections 8 and 10 |
