@@ -64,7 +64,12 @@ export async function applySetStamp(result, text, { cardsInSet, catalogCard, pri
   if (result.finishSure && result.finishSure !== "reverse") return result;
   const card = stampedCard(result, code, text, { cardsInSet, catalogCard });
   if (!card) return result;
-  if (current?.id !== card.id) Object.assign(result, await priceIdentity(card));
+  if (current?.id !== card.id) {
+    // A failed lookup keeps the stamped identity, with no price (the old card's price is not this card's).
+    let prices = { price_grid: null, market_price: null, price_variant: null };
+    try { prices = await priceIdentity(card); } catch { /* every price source failed */ }
+    Object.assign(result, prices);
+  }
   result.identity = card;
   result.stampSet = code;
   result.setChoices = undefined;

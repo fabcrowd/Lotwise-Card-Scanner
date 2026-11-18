@@ -54,6 +54,27 @@ test('two printings of one product stay on their own prices', () => {
   assert.equal(next.spreadRatio, 9.5 / 0.46);
 });
 
+const cond = (price) => ({ NM: price, LP: null, MP: null, HP: null, DMG: null });
+
+test('an older snapshot leaves a fresher grid alone', () => {
+  const card = grid({ updatedAt: '2026-11-17T20:00:00Z', variants: { holofoil: { productId: 517044, market: 120, conditions: cond(120) } } });
+  assert.equal(applySnapshot(card, parseSnapshot(FILE)), card);
+});
+
+test('a snapshot that prices only some printings does not re-date the others', () => {
+  const card = grid({
+    updatedAt: '2026-08-01T00:00:00Z',
+    variants: {
+      holofoil: { productId: 1, market: 120, conditions: cond(120) },
+      reverseHolofoil: { productId: 89401, market: 8, conditions: cond(8) },
+    },
+  });
+  const next = applySnapshot(card, parseSnapshot(FILE));
+  assert.equal(next.variants.reverseHolofoil.market, 9.5);
+  assert.equal(next.variants.holofoil.market, 120);
+  assert.equal(next.updatedAt, '2026-08-01T00:00:00Z');
+});
+
 test('a file that is not the snapshot is refused', () => {
   assert.throws(() => parseSnapshot('{"v":2}'), /no date/);
   assert.throws(() => parseSnapshot('x'.repeat(8_000_001)), /too large/);

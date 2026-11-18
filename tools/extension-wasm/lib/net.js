@@ -5,9 +5,13 @@ export function isPrivateHost(host) {
   if (!value || value === "localhost" || value.endsWith(".localhost")) return true;
   if (value.endsWith(".local") || value.endsWith(".lan") || value.endsWith(".internal")) return true;
   if (value === "::" || value === "::1" || value === "0.0.0.0") return true;
-  if (/^f[cd][0-9a-f]{0,2}:/.test(value) || value.startsWith("fe80:") || value.startsWith("fec0:")) return true;
+  // fe80::/10 link-local and fec0::/10 site-local together are fe80 to feff; ff00::/8 is multicast.
+  if (/^f[cd][0-9a-f]{0,2}:/.test(value) || /^fe[89a-f][0-9a-f]:/.test(value) || /^ff[0-9a-f]{2}:/.test(value)) return true;
   const mapped = value.match(/^::ffff:(.+)$/);
   if (mapped) return isMappedIPv4(mapped[1]);
+  // IPv4-compatible (::/96) and NAT64 (64:ff9b::/96) forms carry an IPv4 address in the last 32 bits.
+  const embedded = value.match(/^(?:::|64:ff9b::)((?:\d+\.){3}\d+|[0-9a-f]{1,4}:[0-9a-f]{1,4})$/);
+  if (embedded) return isEmbeddedIPv4(embedded[1]);
   const ipv4 = value.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (!ipv4) return false;
   const parts = ipv4.slice(1).map(Number);
@@ -19,6 +23,12 @@ function isMappedIPv4(mapped) {
   if (mapped.includes(".")) return isPrivateHost(mapped);
   if (!/^[0-9a-f]{1,8}$/.test(mapped)) return true;
   return isPrivateIPv4(Number.parseInt(mapped, 16) >>> 0);
+}
+
+function isEmbeddedIPv4(tail) {
+  if (tail.includes(".")) return isPrivateHost(tail);
+  const [high, low] = tail.split(":").map((group) => Number.parseInt(group, 16));
+  return isPrivateIPv4(((high << 16) + low) >>> 0);
 }
 
 function isPrivateIPv4(n) {

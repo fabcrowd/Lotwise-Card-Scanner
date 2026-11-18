@@ -108,3 +108,21 @@ test('onCreateFailed does not run when the window opens or is only focused', asy
   await fake.opener.open({ id: 1, url: 'https://shop.example/a' }, null, async () => { ran += 1; });
   assert.equal(ran, 0);
 });
+
+test('the scanner window id survives a worker restart through session storage', async () => {
+  const { restoreWinId, saveWinId } = await import('../tools/extension-wasm/lib/scanner-window.js');
+  const data = {};
+  const session = {
+    get: async (key) => (key in data ? { [key]: data[key] } : {}),
+    set: async (items) => { Object.assign(data, items); },
+  };
+  assert.equal(await restoreWinId(session, null), null, 'nothing saved yet');
+  saveWinId(session, 77);
+  await tick();
+  assert.equal(await restoreWinId(session, null), 77, 'a restarted worker finds the open window');
+  assert.equal(await restoreWinId(session, 12), 12, 'a known id is kept');
+  saveWinId(session, null);
+  await tick();
+  assert.equal(await restoreWinId(session, null), null, 'a closed window is forgotten');
+  assert.equal(await restoreWinId({ get: async () => { throw new Error('no session'); } }, null), null);
+});

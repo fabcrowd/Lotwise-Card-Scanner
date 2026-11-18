@@ -68,6 +68,55 @@ test('batches hold at most 20 and are posted as JSON to the relay', async () => 
   assert.equal(posts[0].init.credentials, 'omit');
 });
 
+const bigContribution = (n, cropChars, over = {}) => {
+  const base = contribution(n, over);
+  base.cards[0].crop = 'A'.repeat(cropChars);
+  return base;
+};
+
+test('the byte budget of a batch stays at or below the relay body cap', async () => {
+  const { BATCH_BYTE_BUDGET } = await import('../tools/extension-wasm/lib/upload-queue.js');
+  const { MAX_BODY_BYTES } = await import('../tools/relay/src/handler.js');
+  assert.ok(BATCH_BYTE_BUDGET > 0 && BATCH_BYTE_BUDGET <= MAX_BODY_BYTES);
+});
+
+test('a batch is filled only while its body stays under the budget; a lone oversized item is dropped unsent', async () => {
+  const { BATCH_BYTE_BUDGET } = await import('../tools/extension-wasm/lib/upload-queue.js');
+  const store = createShareStore(fakeIndexedDB());
+  const fat = Math.floor(BATCH_BYTE_BUDGET * 0.4);
+  for (let i = 0; i < 3; i++) await store.enqueue(bigContribution(i, fat));
+  await store.enqueue(bigContribution(3, BATCH_BYTE_BUDGET + 10));
+  await store.enqueue(contribution(4));
+  const posts = [];
+  const uploader = createUploader({
+    store, relayUrl: RELAY, backoff: memoryState(), now: () => Date.parse('2026-10-16T10:00:00Z'),
+    fetchFn: async (url, init) => { posts.push(init.body); return { ok: true, status: 200 }; },
+  });
+  assert.deepEqual(await uploader.flush(), { sent: 4, left: 0, dropped: 1 });
+  for (const body of posts) assert.ok(Buffer.byteLength(body, 'utf8') <= BATCH_BYTE_BUDGET);
+  assert.deepEqual(posts.map((b) => JSON.parse(b).contributions.map((c) => c.cards[0].answer.cardId)), [['c0', 'c1'], ['c2', 'c4']]);
+});
+
+test('the stale-day limit matches the relay', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../tools/relay/src/validate.js', import.meta.url), 'utf8');
+  assert.match(source, /const MAX_DAY_SKEW_MS = 2 \* 86400000;/);
+});
+
+test('queued items older than the relay allows are removed so they never share a batch with fresh ones', async () => {
+  const store = createShareStore(fakeIndexedDB());
+  await store.enqueue(contribution(0, { day: '2026-11-14' }));
+  await store.enqueue(contribution(1, { day: '2026-11-16' }));
+  await store.enqueue(contribution(2, { day: '2026-11-18' }));
+  const posts = [];
+  const uploader = createUploader({
+    store, relayUrl: RELAY, backoff: memoryState(), now: () => Date.parse('2026-11-18T09:00:00Z'),
+    fetchFn: async (url, init) => { posts.push(JSON.parse(init.body)); return { ok: true, status: 200 }; },
+  });
+  assert.deepEqual(await uploader.flush(), { sent: 2, left: 0, dropped: 1 });
+  assert.deepEqual(posts.map((p) => p.contributions.map((c) => c.day)), [['2026-11-16', '2026-11-18']]);
+});
+
 test('a failed post keeps the batch and waits with growing delays', async () => {
   const store = createShareStore(fakeIndexedDB());
   await store.enqueue(contribution());

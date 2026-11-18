@@ -16,9 +16,26 @@ export async function agreeWithReference(store, msg, now = Date.now()) {
   if (!ref?.refId || ref.cardId !== msg.pickedId || ref.refId === `${msg.scanId}:${msg.index}`) return null;
   const row = await store.getCorrection(ref.refId).catch(() => null);
   if (!row || row.pickedId !== msg.pickedId) return null;
+  // This crop's own earlier, different answer must be replaced by the normal store path, not left active.
+  const own = await store.getCorrection(`${msg.scanId}:${msg.index}`).catch(() => null);
+  if (own && own.pickedId !== msg.pickedId) return null;
   const count = (row.count || 1) + 1;
   await store.save({ ...row, count, lastAgreed: now });
   return { count };
+}
+
+const scanChains = new Map();
+
+/**
+ * Runs `fn` after every earlier call for the same scan has finished, so a read-modify-write of one stored scan
+ * (exam picks held across awaits) never starts from a copy another call is about to overwrite.
+ */
+export function serializeByScan(scanId, fn) {
+  const run = (scanChains.get(scanId) || Promise.resolve()).catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  scanChains.set(scanId, tail);
+  tail.then(() => { if (scanChains.get(scanId) === tail) scanChains.delete(scanId); });
+  return run;
 }
 
 /**

@@ -158,3 +158,27 @@ test('(d) a background rescan hides the overlay only for its screenshot; the pre
   assert.doesNotMatch(background, /action: "hideOverlay"/);
   assert.match(background, /captureWithoutOverlay\(chrome, targetTab\.id, /);
 });
+
+// Service-worker decisions that live inline in background.js are pinned by source, as above.
+const BACKGROUND_SRC = readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
+
+test('a finished scan sends its overlay to the scanned tab without making it the target', () => {
+  assert.doesNotMatch(BACKGROUND_SRC, /relayToTab\(\{ action: "relayOverlay"[^\n]*targetTab\.id\)/);
+  assert.match(BACKGROUND_SRC, /sendToTab\(chrome, targetTab\.id, tabMessageFor\(\{ action: "relayOverlay"/);
+});
+
+test('automatic rescans reuse the era of the last scan the user asked for', () => {
+  assert.match(BACKGROUND_SRC, /handleScanPage\(sendRescanResult, _lastScanEra\)/);
+  assert.match(BACKGROUND_SRC, /_scanGate\.end\(scanTabId\) && _popupWinId !== null\) handleScanPage\(sendRescanResult, _lastScanEra\)/);
+  assert.doesNotMatch(BACKGROUND_SRC, /handleScanPage\(sendRescanResult\)/);
+});
+
+test('the worker restores the scanner window id and ignores new-cards messages from other tabs', () => {
+  assert.match(BACKGROUND_SRC, /isTargetTopFrame\(sender, _targetTabId\)/);
+  assert.match(BACKGROUND_SRC, /const restored = await restoreWinId\(chrome\.storage\.session, _popupWinId\);\s*if \(_popupWinId === null\) _popupWinId = restored;/);
+  assert.doesNotMatch(BACKGROUND_SRC, /_popupWinId = await restoreWinId/);
+});
+
+test('switching tabs never makes a tab of the scanner window the target', () => {
+  assert.match(BACKGROUND_SRC, /if \(chrome\.runtime\.lastError\) return;\s*\/\/[^\n]*\s*if \(tab\.windowId === _popupWinId\) return;\s*if \(!_isInternalUrl\(tab\.url\)\) \{\s*_setTargetTabId\(tabId\);/);
+});

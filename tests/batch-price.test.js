@@ -161,3 +161,34 @@ test('M4: a failed load retries on a later call, but not within 60 s', async () 
   await run();
   assert.equal(calls, 2, 'a success stays loaded');
 });
+
+test('finding 20: a price fetch that failed is told apart from a card the source does not have', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.chrome = { storage: { local: { get: (_k, cb) => cb({}), set: (_o, cb) => cb && cb() } } };
+  const pricing = await import('../tools/extension-wasm/lib/pricing.js');
+  try {
+    globalThis.fetch = async () => { throw new Error('timeout'); };
+    assert.equal(await pricing.getTcgdexCard('fail-1'), null);
+    assert.equal(await pricing.getFullCardPayload('fail-1'), null);
+    assert.equal(typeof pricing.pricingFetchFailed, 'function');
+    assert.equal(pricing.pricingFetchFailed('fail-1'), true);
+    globalThis.fetch = async () => ({ ok: false, status: 404 });
+    assert.equal(await pricing.getTcgdexCard('missing-1'), null);
+    assert.equal(await pricing.getFullCardPayload('missing-1'), null);
+    assert.equal(pricing.pricingFetchFailed('missing-1'), false);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete globalThis.chrome;
+  }
+});
+
+test('finding 20: priceIdentity does not cache or hide a failed lookup', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
+  const start = source.indexOf('async function priceIdentity(');
+  const body = source.slice(start, source.indexOf('\n}\n', start));
+  const failure = body.indexOf('pricingFetchFailed(');
+  assert.ok(failure > 0, 'priceIdentity checks for a failed lookup');
+  assert.ok(failure < body.lastIndexOf('_scanPriceCache.set'), 'the check comes before the English result is cached');
+  assert.match(body, /throw new Error/);
+});

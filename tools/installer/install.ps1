@@ -182,11 +182,11 @@ function Register-Uninstall([string]$Root, [string]$Key, [string]$Ver) {
   # No DisplayIcon: the extension ships PNG icons only, and the entry needs an .ico.
 }
 
-function Find-Chrome {
-  foreach ($hive in 'HKCU:', 'HKLM:') {
-    $key = "$hive\Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+function Find-Chrome([string[]]$Keys = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe')) {
+  foreach ($key in $Keys) {
     if (-not (Test-Path -LiteralPath $key)) { continue }
-    $value = (Get-ItemProperty -LiteralPath $key).'(default)'
+    # GetValue('') is $null for a key with no default value; reading '(default)' as a property throws under strict mode.
+    $value = (Get-Item -LiteralPath $key).GetValue('')
     if ($value -and (Test-Path -LiteralPath $value)) { return $value }
   }
   $programFilesX86 = ${env:ProgramFiles(x86)}

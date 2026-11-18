@@ -127,7 +127,10 @@ export function applySnapshot(grid, snapshot) {
     ? snapshot.updatedAt
     : null;
   if (!updatedAt) return grid;
+  // An older snapshot must not overwrite a fresher price or date the grid with its own older date.
+  if (Date.parse(updatedAt) < Date.parse(grid.updatedAt)) return grid;
   let applied = 0;
+  let keptPriced = 0;
   const variants = {};
   for (const [printing, variant] of Object.entries(grid.variants || {})) {
     const subtype = SUBTYPE[printing];
@@ -135,6 +138,7 @@ export function applySnapshot(grid, snapshot) {
     const market = subtype && product ? roundPrice(product[subtype]) : null;
     if (market == null) {
       variants[printing] = variant;
+      if (variant?.market > 0) keptPriced += 1;
       continue;
     }
     applied += 1;
@@ -145,7 +149,9 @@ export function applySnapshot(grid, snapshot) {
     };
   }
   if (!applied) return grid;
-  return { ...grid, variants, updatedAt, spreadRatio: spreadOf(variants) };
+  // A printing the snapshot did not price keeps its own price, so the grid keeps its own (older) date.
+  const date = keptPriced > 0 && grid.updatedAt ? grid.updatedAt : updatedAt;
+  return { ...grid, variants, updatedAt: date, spreadRatio: spreadOf(variants) };
 }
 
 function chromeStorage() {

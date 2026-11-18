@@ -3650,4 +3650,127 @@ test.describe('Consumer extension popup', () => {
     await expect(page.locator('#references-count')).toHaveText(/^\d+ cards? remembered$/);
     await page.close();
   });
+
+  // ─── popup review findings: edits that must survive an automatic rescan, remove / put back, bulk confirm, restore ───
+
+  // A message as the background sends it: from the service worker, so the popup accepts it (a tab page would be refused).
+  const bgSays = (msg) => {
+    const worker = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+    return worker.evaluate((m) => chrome.runtime.sendMessage(m).catch(() => null), msg);
+  };
+  const zubatRescan = { cards: [{ identity: { id: 'm-9', name: 'Machop', set: 'Jungle', setCode: 'base2', number: '9' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1] }], scanId: 'z', srcWidth: 10, srcHeight: 10, pending: 0 };
+
+  test('a restored lot keeps the user\'s picks when the background rescans on its own', async () => {
+    const first = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL });
+    await expect(toConfirmOf(first)).toHaveText('To confirm (4)');
+    await first.locator('.choose-row').first().locator('[data-confirm-best]').click();
+    await first.locator('.choose-row').first().locator('[data-confirm-best]').click();
+    await waitSaved(first, (st) => st?.cards?.filter((c) => c.userConfirmed).length >= 2);
+    await first.close();
+    const again = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL, autoScan: false });
+    await expect(again.locator('#restore-note')).toBeVisible();
+    const before = await snapshot(again);
+    await bgSays({ action: 'rescanResult', data: zubatRescan });
+    await again.waitForTimeout(500);
+    expect(await snapshot(again)).toEqual(before);
+    await expect(again.locator('.card-row .card-name', { hasText: 'Machop' })).toHaveCount(0);
+    await again.evaluate(() => chrome.storage.session.remove('lotSessions'));
+    await again.close();
+  });
+
+  test('a card drawn with Add card is kept when the background rescans on its own', async () => {
+    const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL });
+    await expect(toConfirmOf(page)).toHaveText('To confirm (4)');
+    await bgSays({ action: 'drawnCard', tabUrl: LOT_URL, srcWidth: 10, srcHeight: 10,
+      card: { identity: { id: 'd-1', name: 'Drawn', set: 'Base', setCode: 'base1', number: '1' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1] } });
+    await expect(page.locator('#msg-bar')).toContainText('Box 7 added');
+    await bgSays({ action: 'rescanResult', data: zubatRescan });
+    await page.waitForTimeout(500);
+    await expect(page.locator('#msg-bar')).toContainText('More cards loaded');
+    await expect(toConfirmOf(page)).toHaveText('To confirm (4)');
+    await page.evaluate(() => chrome.storage.session.remove('lotSessions'));
+    await page.close();
+  });
+
+  test('a card drawn with Add card when there was no lot is kept when the background rescans on its own', async () => {
+    const drawnFirstUrl = 'http://127.0.0.1:8765/lot-drawn-first';
+    const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: drawnFirstUrl, autoScan: false });
+    await expect(page.locator('.card-row')).toHaveCount(0);
+    await bgSays({ action: 'drawnCard', tabUrl: drawnFirstUrl, srcWidth: 10, srcHeight: 10,
+      card: { identity: { id: 'd-1', name: 'Drawn', set: 'Base', setCode: 'base1', number: '1' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1] } });
+    await expect(page.locator('.card-row .card-name', { hasText: 'Drawn' })).toHaveCount(1);
+    await bgSays({ action: 'rescanResult', data: zubatRescan });
+    await page.waitForTimeout(500);
+    await expect(page.locator('.card-row .card-name', { hasText: 'Drawn' })).toHaveCount(1);
+    await expect(page.locator('.card-row .card-name', { hasText: 'Machop' })).toHaveCount(0);
+    await page.evaluate(() => chrome.storage.session.remove('lotSessions'));
+    await page.close();
+  });
+
+  test('a lot edition chosen in the strip is kept when the background rescans on its own', async () => {
+    const page = await popupWithScan(() => {
+      const row = (n) => ({ market: n, conditions: { NM: n } });
+      return [{
+        identity: { id: 'base1-4', name: 'Charizard', set: 'Base Set', setCode: 'base1', number: '4' },
+        confidence: 0.9, abstain: false, box: [0, 0, 1, 1],
+        finishSure: 'holofoil', variant: { edition: null, finish: 'holofoil', stamp: 'none' },
+        price_grid: { source: 'pokemontcg', variants: { unlimitedHolofoil: row(40), shadowlessHolofoil: row(300), '1stEditionHolofoil': row(3000) } },
+      }];
+    });
+    const lot = page.getByLabel('Base Set editions', { exact: true }).locator('select');
+    await lot.selectOption('shadowless');
+    await expect(page.locator('.card-row .card-price')).toHaveText('$300.00');
+    await bgSays({ action: 'rescanResult', data: zubatRescan });
+    await page.waitForTimeout(500);
+    await expect(page.locator('.card-row .card-name')).not.toContainText('Machop');
+    await expect(lot).toHaveValue('shadowless');
+    await expect(page.locator('.card-row .card-price')).toHaveText('$300.00');
+    await page.close();
+  });
+
+  test('Remove then Put back keeps the printing the user picked', async () => {
+    const page = await popupWithChoose(finishScan);
+    await expandRow(page, 0);
+    await page.locator('.card-row[data-idx="0"] .chip[data-strip-pick="holofoil"]').click();
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$10.00');
+    await expandRow(page, 0); // a picked row collapses once settled
+    await page.locator('.card-row[data-idx="0"] [data-remove-card]').click();
+    await expect(page.locator('#msg-bar .toast-action')).toHaveCount(1);
+    await page.locator('#msg-bar .toast-action').click();
+    await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$10.00');
+    await page.close();
+  });
+
+  test('Confirm in the review panel still confirms when a row changed after the panel opened', async () => {
+    const page = await popupWithChoose(chooseScan);
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (4)');
+    await holdPrice(page, 'a-1');
+    await page.locator('.choose-row[data-idx="1"] .pick-choice[data-pick="a-1"]').click();
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (3)');
+    await page.locator('.choose-review').click();
+    await expect(page.locator('#bulk-panel')).toBeVisible();
+    // The held price arrives while the panel is open: another row is replaced under it.
+    await page.evaluate(() => window.__release());
+    await expect(page.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$3.00');
+    await page.locator('#bulk-confirm').click();
+    await expect(page.locator('#bulk-panel')).toBeHidden();
+    await expect(page.locator('.choose-toggle')).toHaveText('To confirm (2)');
+    await page.close();
+  });
+
+  test('a lot saved while a price was loading asks for the price again when restored', async () => {
+    const first = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL });
+    await expect(toConfirmOf(first)).toHaveText('To confirm (4)');
+    await holdPrice(first, 'a-1');
+    await first.locator('.choose-row[data-idx="1"] .pick-choice[data-pick="a-1"]').click();
+    await expect(first.locator('.card-row[data-idx="1"] .card-price')).toHaveText('…');
+    await waitSaved(first, (st) => st?.cards?.some((c) => c.pricing === true));
+    await first.close();
+    const again = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL, autoScan: false });
+    await expect(again.locator('#restore-note')).toBeVisible();
+    // The mock's price for a-1 has two printings, so the landed price is a range, not "…".
+    await expect(again.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$2.00–$10.00');
+    await again.evaluate(() => chrome.storage.session.remove('lotSessions'));
+    await again.close();
+  });
 });

@@ -17,6 +17,13 @@ export function hasPrice(price) {
   return Object.keys(price.price_grid?.variants || {}).length > 0;
 }
 
+/** Removes every priceCache_ entry, so prices fetched under an old PokemonPriceTracker setting are not served. */
+export async function clearPriceCache(storage) {
+  const all = await storage.get(null);
+  const keys = Object.keys(all).filter((k) => k.startsWith(PRICE_CACHE_PREFIX));
+  if (keys.length) await storage.remove(keys);
+}
+
 /** Persistent price cache over a chrome.storage.local-shaped object (promise API). */
 export function createPriceCache(storage, { now = Date.now } = {}) {
   const key = (id) => PRICE_CACHE_PREFIX + id;

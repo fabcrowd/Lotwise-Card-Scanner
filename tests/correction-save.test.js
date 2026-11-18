@@ -164,3 +164,28 @@ test('a correction on an exam-split photo is stored locally either way, and its 
     assert.equal(currentReferences([ref], heads).length, 1);
   }
 });
+
+test('agreeWithReference: not when this crop already holds a different answer, so the normal path replaces it (finding 15)', async () => {
+  const store = createCorrectionsStore(fakeIndexedDB());
+  await store.save({ id: 'old:0', ts: NOW - DAY, pickedId: 'b', crop: 'x' });
+  await store.save({ id: 's2:3', ts: NOW, pickedId: 'a', crop: 'y' });
+  const msg = { scanId: 's2', index: 3, pickedId: 'b', guess: { memory: { refId: 'old:0', cardId: 'b' } } };
+  assert.equal(await agreeWithReference(store, msg, NOW), null);
+  assert.equal((await store.getCorrection('old:0')).count || 1, 1);
+  // The same answer already on this crop still counts as agreement.
+  await store.save({ id: 's2:3', ts: NOW, pickedId: 'b', crop: 'y' });
+  assert.deepEqual(await agreeWithReference(store, msg, NOW), { count: 2 });
+});
+
+import { serializeByScan, settleExamPick } from '../tools/extension-wasm/lib/correction-save.js';
+
+test('exam holds for one scan run one at a time, so concurrent picks all survive (finding 17)', async () => {
+  let saved = { shares: { 1: { split: 'exam' }, 2: { split: 'exam' }, 3: { split: 'exam' } } };
+  const later = () => new Promise((resolve) => setTimeout(resolve, 5));
+  const store = { getScan: async () => { await later(); return saved; }, saveScan: async (s) => { await later(); saved = s; } };
+  await Promise.all([1, 2, 3].map((index) => serializeByScan('s', async () => {
+    const scan = await store.getScan('s');
+    await settleExamPick(store, scan, { index, pickedId: `c${index}`, via: 'candidates' }, { holdAllowed: true, sharingEnabled: async () => true });
+  })));
+  assert.deepEqual(Object.keys(saved.examPicks).sort(), ['1', '2', '3']);
+});

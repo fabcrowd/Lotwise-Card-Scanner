@@ -76,3 +76,22 @@ test('save writes to local only; clear removes it everywhere', async () => {
   await clearPptKey(storage);
   assert.equal(await getPptKey(storage), null);
 });
+
+import { clearPriceCache, PRICE_CACHE_PREFIX } from '../tools/extension-wasm/lib/batch-price.js';
+
+test('finding 21: clearPriceCache removes the hour-long price entries and nothing else', async () => {
+  const data = { [`${PRICE_CACHE_PREFIX}a`]: { ts: 1 }, [`${PRICE_CACHE_PREFIX}b`]: { ts: 1 }, pptApiKey: 'k', other: 1 };
+  const storage = {
+    get: async (keys) => (keys === null ? { ...data } : {}),
+    remove: async (keys) => { for (const k of [].concat(keys)) delete data[k]; },
+  };
+  await clearPriceCache(storage);
+  assert.deepEqual(Object.keys(data).sort(), ['other', 'pptApiKey']);
+});
+
+test('finding 21: the options page clears the price cache after saving or clearing the key', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../tools/extension-wasm/options.js', import.meta.url), 'utf8');
+  assert.match(src, /await savePptKey\(key\);\s*await clearPriceCache\(chrome\.storage\.local\)/);
+  assert.match(src, /await clearPptKey\(\);\s*await clearPriceCache\(chrome\.storage\.local\)/);
+});

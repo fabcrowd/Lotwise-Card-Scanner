@@ -150,7 +150,8 @@ export function loadPage({ viewport = { w: 2504, h: 1287 }, clientWidth = 2489, 
   };
   let listener = null;
   const sent = [];
-  const chrome = { runtime: { onMessage: { addListener: (fn) => { listener = fn; } }, sendMessage: (msg) => { sent.push(msg); return Promise.resolve(); } } };
+  const location = { href: url };
+  const chrome = { runtime: { id: 'test-extension-id', onMessage: { addListener: (fn) => { listener = fn; } }, sendMessage: (msg) => { sent.push(msg); return Promise.resolve(); } } };
   // A page with no `storage` option has no chrome.storage at all, as a page where the extension may not use it.
   if (storage) {
     chrome.storage = { local: {
@@ -159,12 +160,12 @@ export function loadPage({ viewport = { w: 2504, h: 1287 }, clientWidth = 2489, 
     } };
   }
   vm.runInNewContext(source, {
-    window, document, chrome, MutationObserver: FakeMutationObserver, NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 },
-    getComputedStyle: (el) => el.style, URL, Map, WeakMap, Set, ...globals,
+    window, document, chrome, location, MutationObserver: FakeMutationObserver, NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 },
+    getComputedStyle: (el) => el.style, URL, Map, WeakMap, Set, clearTimeout, ...globals,
   });
 
   return {
-    window, document, body, imgs, rec, observers,
+    window, document, body, imgs, rec, observers, chrome, location,
     /** Messages content.js sent to the extension (chrome.runtime.sendMessage). */
     sent,
     send(msg) {

@@ -68,6 +68,15 @@ test('an ex12 stamp with a Reverse Holofoil price: set, finish and price are set
   assert.equal(quotedPrice(elsewhere, detectedVariant(elsewhere)).price, 125);
 });
 
+test('a failed price lookup keeps the stamped card, without a price', async () => {
+  const d = { ...deps({}), priceIdentity: async () => { throw new Error('every price source failed'); } };
+  const card = await applySetStamp(stamped({ identity: AERO_SS }), 'LEGEND MAKER', d);
+  assert.equal(card.identity.id, 'ex12-1');
+  assert.equal(card.setEvidence, 'stamp');
+  assert.equal(card.market_price ?? null, null);
+  assert.equal(quotedPrice(card, undefined), null);
+});
+
 test('an ex12 stamp without a Reverse Holofoil price: the set is chosen, the finish is left to the user with a note', async () => {
   const d = deps({ 'ex12-1': grid({ normal: 3, holofoil: 75.2 }) });
   const card = await applySetStamp(stamped({ identity: AERO_SS }), 'LEGEND MAKER', d);

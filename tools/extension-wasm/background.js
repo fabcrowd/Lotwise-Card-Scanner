@@ -26,7 +26,7 @@ import {
   acceptDrawnSender, correctionSource, drawnCardEntry, examGroupAllowed, examHoldAllowed, normalizeDrawnMessage, viewportRectToBitmapBox, viewportToPhotoBox, isSamePage,
 } from "./lib/draw-box.js";
 import { loadLot, saveLot } from "./lib/lot-session.js";
-import { acceptPageSender, removalStored, removeFromLot } from "./lib/overlay-remove.js";
+import { acceptPageSender, removalStored, removeFromLot, scanMatches } from "./lib/overlay-remove.js";
 import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
@@ -40,7 +40,7 @@ import { createJaPriceClient, jaLookup } from "./lib/ja-prices.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, cropTooSmall, modelTags } from "./lib/contribution.js";
-import { agreeWithReference, keepsNoPicture, settleExamPick, storeCorrection } from "./lib/correction-save.js";
+import { agreeWithReference, keepsNoPicture, serializeByScan, settleExamPick, storeCorrection } from "./lib/correction-save.js";
 import { skipDraft, unskipDraft } from "./lib/skip.js";
 import { memoryVerdict, skipVerdict } from "./lib/memory-confirm.js";
 import { referenceBar } from "./lib/reference-bars.js";
@@ -60,12 +60,12 @@ import { DRAWN_KINDS, createDrawnExamplesStore, newExampleId } from "./lib/drawn
 import { captureWithoutOverlay, sendToTab } from "./lib/tab-messaging.js";
 import { loadOverlayShown, tabMessageFor } from "./lib/overlay-toggle.js";
 import { clearPendingShow, savePendingFullSize, savePendingShow } from "./lib/pending-show.js";
-import { createScannerOpener } from "./lib/scanner-window.js";
+import { createScannerOpener, restoreWinId, saveWinId } from "./lib/scanner-window.js";
 import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, largerRendition, loadFullSize, needsShareImages, shareImagesFromHtml } from "./lib/full-size.js";
 import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
 import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
-import { chooseFallbackTab, isOwnPage } from "./lib/page-target.js";
+import { chooseFallbackTab, isOwnPage, isTargetTopFrame } from "./lib/page-target.js";
 import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner, readSourceCorner } from "./lib/ocr.js";
 import { choiceFromCorner, cornerRects, parseCornerText } from "./lib/corner-read.js";
@@ -80,7 +80,7 @@ import { loadVariantModel, readVariant, variantModelReady } from "./lib/variant-
 import { finishFromNumber, finishFromVariants, finishSharedByNumber, stampAfterWizards, stampFromCorner } from "./lib/variant.js";
 import { applySetStamp } from "./lib/set-stamp.js";
 import { PROMO_STAR_MIN, choicesForSymbol, promoStarScore, symbolFromScores, symbolScores } from "./lib/set-symbol.js";
-import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard } from "./lib/pricing.js";
+import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard, pricingFetchFailed } from "./lib/pricing.js";
 import { applyCatalogPrices, applySnapshot, currentSnapshot, refreshPriceSnapshot } from "./lib/price-snapshot.js";
 import {
   getConditionGrid, fromPokemontcgPayload, fromTcgdexPayload, tcgPlayerIdFromTcgdex,
@@ -94,6 +94,8 @@ let _metaBase         = null; // meta.json as shipped; _meta is this plus the bu
 let _idMap            = null;
 let _popupWinId       = null;
 let _targetTabId      = null;
+// The era of the last scan the user asked for: automatic rescans of the same page use it too.
+let _lastScanEra      = null;
 // Every scan path (button, rescan, lazy-load) goes through this: two scans on one tab would fight over its scroll.
 const _scanGate = createScanGate();
 // Shared by all scans, since Chrome limits captureVisibleTab per second across them.
@@ -137,6 +139,12 @@ function _setTargetTabId(id) {
   chrome.storage.session.set({ targetTabId: id }).catch(() => {});
 }
 
+// Persists _popupWinId next to the target tab id, so a restarted service worker still knows the scanner window is open.
+function _setPopupWinId(id) {
+  _popupWinId = id;
+  saveWinId(chrome.storage.session, id);
+}
+
 // True for browser-internal pages. A tab whose address the extension may not read has no url;
 // that is "unknown", not internal, or the scanner could never follow the user to a new tab.
 function _isInternalUrl(url) {
@@ -159,7 +167,7 @@ const _scannerWindow = createScannerOpener({
   setTargetTab: _setTargetTabId,
   isInternalUrl: _isInternalUrl,
   getWinId: () => _popupWinId,
-  setWinId: (id) => { _popupWinId = id; },
+  setWinId: _setPopupWinId,
 });
 const openOrFocusScanner = (targetTab, beforeCreate, onCreateFailed) => _scannerWindow.open(targetTab, beforeCreate, onCreateFailed);
 
@@ -170,16 +178,26 @@ chrome.action.onClicked.addListener(async (clickedTab) => {
   await openOrFocusScanner(activeTab);
 });
 
-chrome.windows.onRemoved.addListener((id) => {
-  if (id === _popupWinId) _popupWinId = null;
+// The scanner window may open while the stored id is being read: the fresh id wins over the stale stored one.
+async function restorePopupWinId() {
+  const restored = await restoreWinId(chrome.storage.session, _popupWinId);
+  if (_popupWinId === null) _popupWinId = restored;
+}
+
+chrome.windows.onRemoved.addListener(async (id) => {
+  await restorePopupWinId();
+  if (id === _popupWinId) _setPopupWinId(null);
 });
 
 // Keep _targetTabId current while the scanner popup is open.
 // When the user switches tabs or navigates, the overlay follows automatically.
-chrome.tabs.onActivated.addListener(({ tabId }) => {
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  await restorePopupWinId();
   if (_popupWinId === null) return;
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError) return;
+    // The scanner window's own tab has no url yet when the window is created, so it must not become the target.
+    if (tab.windowId === _popupWinId) return;
     if (!_isInternalUrl(tab.url)) {
       _setTargetTabId(tabId);
     }
@@ -205,6 +223,9 @@ async function tryAutoLoad() {
   try {
     const { targetTabId } = await chrome.storage.session.get("targetTabId");
     if (targetTabId != null) _targetTabId = targetTabId;
+    await restorePopupWinId();
+    const { lastScanEra } = await chrome.storage.session.get("lastScanEra");
+    if (lastScanEra && !_lastScanEra) _lastScanEra = eraById(lastScanEra);
   } catch {
     // session storage unavailable (older Chrome or SW start race): keep the in-memory target
   }
@@ -445,7 +466,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case "scanPage":
-      runHeldScan(sendResponse, eraById(msg.era));
+      _lastScanEra = eraById(msg.era);
+      chrome.storage.session.set({ lastScanEra: msg.era ?? null }).catch(() => {});
+      runHeldScan(sendResponse, _lastScanEra);
       return true; // async
 
     case "scanState":
@@ -472,6 +495,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         srcWidth: msg.srcWidth,
         srcHeight: msg.srcHeight,
         ...(msg.fullSize ? { fullSize: msg.fullSize } : {}),
+        ...(typeof msg.pageUrl === "string" ? { pageUrl: msg.pageUrl } : {}),
+        ...(typeof msg.scanId === "string" ? { scanId: msg.scanId } : {}),
         ...(typeof msg.shown === "boolean" ? { shown: msg.shown } : {}),
       });
       sendResponse({ ok: true });
@@ -521,7 +546,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false });
         return false;
       }
-      handleOverlayRemove(msg.index, sender.tab)
+      handleOverlayRemove(msg.index, sender.tab, msg.scanId)
         .then((ok) => sendResponse({ ok }))
         .catch((err) => { console.error("[BG] overlayRemove failed", err?.message || err); sendResponse({ ok: false }); });
       return true;
@@ -548,9 +573,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Content script saw new card-shaped images load (lazy/infinite scroll).
       // Re-scan only when the popup is open, models are ready, and no scan is running.
       // A scan already running on that tab leaves one follow-up for when it ends.
-      if (_popupWinId !== null && _ready) {
-        const tabId = sender.tab?.id ?? _targetTabId;
-        if (!_scanGate.queueFollowUp(tabId)) handleScanPage(sendRescanResult);
+      // A tab that is not the target is not scanned: handleScanPage reads the target.
+      if (_popupWinId !== null && _ready && isTargetTopFrame(sender, _targetTabId)) {
+        if (!_scanGate.queueFollowUp(sender.tab.id)) handleScanPage(sendRescanResult, _lastScanEra);
       }
       return false;
 
@@ -560,7 +585,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-async function handleOverlayRemove(index, tab) {
+async function handleOverlayRemove(index, tab, scanId) {
   const open = await chrome.runtime.getContexts({ contextTypes: ["TAB"], documentUrls: [chrome.runtime.getURL("popup.html")] });
   if (open.length && tab.id === _targetTabId) {
     // The open window owns the list: it takes the removal or the page keeps the box (never a change behind its back).
@@ -570,6 +595,8 @@ async function handleOverlayRemove(index, tab) {
   }
   if (Boolean(_held?.running) && tab.id === _targetTabId) return removalStored({ running: true });
   const saved = await loadLot(chrome.storage.session, tab.url);
+  // An overlay drawn by a later rescan has other cards at these rows than the saved lot: the page keeps the box.
+  if (saved && !scanMatches(scanId, saved?.state?.bgScanId)) return false;
   const gone = saved?.state?.cards?.[index];
   const next = saved ? removeFromLot(saved.state, index) : null;
   if (next) {
@@ -578,7 +605,7 @@ async function handleOverlayRemove(index, tab) {
     contributeBoxSignal({ source: "removed", scanId: saved.state.bgScanId, index, ...(gone?.drawn ? { drawn: true, share: gone.share ?? null, crop: gone.crop ?? null } : {}) });
   }
   let heldChanged = false;
-  if (_held?.data && isSamePage(_held.url, tab.url)) {
+  if (_held?.data && isSamePage(_held.url, tab.url) && scanMatches(scanId, _held.data.scanId)) {
     const held = removeFromLot(_held.data, index);
     if (held) { _held.data = held; heldChanged = true; }
   }
@@ -1314,7 +1341,8 @@ async function handleScanPage(sendResponse, era) {
       applyBatchedPrices(cards, priceMap);
     }
 
-    await relayToTab({ action: "relayOverlay", cards: overlayCards(cards), srcWidth, srcHeight, shown: await loadOverlayShown(chrome.storage.local) }, targetTab.id);
+    // To the tab that was scanned, which stays the target only if the user has not moved on.
+    await sendToTab(chrome, targetTab.id, tabMessageFor({ action: "relayOverlay", cards: overlayCards(cards), srcWidth, srcHeight, pageUrl: targetTab.url, scanId, shown: await loadOverlayShown(chrome.storage.local) })).catch(() => {});
     console.log("[BG] overlay relayed");
 
     // Ask the content script to start watching for lazy-loaded card images.
@@ -1355,7 +1383,7 @@ async function handleScanPage(sendResponse, era) {
     sendToTab(chrome, targetTab.id, { action: "restoreOverlay" }).catch(() => {});
     sendResponse({ error: String(err?.message || err) });
   } finally {
-    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(sendRescanResult);
+    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(sendRescanResult, _lastScanEra);
   }
 }
 
@@ -1621,7 +1649,11 @@ async function confirmExam(msg) {
       console.error("[BG] sharing an exam photo failed:", err?.message || err);
     }
   }
-  await _corrections.saveScan({ ...scan, examSent: true }).catch(() => {});
+  // Re-read under the same one-at-a-time chain so a pick held while the photo was sent is not overwritten.
+  await serializeByScan(msg.scanId,async () => {
+    const latest = await _corrections.getScan(msg.scanId).catch(() => null);
+    await _corrections.saveScan({ ...(latest || scan), examSent: true });
+  }).catch(() => {});
   return { ok: true, sent };
 }
 
@@ -1750,12 +1782,16 @@ const _ownPageActions = {
     if (isJaId(msg.pickedId)) await _loadJapaneseCatalog();
     if (!anyCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
     // A scan older than the last two has lost its pictures; the answer is still worth keeping.
-    const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
     // An exam photo's answers leave only as a whole, when sharing is on and the user confirms the photo; they never enter
     // the shared training queue. That is the only thing the exam split decides: the correction itself is always kept here.
     // A Japanese card is never shared as a card answer; box rows (drawn, removed, put back) are still sent without a card id.
     // So a Japanese card, or any pick on a Japanese row, is never held for sharing and removes an answer held earlier for the box.
-    await settleExamPick(_corrections, scan, msg, { holdAllowed: examHoldAllowed(msg), sharingEnabled: () => _sharing.enabled().catch(() => false) });
+    // One scan's held answers are updated one pick at a time: the bulk confirm sends several picks at once.
+    const scan = await serializeByScan(msg.scanId, async () => {
+      const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+      await settleExamPick(_corrections, scan, msg, { holdAllowed: examHoldAllowed(msg), sharingEnabled: () => _sharing.enabled().catch(() => false) });
+      return scan;
+    });
     // The same card the user corrected before, confirmed again from a different crop: that counts as "x2" on the earlier
     // correction instead of storing a near-duplicate picture.
     const agreed = await agreeWithReference(_corrections, msg);
@@ -1794,7 +1830,7 @@ const _ownPageActions = {
       index: msg.index,
       pageUrl: scan?.pageUrl,
       guess: msg.guess,
-      crop: correctionSource(scan, msg).crop,
+      crop: keepsNoPicture(msg) ? null : correctionSource(scan, msg).crop,
       extVersion: chrome.runtime.getManifest().version,
       why: msg.guess?.why,
     });
@@ -2304,7 +2340,7 @@ async function checkTitle(result, cardCanvas, height, era) {
   const longer = hits.slice(0, TITLE_RERANK_DEPTH).some((h) => _meta[h.index] && extendsTitle(_meta[h.index].name, verdict.titleName));
   if (hit && !longer) {
     console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name ?? "-"), "- asked with that name");
-    return guessFromTitle(_meta[hit.index], hits, result);
+    return guessFromTitle(_meta[hit.index], hits, result, era);
   }
   // The title's own printings are only offered in the list (lib/card-picker.js candidatesFor); nothing here is decided by them.
   // embedSerial is cached per canvas, so this does not embed again. (tests/lookalike-setting.test.js pins the count of
@@ -2322,7 +2358,9 @@ function titleChoicesFor(titleName, embedding, era) {
   return titleChoiceIds(physicalHits(scoreIndices(embedding, printingsOf(titleName)), _meta), _meta, { era });
 }
 
-async function guessFromTitle(card, hits, before) {
+async function guessFromTitle(card, allHits, before, era) {
+  // With an era chosen, the choices and lists come only from that era's rows, as in recognizeWith.
+  const hits = era ? allHits.filter((h) => _meta[h.index] && inEra(_meta[h.index], era)) : allHits;
   const base = {
     confidence: Math.min(Math.max(before.confidence ?? 0, 0), SMALL_SOURCE_CONFIDENCE_CAP),
     abstain: false,
@@ -2969,6 +3007,7 @@ async function priceIdentity(identity) {
     const { result: japanesePrice, failed } = await jaLookup(identity, _jaPrices, Date.now());
     // A lookup that got no answer is not kept: the next ask tries again.
     if (!failed) _scanPriceCache.set(cacheKey, japanesePrice);
+    else throw new Error("price lookup failed");
     return japanesePrice;
   }
 
@@ -2998,6 +3037,8 @@ async function priceIdentity(identity) {
     price_grid: grid || null,
   };
 
+  // Every free source failed (timeouts, network): not a real "no price". Do not keep it; the caller shows the retry text.
+  if (!grid && !legacyPrice && pricingFetchFailed(identity.id)) throw new Error("price lookup failed");
   _scanPriceCache.set(cacheKey, result);
   return result;
 }
@@ -3178,8 +3219,12 @@ async function loadPhotoSource(rawUrl, { timeoutMs = 0, maxSide = 0, allowedHost
       blob = read.blob.slice(0, read.blob.size, sniffed);
     }
     // The header gives the size before any pixels are decoded.
-    const plan = decodePlan(imageSize(read.head), maxSide);
+    // When the first bytes do not hold it (metadata before the frame header, or an AVIF), look through the whole file.
+    const size = imageSize(read.head) || imageSize(new Uint8Array(await blob.arrayBuffer()));
+    const plan = decodePlan(size, maxSide);
     if (plan.reject) return photoRejected("dimensions too large", landed);
+    // Still unknown: decoding could allocate a huge bitmap before the limit is checked, so the screenshot crop is used.
+    if (!plan.known) return photoRejected("size unreadable", landed);
     const bitmap = plan.resize ? await createImageBitmap(blob, plan.resize) : await createImageBitmap(blob);
     if (bitmap.width > 10000 || bitmap.height > 10000) {
       bitmap.close();

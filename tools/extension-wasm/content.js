@@ -1042,8 +1042,45 @@
     return e?.isTrusted === true;
   }
 
+  // The scan the shown overlay was drawn from; the X sends it back so the background removes the card of that scan.
+  let _overlayScanId = null;
+
+  // Follows isSamePage in lib/draw-box.js, except that a query-only change still counts as the lot's page, because
+  // single-page sites change the query during normal use. This script is injected as a classic script and cannot
+  // import it; tests/overlay-toggle.test.js feeds both the same cases.
+  function isLotPage(lotUrl) {
+    try {
+      const lot = new URL(String(lotUrl));
+      const here = new URL(String(location.href));
+      return lot.origin === here.origin && lot.pathname === here.pathname;
+    } catch {
+      return false;
+    }
+  }
+
+  // After the extension is updated or reloaded under an open page this script is orphaned: chrome.runtime has no id.
+  function extensionAlive() {
+    try {
+      return Boolean(chrome.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  // Sends to the extension; null when it is gone (the overlay then removes itself and the page keeps its click).
+  function sendToExtension(message) {
+    try {
+      return chrome.runtime.sendMessage(message);
+    } catch {
+      clearOverlay();
+      return null;
+    }
+  }
+
   function onClick(e) {
+    if (_draw) return; // draw mode owns every click while it is on
     if (!acceptClick(e)) return;
+    if (!extensionAlive()) { clearOverlay(); return; }
     // A modified or non-primary click is the page's own (new tab, context menu ...).
     if (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey || (e.button ?? 0) !== 0) return;
     const point = { x: e.clientX, y: e.clientY };
@@ -1051,24 +1088,27 @@
     if (!hit) return;
     // The box hit area is the card's photo: site UI painted over it keeps its own click.
     if (hit.photo && !photoOnTop(hit.photo, point)) return;
+    if (hit.legendClose) { e.preventDefault(); e.stopPropagation(); closeLegend(); _drawOverlay(); return; }
+    const removing = Number.isInteger(hit.remove);
+    // The scanner does what its own "Open full-size photo" button does: site access, a new tab, then a scan.
+    const sent = sendToExtension(hit.fullSize
+      ? { action: 'overlayFullSize' }
+      : removing
+        ? { action: 'overlayRemove', index: hit.remove, ...(_overlayScanId ? { scanId: _overlayScanId } : {}) }
+        : { action: 'overlayPick', index: hit.index });
+    if (!sent) return; // the extension is gone: the page keeps its click
     e.preventDefault();
     e.stopPropagation();
-    // The scanner does what its own "Open full-size photo" button does: site access, a new tab, then a scan.
-    if (hit.fullSize) { chrome.runtime.sendMessage({ action: 'overlayFullSize' }).catch(() => {}); return; }
-    if (hit.legendClose) { closeLegend(); _drawOverlay(); return; }
-    if (Number.isInteger(hit.remove)) {
-      // The box goes only once the removal is stored (the scanner or the background says so); until then it stays.
-      const index = hit.remove;
-      chrome.runtime.sendMessage({ action: 'overlayRemove', index }).then((reply) => {
-        if (reply?.ok !== true) return;
-        _placed = _placed.filter((p) => p.index !== index);
-        if (_highlight === index) _highlight = null;
-        _hover = null;
-        _drawOverlay();
-      }).catch(() => {});
-      return;
-    }
-    chrome.runtime.sendMessage({ action: 'overlayPick', index: hit.index }).catch(() => {});
+    if (!removing) { sent.catch(() => {}); return; }
+    // The box goes only once the removal is stored (the scanner or the background says so); until then it stays.
+    const index = hit.remove;
+    sent.then((reply) => {
+      if (reply?.ok !== true) return;
+      _placed = _placed.filter((p) => p.index !== index);
+      if (_highlight === index) _highlight = null;
+      _hover = null;
+      _drawOverlay();
+    }).catch(() => {});
   }
 
   const HIGHLIGHT_COLOR = '#5B3FE6';
@@ -2305,6 +2345,9 @@
       sendResponse({ ok: true });
       return false;
     } else if (msg.action === 'showOverlay') {
+      // A lot's overlay is for the page it was scanned on; on any other page it is not drawn, and one shown there goes.
+      if (typeof msg.pageUrl === 'string' && !isLotPage(msg.pageUrl)) { clearOverlay(); return false; }
+      _overlayScanId = typeof msg.scanId === 'string' ? msg.scanId : null;
       _fullSize = msg.fullSize?.url && /^https?:/.test(msg.fullSize.url) ? { url: msg.fullSize.url } : null;
       if (typeof msg.shown === 'boolean') _shown = msg.shown;
       renderOverlay(msg.cards, msg.srcWidth, msg.srcHeight);

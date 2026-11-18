@@ -1,5 +1,6 @@
 import { pptCardUrl } from "./lib/condition-pricing.js";
 import { clearPptKey, getPptKey, savePptKey } from "./lib/ppt-key.js";
+import { clearPriceCache } from "./lib/batch-price.js";
 import { DEFAULT_FILTERS, mergeFilters, primaryCondition, withCondition, withGrader } from "./lib/price-prefs.js";
 import { referencesCountText } from "./lib/journey.js";
 import { japaneseStateText } from "./lib/japanese.js";
@@ -86,6 +87,7 @@ btnSave.addEventListener("click", async () => {
   btnSave.disabled = false;
   if (!result.ok) { showTest("Test failed: " + result.reason, "err"); return; }
   await savePptKey(key);
+  await clearPriceCache(chrome.storage.local);
   showTest("Key verified and saved.", "ok");
   setPptConnected();
 });
@@ -98,6 +100,7 @@ btnChange.addEventListener("click", () => {
 
 btnClear.addEventListener("click", async () => {
   await clearPptKey();
+  await clearPriceCache(chrome.storage.local);
   setPptDisconnected();
   pptKeyEl.value = "";
   showTest("", "info");

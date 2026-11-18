@@ -274,3 +274,10 @@ test('leftOutLabel and the group heading and row text say skipped, removed, or b
   assert.match(renderSkippedRow(0, null), /Card 1: Skipped\./);
   assert.match(renderSkippedRow(0, null), /return it to the cards to confirm/);
 });
+
+test('saveSkip keeps no picture for a row treated as Japanese (finding 16)', () => {
+  const source = fs.readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
+  const start = source.indexOf('  saveSkip: async');
+  const body = source.slice(start, source.indexOf('\n  },', start));
+  assert.match(body, /crop: keepsNoPicture\(msg\) \? null : correctionSource\(scan, msg\)\.crop/);
+});

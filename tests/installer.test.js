@@ -261,6 +261,28 @@ test('both scripts refuse a drive root, a share root and a path that is not full
   }
 });
 
+test('Find-Chrome skips an App Paths key that has no default value instead of throwing', win32, () => {
+  const key = `${KEY_PARENT}\\find-chrome-${randomBytes(4).toString('hex')}`;
+  const found = path.join(tmpdir(), `lotwise-find-chrome-${randomBytes(4).toString('hex')}.exe`);
+  try {
+    // Only a throwaway key under HKCU:\Software\LotwiseInstallerTest is created, and removed in finally.
+    const setup = powershell(['-Command', `New-Item -Path '${key}' -Force | Out-Null; New-ItemProperty -Path '${key}' -Name Path -Value 'C:\\x' -PropertyType String -Force | Out-Null`]);
+    assert.equal(setup.status, 0, setup.stderr);
+    writeFileSync(found, '');
+    const noDefault = runGuard(installScript, ['Find-Chrome'], "Set-StrictMode -Version Latest; [Console]::Out.WriteLine('ok:' + [string](Find-Chrome -Keys $env:LOTWISE_GUARD_INPUT))", key);
+    assert.equal(noDefault.status, 0, noDefault.stdout + noDefault.stderr);
+    assert.ok(noDefault.stdout.startsWith('ok:'), noDefault.stdout);
+
+    const withDefault = powershell(['-Command', `Set-ItemProperty -LiteralPath '${key}' -Name '(default)' -Value '${found}'`]);
+    assert.equal(withDefault.status, 0, withDefault.stderr);
+    const result = runGuard(installScript, ['Find-Chrome'], "Set-StrictMode -Version Latest; [Console]::Out.WriteLine('ok:' + [string](Find-Chrome -Keys $env:LOTWISE_GUARD_INPUT))", key);
+    assert.equal(result.stdout.trim(), `ok:${found}`, result.stdout + result.stderr);
+  } finally {
+    rmSync(found, { force: true });
+    removeTestKeys(key);
+  }
+});
+
 // Pulls one top-level function out of a script so two copies can be compared character for character.
 function functionText(file, name) {
   const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');

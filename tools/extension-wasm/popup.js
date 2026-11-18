@@ -735,6 +735,7 @@ function applyDrawnCard(msg) {
   // Two tabs on the same URL are two lots, so the tab counts too.
   if (!_lastResult || !isSameLot({ url: _lotUrl, tabId: _lotTabId }, { url: msg.tabUrl, tabId: msg.tabId })) {
     applyScanResult({ cards: [card], srcWidth: msg.srcWidth, srcHeight: msg.srcHeight, tabUrl: msg.tabUrl, tabId: msg.tabId, scanId: null });
+    _userEdits = true; // applyScanResult reset it; else a rescan from newCardsDetected would replace the drawn card
     sendBoxSignal("drawn", null, 0, card);
     // dev-only:start
     reportDrawnKind(msg, null);
@@ -749,6 +750,7 @@ function applyDrawnCard(msg) {
   reportDrawnKind(msg, placed.replacedCard);
   // dev-only:end
   _lastResult = { ..._lastResult, cards };
+  _userEdits = true; // else a rescan from newCardsDetected would replace the list and lose the drawn card
   for (const map of [_variantChoice, _variantSuggest]) map.delete(placed.index);
   _variantPicked.delete(placed.index);
   seedVariant(card, placed.index);
@@ -910,6 +912,7 @@ lotEditionSelect.addEventListener("change", () => {
   const cards = _lastResult?.cards;
   if (!cards) return;
   _lotEdition = lotEditionSelect.value;
+  _userEdits = true; // else a rescan would reset the edition choice
   cards.forEach((card, idx) => {
     if (_variantPicked.has(idx) || !needsEdition(card)) return;
     const key = _lotEdition ? editionVariant(card, _lotEdition) : null;
@@ -1783,7 +1786,7 @@ function removeAt(idx, { fromPage }) {
   _changing.delete(idx);
   dropFromBulk(idx);
   _userEdits = true; // else a rescan from newCardsDetected would replace the list and bring the card back
-  replaceCard(idx, removeCard(card));
+  replaceCard(idx, removeCard(card), { keepVariant: true });
   sendBoxSignal("removed", _lastResult?.bgScanId, idx, card);
   if (_bulk) _bulk.scan = _lastResult;
   if (!fromPage) (neighbour && resultsEl.querySelector(`button[data-remove-card][data-idx="${neighbour.dataset.idx}"]`) || btnScan).focus();
@@ -1825,7 +1828,7 @@ function putBackAt(idx) {
       .catch((err) => showMessage(explainScanError(err?.message || err), true));
   }
   _showChoose = true;
-  replaceCard(idx, putBackCard(card));
+  replaceCard(idx, putBackCard(card), { keepVariant: true });
   const row = resultsEl.querySelector(`.card-row[data-idx="${idx}"]`);
   (row?.querySelector("[data-confirm-best]") || row?.querySelector("[data-open-search]") || row?.querySelector("[data-remove-card]") || row?.querySelector(".row-toggle") || btnScan).focus();
   showMessage(removed ? (card.removedFromSkipped === true ? "Put back. It is still skipped." : "Put back. It counts in the total again.") : `Put back. ${toConfirmCount()} to confirm.`);
@@ -2059,7 +2062,7 @@ function confirmBulk() {
   const kept = pairs.filter((pair) => !skipped.has(pair.idx) && _lastResult?.cards?.[pair.idx]?.skipped !== true);
   const remembered = new Set(bulkRememberedPairs(kept, explicit).map((pair) => pair.idx));
   closeBulk(false);
-  if (_lastResult !== scan) return;
+  if (_lastResult?.scanId !== scan?.scanId) return;
   // Each pair goes through the same pick as a single confirm, so the price is the same. Only a Check pair the user
   // ticked by hand is saved as their correction; ticking the scanner's own preselection confirms it for this session.
   for (const pair of kept) pickCard(pair.idx, pair.candidate.id, "candidates", pair.candidate, remembered.has(pair.idx));
@@ -2186,7 +2189,8 @@ function renderVersionRow(card, idx) {
   </div>`;
 }
 
-function replaceCard(idx, next) {
+// keepVariant: only a flag on the card changed (removed, put back), so the printing the user chose stays.
+function replaceCard(idx, next, { keepVariant = false } = {}) {
   const hadFocus = resultsEl.contains(document.activeElement);
   const active = document.activeElement?.closest?.("[data-strip-kind]");
   const strip = active ? { kind: active.dataset.stripKind, id: active.dataset.stripPick } : null;
@@ -2196,10 +2200,12 @@ function replaceCard(idx, next) {
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
   refreshStatus();
-  _variantChoice.delete(idx);
-  _variantSuggest.delete(idx);
-  _variantPicked.delete(idx);
-  seedVariant(next, idx);
+  if (!(keepVariant && (_variantPicked.has(idx) || _variantChoice.has(idx)))) {
+    _variantChoice.delete(idx);
+    _variantSuggest.delete(idx);
+    _variantPicked.delete(idx);
+    seedVariant(next, idx);
+  }
   renderResults();
   if (hadFocus && !resultsEl.contains(document.activeElement)) {
     const kept = keptConfirm === null ? null : resultsEl.querySelector(`.choose-row[data-idx="${keptConfirm}"] [data-confirm-best]`);
@@ -2338,6 +2344,8 @@ function pushOverlay() {
     ...(_lastResult.fullSize ? { fullSize: { url: _lastResult.fullSize.url } } : {}),
     srcWidth: _lastResult.srcWidth,
     srcHeight: _lastResult.srcHeight,
+    ...(_lotUrl ? { pageUrl: _lotUrl } : {}),
+    ...(typeof _lastResult.bgScanId === "string" ? { scanId: _lastResult.bgScanId } : {}),
   };
   overlayShownLoaded.then(() => chrome.runtime.sendMessage({
     ...message,
@@ -2427,7 +2435,7 @@ async function saveSession() {
     cards, bgScanId: scan.bgScanId, srcWidth: scan.srcWidth, srcHeight: scan.srcHeight, fullSize: scan.fullSize,
     variantChoice: [..._variantChoice], variantSuggest: [..._variantSuggest], variantPicked: [..._variantPicked],
     lotEdition: _lotEdition, showUnrecognised: _showUnrecognised, showChoose: _showChoose, showSkipped: _showSkipped,
-    statusTail: _statusTail,
+    statusTail: _statusTail, userEdits: _userEdits,
   });
 }
 // A window closed inside the delay still keeps its last change.
@@ -2445,7 +2453,7 @@ function restoreSession(saved) {
     _variantPicked = new Set(st.variantPicked || []);
     _lotEdition = st.lotEdition || "";
     _stripMore = new Set();
-    _userEdits = false;
+    _userEdits = st.userEdits !== false; // a lot saved before the flag was kept counts as edited
     _showUnrecognised = st.showUnrecognised === true;
     _showChoose = st.showChoose !== false;
     _showSkipped = st.showSkipped === true;
@@ -2458,6 +2466,10 @@ function restoreSession(saved) {
     refreshStatus(true);
   } finally { _restoring = false; }
   loadBestMatchPrices(_lastResult);
+  // A price that was still loading when the lot was saved never arrived: ask again, as Undo after Clear does.
+  _lastResult.cards.forEach((card, idx) => {
+    if (card.pricing === true && card.identity?.id) pickSet(idx, card.identity.id, card.setChoices?.length ? null : card.identity);
+  });
   const mins = Math.max(0, Math.round((Date.now() - saved.savedAt) / 60000));
   restoreText.textContent = restoredText(mins);
   setNotice("restore", true);

@@ -50,3 +50,21 @@ export function createScannerOpener({ windows, getContexts, popupUrl, setTargetT
     },
   };
 }
+
+// The scanner window's id is kept in session storage, so a restarted service worker still knows the window is open.
+const WIN_ID_KEY = "popupWinId";
+
+/** The id to use: `current` when known, else the saved one, else null. */
+export async function restoreWinId(session, current) {
+  if (current !== null) return current;
+  try {
+    const stored = await session.get(WIN_ID_KEY);
+    return stored?.[WIN_ID_KEY] ?? null;
+  } catch {
+    return null; // session storage unavailable: the opener finds the window through getContexts
+  }
+}
+
+export function saveWinId(session, id) {
+  Promise.resolve(session.set({ [WIN_ID_KEY]: id })).catch(() => {});
+}

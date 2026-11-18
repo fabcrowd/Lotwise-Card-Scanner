@@ -35,6 +35,11 @@ export function acceptRemove(tabUrl, index, lotUrl, cards) {
   return removable(cards[index]);
 }
 
+/** Whether a removal made on an overlay drawn from scan `overlayScanId` is for the lot of scan `lotScanId`. No id from the page: as before. */
+export function scanMatches(overlayScanId, lotScanId) {
+  return typeof overlayScanId !== "string" || overlayScanId === lotScanId;
+}
+
 /** A saved lot state with the card at `index` removed, or null when there is no such removable card. */
 export function removeFromLot(state, index) {
   const cards = state?.cards;
