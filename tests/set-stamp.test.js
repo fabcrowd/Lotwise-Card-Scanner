@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { stampFromCorner, stampSetCode } from '../tools/extension-wasm/lib/variant.js';
 import { NO_REVERSE_PRICE, applySetStamp, stampFinishNote, stampedPrices } from '../tools/extension-wasm/lib/set-stamp.js';
+import { PRICE_ERROR_TEXT } from '../tools/extension-wasm/lib/batch-price.js';
 import { detectedVariant, isIdentified, lotEstimate, quotedPrice, suggestedVariant } from '../tools/extension-wasm/lib/card-display.js';
 import { bestMatchPrice, priceTypicalOf } from '../tools/extension-wasm/lib/stakes.js';
 
@@ -75,6 +76,17 @@ test('a failed price lookup keeps the stamped card, without a price', async () =
   assert.equal(card.setEvidence, 'stamp');
   assert.equal(card.market_price ?? null, null);
   assert.equal(quotedPrice(card, undefined), null);
+});
+
+test('a failed price lookup marks the card like a failed batch price, and shows no "price not available" note', async () => {
+  const d = { ...deps({}), priceIdentity: async () => { throw new Error('every price source failed'); } };
+  const card = await applySetStamp(stamped({ identity: AERO_SS }), 'LEGEND MAKER', d);
+  assert.equal(card.priceError, PRICE_ERROR_TEXT);
+  assert.equal(stampFinishNote(card), null);
+  // A real missing reverse price (the lookup worked) still gets the note, and carries no failure mark.
+  const real = await applySetStamp(stamped({ identity: AERO_SS }), 'LEGEND MAKER', deps({ 'ex12-1': grid({ normal: 3, holofoil: 75.2 }) }));
+  assert.equal(real.priceError, undefined);
+  assert.equal(stampFinishNote(real), NO_REVERSE_PRICE);
 });
 
 test('an ex12 stamp without a Reverse Holofoil price: the set is chosen, the finish is left to the user with a note', async () => {

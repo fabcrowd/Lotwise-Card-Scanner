@@ -2,6 +2,7 @@
 // expansion logo in the bottom-right corner of the art. A logo read there settles the set and the Reverse Holofoil
 // price without a pick (owner decision 2026-10-25), when the card's name is in that set and that price exists.
 
+import { PRICE_ERROR_TEXT } from "./batch-price.js";
 import { choiceForStamp, stampSetCode, variantChoice } from "./variant.js";
 
 export const NO_REVERSE_PRICE = "Reverse holo price not available";
@@ -67,7 +68,7 @@ export async function applySetStamp(result, text, { cardsInSet, catalogCard, pri
   if (current?.id !== card.id) {
     // A failed lookup keeps the stamped identity, with no price (the old card's price is not this card's).
     let prices = { price_grid: null, market_price: null, price_variant: null };
-    try { prices = await priceIdentity(card); } catch { /* every price source failed */ }
+    try { prices = await priceIdentity(card); } catch { prices = { ...prices, priceError: PRICE_ERROR_TEXT }; /* every price source failed */ }
     Object.assign(result, prices);
   }
   result.identity = card;
@@ -86,8 +87,8 @@ export async function applySetStamp(result, text, { cardsInSet, catalogCard, pri
   return result;
 }
 
-/** The note a stamped card shows when its set has no Reverse Holofoil price (it then shows no price at all). */
+/** The note a stamped card shows when its set has no Reverse Holofoil price (it then shows no price at all). A card whose price lookup failed shows the retry text instead. */
 export function stampFinishNote(card) {
-  if (!isStampedCard(card)) return null;
+  if (!isStampedCard(card) || card.priceError) return null;
   return reverseKey(card.price_grid) ? null : NO_REVERSE_PRICE;
 }
