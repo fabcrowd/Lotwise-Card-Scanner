@@ -1,6 +1,74 @@
 # Handoff
 
-## Current state (2026-11-14)
+## Current state (2026-11-17): Japanese cards, newest sets, Windows installer
+
+Three pieces of work are built, tested, reviewed and committed. On 2026-11-17 the owner asked for the go-live steps, and "Go-live steps: done and left" at the end of this section says what was carried out and what is still open. In short: the Japanese catalog file is published, the nightly job on `fabcrowd/card-scanner-data` now runs for the current recognizer but ships nothing until `regression.npz` is rebuilt, and the installer has been run for real on this PC. The commits in this repo are local on branch `feat/mobile-app` and are not pushed.
+
+### 1. Japanese cards (extension)
+
+- What it does: a detected card 200 px or taller whose best match among 25,531 Japanese cards beats its best English match by 0.005 (cosine) becomes a question, "Looks like a Japanese card. Pick the match.", with four Japanese matches and the best English one. The scanner never confirms it. After the pick the price comes from TCGplayer through `https://tcgcsv.com` (Near Mint only; no price when TCGplayer has no market price). The picker search finds Japanese cards by name and number. Exports say `raw, Japanese, <condition>`. Settings: "Recognize Japanese cards", on by default, with a status line.
+- Never shared as a card answer, never remembered as a picture: a pick on a Japanese-flagged row, and any Japanese pick, is not sent to shared learning and stores no reference picture, and an exam photo that contains a Japanese box sends nothing. Box rows (a box the user draws, removes or puts back) are still sent as the privacy policy describes, without a card id.
+- Code: `tools/extension-wasm/lib/japanese.js`, `lib/ja-prices.js`, and changes in `background.js`, `popup.js`, `photo-detection.js`, `options.*`, `lib/setup.js` (optional asset `catalog-ja.bin.gz`, release tag `v3.2`, pinned sha256), `manifest.json` and `scripts/lib/store-package.mjs` (new host `https://tcgcsv.com/*`, also in the store build).
+- The catalog file: `card-scanner-data/data/ja-catalog/catalog-ja.bin.gz`, 9,046,332 bytes, sha256 `64e574fc24f844f142e6c13a0568dde4aafe7879f0608d5c313d3fb514ef774a`, built by `card-scanner-data/scripts/build_ja_catalog.py` from TCGplayer's Japanese category (TCGCSV category 85). It is published as a file of release `v3.2` of `fabcrowd/pokemon-auto-lister` (2026-11-17; the public download was fetched back and its sha256 equals the pin), so a build from this branch downloads it and the feature is on.
+- Accuracy, from a study whose rules were written down before any comparison (`card-scanner-data/data/reports/japanese-20261117/README.md` and `ADDENDUM.md`): on the final set, scored once, 5 of 258 English boxes were flagged (1.9%) and 8 of 12 Japanese boxes were caught. An independent audit reproduced every number from the shipped file and asked for caution: read the first figure as "a few percent at most" and the second as "roughly 40% to 90%" (12 boxes from 7 listings; the gate passed by one box). The extension's own code agrees with the study on 3,629 of 3,629 labelled boxes. On real photos the exact card is among the four Japanese matches for 23 of 39 flagged boxes; the rest need the search box. The "is this a card" check hides none of the flagged Japanese boxes.
+- Limits: nothing under 200 px is flagged, and in the harvests most Japanese boxes are smaller than that. Other languages have no catalog. Japanese sets are not updated nightly. 2,492 listed Japanese cards have no picture and can only be found by search. The cut-offs are fitted to this recognizer, crop and catalog. See `docs/known-limits.md`.
+
+### 2. Newest English sets (nightly template)
+
+- Cause found: the live nightly bundle is made for the older recognizer and crop 2, and the extension (recognizer `0dba1302580da2a6`, crop 3) rightly ignores it. So cards released after the shipped catalog (for example `me06`, `30th`) are unknown to the extension today. No retraining is needed: a new set needs catalog rows.
+- Measured which rows to make (`card-scanner-data/data/reports/newsets-20261117/README.md`, preregistered, audited, amended before the second measurement): on 299 never-trained cards, synthetic reads at 200 px find the exact card 98.7% of the time with rows from the current recognizer against 81.9% with the older model's rows (an upper bound for the gain, because the reads come from the same pictures). On 3,363 labelled real English boxes, the current recognizer's rows took 3 correct reads away and gained 8, with no added confident errors. So new rows are made with the current recognizer.
+- Template changes (`tools/shared-data`): everything read or written carries the recognizer and crop that made it, and anything made for another one is ignored; digital-only sets are skipped; newest sets first; pictures TCGdex lacks come from the static `PokemonTCG/pokemon-tcg-data` files on a number and name match; upstream data and the previous night's file are re-checked (picture hosts, ids, text, duplicates, redirects); a night never ships fewer new cards than the live file; and the regression replay now includes the new-card rows, so a night that only adds cards ships only when no regression read is lost.
+- Dry run on this PC (`.tmp/e-dry/out7`, with a stand-in regression file of 203 catalog rows, not the real labelled crops): night 1 adds 500 cards (`me06` 141 and `30th` 158 first) and would ship. An earlier two-night run reached 816 cards with no repeats, and the extension's own parser and search accepted the file.
+- Pushed to `main` of `fabcrowd/card-scanner-data` on 2026-11-17 (commits `38eb9d1` and `8cd94fd` there), merged on top of live `main` so the newer price job (`pipeline/prices.py`, `stamps.py`) stayed as it was. Two manual workflow runs succeeded. Each built 500 new cards (`me06` and `30th` among them), ignored the untagged `regression.npz` and `seed.npz`, and published a pre-release with `improved: false`. So nothing reaches users yet: the first bundle for the current recognizer ships only after `regression.npz` is rebuilt (see the steps below).
+- A fault as old as the nightly job was found in the first run's log and fixed: the step that downloads the live bundle failed on a missing `--pattern` flag and the `|| echo` fallback hid it, so the job had never read the live bundle. After the fix the second run printed "live bundle is model 77538aade655907f crop 2, not ours: starting from the plain catalog", which is the intended answer.
+
+### 3. Windows installer
+
+- `scripts/build-installer.ps1` builds `dist/Sweep-Setup-<version>.exe` (IExpress, per user, no administrator rights) from the store package. It copies the extension to `%LOCALAPPDATA%\Sweep\extension`, adds an entry under "Installed apps" and opens a guide page for the three clicks in `chrome://extensions` (Chrome does not let a program load an unpacked extension). Sources and tests: `tools/installer/`, `tests/installer.test.js`.
+- Both scripts refuse folders and registry keys that are not Sweep's. A cold review found no way to delete or overwrite anything else.
+- Run for real on this PC on 2026-11-17, three times: a first install through the Yes prompt, an update over it through the Yes prompt, and one run with `/Q`. Each left 103 extension files, the guide, the uninstaller and the marker in `%LOCALAPPDATA%\Sweep`, and the entry "Sweep card scanner (Chrome extension)" 3.1.0 under Installed apps. Sweep is now installed on this PC; the three clicks in `chrome://extensions` were not done.
+- The first `/Q` run found a fault: "Error creating process <None>", nothing installed. IExpress runs its own default for an empty quiet command. Both quiet commands now repeat the launch command. `/Q` still opens the guide page and can still show a failure message, so it is not an unattended install; that would need a switch in `install.ps1` and `launch.cmd`.
+- Not done: a run on a clean Windows account (this session has no administrator rights to make an account, and Windows Sandbox is not installed), and the uninstaller was not run for real. The exe is not code-signed, so Windows SmartScreen warns; the guide says so.
+- One incident to know about: during development a test once ran the then-unguarded scripts with the registry key `HKCU:\Software`. A read-only check afterwards showed the key looks normal (30 subkeys, `Microsoft` and `Classes` intact, no stray values). The test was replaced and the lesson is in `tasks/lessons.md`. The owner may want to glance at `HKCU\Software` once.
+
+### Evidence (2026-11-17)
+
+Run on the final tree on 2026-11-17:
+
+- `npm test`: 2,028 tests, 2,027 pass, 0 fail, 1 skipped (rerun after the two fixes of the go-live steps). `npm run lint`: exit 0. (One earlier full run failed in `tests/sealed-label-server.test.js`, a file this work did not touch; it passed alone, 13 of 13, and in the rerun. Treat it as a flaky start-up, and look at it if it repeats.)
+- `npx playwright test tests/e2e/japanese-cards.spec.js --project=extension`: 1 passed. It loads the built extension with the real catalog file, scans a page with two Japanese cards and one English card, checks the question rows and first candidates, picks a card, checks the TCGPlayer price and the export line, searches for the other card, then switches the option off and checks the English card is unchanged. It makes no outside request.
+- Nightly template: from `tools/shared-data`, `python -I -m unittest discover -s tests` with `PYTHONPATH=.`: `Ran 308 tests`, `OK`. `node --test tests/bundle.test.js tests/shared-data-pack.test.js`: 47 pass.
+- `card-scanner-data`: `.venv-gpu\Scripts\python.exe -I -m pytest -q tests/test_build_ja_catalog.py tests/test_japanese_study.py tests/test_newsets_eval.py`: `60 passed`.
+- Builds: `scripts\build-wasm-extension.ps1` (dev) and `scripts\build-installer.ps1` (which runs the `-Store` build). Result: `dist\extension-wasm-store.zip`, 6,336,016 bytes; `dist\Sweep-Setup-3.1.0.exe`, 6,504,448 bytes, SHA-256 `bea9915a3e7dba5802bc28da90933c066c0e70d3b49d00a20dda5d43ac7297a8` (rebuilt after the quiet-switch fix). Rebuild both after any source change; the hash changes with every build.
+- Installer tests (`tests/installer.test.js`, part of `npm test`): 43 pass. They install, update and uninstall in temp folders with throwaway registry keys.
+- Nightly job on GitHub, after the push: runs 44227423705 and 44228778080 of `nightly-pack`, both `success` (build and sign). The second one: `Ran 363 tests`, `OK (skipped=9)`; pre-release `pack-20261118-35`; "Latest" is still `pack-20261117-33`, made for the older recognizer.
+- Cold reviews: the Japanese study and the new-sets study were each audited independently (numbers reproduced); the Japanese extension change, the installer and the nightly template were each reviewed cold, and the fixes they asked for were applied.
+- Not verified: the installer on a clean Windows account and its uninstaller for real; a PC whose policy blocks PowerShell scripts (a stub stands in for it in the tests); the nightly job with the real labelled regression crops (they are not on this PC); Japanese recognition in the owner's own Chrome on live listings.
+
+### Go-live steps: done and left
+
+Done on 2026-11-17, at the owner's request:
+
+1. Commits. This repo, branch `feat/mobile-app`, not pushed: `f65d08e` (installer), `d1d8515` (nightly template), `f372612` (Japanese cards), `bfcdb31` (installer quiet switch), `7b72f41` (nightly live-bundle download), then the docs commit. `mobile/.claude/` and `mobile/.cursor/` were left out. `card-scanner-data`, local branch `feat/blurry-training`, not pushed: `082a4db` (catalog builder and the two study scripts with their tests; the other untracked research files there were left alone).
+2. Japanese catalog: release `v3.2` of `fabcrowd/pokemon-auto-lister` holds `catalog-ja.bin.gz` (not marked Latest).
+3. Nightly job: the template is on `main` of `fabcrowd/card-scanner-data` and the workflow was run twice (see "2. Newest English sets" and Evidence).
+4. Installer: run on this PC (see "3. Windows installer").
+
+Left for the owner:
+
+1. Rebuild `regression.npz` with the current recognizer and commit it to the root of `main` of `fabcrowd/card-scanner-data`. This is the one step that makes new cards reach users. It needs the labelled, non-sealed HiBid development crops and their `labels.json`, which are not on this PC (the folder `data/detect-hibid-real` does not exist here). Command, from a checkout of that repo: `python scripts/build_regression.py --labels labels.json --root <crops folder> --model clip_visual_int8.onnx --out regression.npz`. Until then every night publishes a pre-release and "Latest" does not move.
+2. `seed.npz`: left out. The untagged file on `main` is ignored, so the adapter trains on contributions alone, and there are no contributors yet. Rebuild it (`scripts/build_seed.py`, README step 10a) when contributions start to matter.
+3. Installer on a clean Windows account, and one real uninstall. Code signing is undecided; the recommendation is to ship unsigned with the guide's notice until there are users, because a certificate is a yearly cost and a new one still starts with no SmartScreen reputation. The exe is not attached to any release.
+4. Store form: there is no store item yet (the developer registration and the first upload are the owner's). When the item exists, paste the `tcgcsv.com` host justification from `docs/store/listing.md`.
+5. Push the commits: `feat/mobile-app` in this repo and `feat/blurry-training` in `card-scanner-data`.
+
+### Open findings for the owner (not acted on)
+
+- Rows from the current recognizer may also read the shipped English catalog better than its older-model rows. That is a catalog change: it needs its own preregistered study on real photos and a threshold refit.
+- A lower height floor for Japanese cards (150 px with a larger margin) caught more Japanese boxes on the fitting data. The written rule did not pick it; trying it needs a new study on fresh boxes.
+- The signing script and the extension's parser do not limit picture hosts of new-card rows; the nightly job does. Adding the same limit in both would be a second line of defense.
+
+## Earlier state (2026-11-14)
 
 The work of branch `feat/price-follows-pick` is merged into `main` and the services it needs are deployed. The extension is not released: no store listing has been submitted, and only the owner's unpacked developer build exists. The first real box signal row has not been sent yet.
 

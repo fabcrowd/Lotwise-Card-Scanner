@@ -22,6 +22,7 @@ This section follows `HANDOFF.md` ("Current state", 2026-11-14) and the UI redes
   - Popup Playwright spec: 159 passed.
   - Every slice had a cold review.
   - It is committed only when the owner asks. The new `ui/` folder and four new `lib/` modules are untracked until then.
+- **Japanese cards, newest sets and a Windows installer (2026-11-17).** Committed on branch `feat/mobile-app`. The Japanese card list is published (release `v3.2`), and the nightly job runs for the current recognizer but ships no new cards until its regression file is rebuilt. What is done, the evidence and the steps left for the owner are in `HANDOFF.md` ("Current state (2026-11-17)").
 - Sharing is opt-in and off by default. With it on, the extension also sends the boxes you drew, removed and put back, on photos you teach it.
 - The relay and the nightly job are deployed. The nightly job counts the box signals and strips them before consensus, the exam and training, so nothing trains on them yet.
 - No real box signal row has been sent yet; that is the remaining end-to-end check.
@@ -47,6 +48,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension.ps1 -Sealed  # sealed-score variant -> dist/extension-wasm-sealed
 ```
 
+### Windows installer
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1               # after the -Store build -> dist/Sweep-Setup-<version>.exe
+```
+
+The installer is for people who do not build from source. It copies the store package to `%LOCALAPPDATA%\Sweep\extension`, adds a per-user entry under "Installed apps" (no administrator rights) and opens a guide page. Chrome does not let a program load an unpacked extension, so the guide walks through the three clicks in `chrome://extensions`. The exe is not code-signed, so Windows SmartScreen warns on first run. Sources: `tools/installer/`.
+
 ### Load unpacked and first run
 
 Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick `dist/extension-wasm`. On first launch the scanner window shows "Set up Sweep": click **Download** (about 147 MB, one time). After that everything runs on your computer. **Scan Page** stays off until the download finishes. Full steps are in [`tools/extension-wasm/INSTALL.md`](tools/extension-wasm/INSTALL.md).
@@ -64,6 +73,7 @@ Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**,
 - Lets you draw a box around a card it missed.
 - Lets you remove a card with the X, and bring back a box the "is this a card" check hid.
 - Leaves out a card it cannot price instead of guessing a price.
+- Asks about a card that looks Japanese (200 px or taller): it shows Japanese matches from a separate list of 25,531 cards, you pick, and the price comes from TCGplayer through tcgcsv.com. Settings: "Recognize Japanese cards". The rule, its accuracy and its limits are in [`docs/known-limits.md`](docs/known-limits.md).
 - Copies or downloads the lot with one confirmed lot value.
 - Offers opt-in sharing, "Help improve recognition for everyone", which is off until you turn it on. See [`docs/store/privacy-policy.md`](docs/store/privacy-policy.md) for what is sent and [`docs/plans/shared-learning.md`](docs/plans/shared-learning.md) for the design.
 

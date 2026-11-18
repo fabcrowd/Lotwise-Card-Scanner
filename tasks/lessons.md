@@ -165,3 +165,38 @@ Rule: label on the largest available picture and score on the small served one.
 
 ## Harvest blocks are final (2026-11-08)
 LiveAuctioneers rendered empty in headless Chromium and estatesales.org returned 403 on the first request. Rule: record the block, skip the site, and do not retry headed or otherwise work around it.
+
+## A guard test must be harmless when the guard is missing (2026-11-17)
+A builder wrote a test that ran the real `uninstall.ps1` with `-UninstallKey HKCU:\Software` to prove the script refuses it, and ran it once before the guard existed. The key survived (30 subkeys, `Microsoft` 110, checked read-only afterwards), but a regression would have deleted the user's whole `HKCU\Software`. Other tests passed `C:\` and an `HKLM` key the same way.
+
+Rule: test a refusal by calling the guard function alone (extract it from the script and run only it), never by running the destructive script end to end with a real target. Before adding an end-to-end refusal test, ask what the run writes or deletes if the guard is removed; the answer must be "only the temp folder and the test's own key". Never use a test-name filter as the only thing that keeps a dangerous test from running.
+
+## A gate must replay with the rows it is deciding about (2026-11-17)
+The nightly rule "a night that only adds new cards may ship when the regression score did not drop" compared two replays that never included the new-card rows, so it was true by construction. A cold review found it; the unit tests could not, because they asserted "ships" and the gate could not fail that way.
+
+Rule: when a gate decides whether something ships, feed that thing into the replay ("before" with the live rows, "after" with the candidate's), and write one test where the gate must say no (here: a new row that is the nearest neighbor of another card's regression crop).
+
+## A synthetic comparison of row models needs a real-photo condition (2026-11-17)
+Rows made by the query's own model from the same clean picture scored 98.7% against 81.9% on synthetic reads, and the "large full" guard cell could not fail (the query was the row's own picture). An audit also showed such rows took 4 of 120 control reads. The decision was only safe after a second condition on labelled real boxes, written into the preregistration before any number was computed.
+
+Rule: before choosing which model makes catalog rows, preregister a real-photo condition on reads of other cards (lost, gained, added confident errors) next to the synthetic one, and treat the synthetic gain as an upper bound.
+
+## A copied Chrome profile runs the old service worker (2026-11-17)
+A Playwright spec that copied `.tmp/draw-box/profile` ran a stale extension worker: it had no new code and logged "packaged card check not available". Deleting the whole `Service Worker` folder also deleted the cached models.
+
+Rule: in a copied profile delete `Default/Service Worker/ScriptCache` and `Database`, keep `CacheStorage`, and assert in the spec that the worker logged the line the new build prints.
+
+## IExpress limits (2026-11-17)
+IExpress builds no exe when the `AppLaunched` line is 259 characters or longer, it ignores the program's exit code, and with `NoDefaultCurrentDirectoryInExePath=1` set `cmd.exe /c name.cmd` does not find a file in the current folder.
+
+Rule: keep the launch line short (`cmd.exe /c .\launch.cmd`), put logic in the shipped `.cmd`, and probe only with stub scripts in a temp folder.
+
+## A fallback that prints a friendly line hides a broken command (2026-11-17)
+The nightly workflow ran `gh release download ... || echo "no live bundle yet"`. `gh` refused the command from the first run on (it needs `--pattern` for the latest release), the fallback printed its line, and every run was green. The job never read the live bundle and nobody saw it for a month.
+
+Rule: after a workflow change, read the log of one real run for each `|| echo` fallback line, not only the job result, and pin the command's required flags in `tests/test_workflow.py`.
+
+## Run the built installer once per way it can be started (2026-11-17)
+The installer tests ran `install.ps1` and `launch.cmd` in temp folders, and the exe had only been started the normal way. Its `/Q` switch showed "Error creating process <None>": IExpress runs its own default when a quiet command is empty.
+
+Rule: set `AdminQuietInstCmd` and `UserQuietInstCmd` to the launch command, and before calling an installer done run the built exe once with each switch (none, `/Q`, `/Q:A`).

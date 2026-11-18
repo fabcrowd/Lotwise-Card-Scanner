@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased (2026-11-17: Japanese cards, newest sets, Windows installer)
+
+### Added
+- Japanese cards (`lib/japanese.js`, `lib/ja-prices.js`): a separate catalog of 25,531 Japanese cards (`catalog-ja.bin.gz`, about 9 MB, optional download at release tag `v3.2`, pinned by sha256). A card 200 px or taller whose best Japanese match beats its best English match by 0.005 is shown as a question with four Japanese matches and one English one; it is never confirmed or priced as final by the scanner. The picker search covers Japanese cards by name and number. Prices for a picked Japanese card come from TCGplayer through tcgcsv.com (Near Mint only). Exports say `raw, Japanese, <condition>`. A pick on a Japanese-flagged row, and any Japanese pick, is never sent to shared learning and stores no reference picture; an exam photo that contains a Japanese box sends nothing. A card with no TCGplayer market price shows no price. Options: "Recognize Japanese cards" (on by default). The rule and its limits are in `card-scanner-data/data/reports/japanese-20261117/`.
+- Host permission `https://tcgcsv.com/*` (store build too; `tests/store-build.test.js` and `tests/store-transform.test.js` updated on purpose). Store listing and privacy policy name it and the TCGplayer picture host.
+- Nightly template (`tools/shared-data`): new cards get rows from the current recognizer; the bundle, the cumulative new-card file, `regression.npz` and `seed.npz` carry the model and crop that made them and are ignored when they differ; digital-only sets are skipped; the newest sets come first; cards TCGdex lists without a picture get one from the static `PokemonTCG/pokemon-tcg-data` files when number and name both match. A failed set list, a malformed upstream file or a set whose pictures fail no longer sinks the night.
+- Windows installer (`scripts/build-installer.ps1`, `tools/installer/`): `dist/Sweep-Setup-<version>.exe` copies the store package to `%LOCALAPPDATA%\Sweep`, registers a per-user uninstall entry and opens a guide page for loading the extension in Chrome. Both scripts refuse folders and registry keys that are not Sweep's.
+
+### Changed
+- `lib/condition-pricing.js` exports `pickDefaultPrinting`, `computeSpread` and `numOrNull` for the Japanese price grid.
+- A whole-photo read that looks Japanese is kept only when its best Japanese similarity reaches the existing whole-photo minimum.
+
+### Fixed
+- Installer: `Sweep-Setup-<version>.exe /Q` showed "Error creating process <None>" and installed nothing, and `/Q:A` did nothing. Both quiet commands now run the same launch command as a normal start.
+- Nightly template: the workflow step that downloads the live bundle failed on a missing `--pattern` flag and hid the failure, so the job never read the live bundle. `tests/test_workflow.py` pins the flag.
+
 ## Unreleased (feat/price-follows-pick: price never decides confirmation)
 
 ### Changed
