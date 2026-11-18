@@ -13,7 +13,8 @@ DATA_REPO = "fabcrowd/card-scanner-data"
 DATA_BRANCH = "inbox"
 # DATA_BASE_BRANCH = "main"
 # OWNER: your extension's id (chrome://extensions, 32 letters a-p). Comma-separate several (dev + store).
-ALLOWED_EXTENSION_IDS = "pjihnfaeeeikhdjkpochhdaoiklhpiag,glpgpefjjkfbjjahibcegokmbomghonc"
+# The third id is the installer copy's fixed id (the manifest key in tools/installer/extension-key.json).
+ALLOWED_EXTENSION_IDS = "pjihnfaeeeikhdjkpochhdaoiklhpiag,glpgpefjjkfbjjahibcegokmbomghonc,gppkiedgglhgagfmcnfebiccpkifbncm"
 # Optional limits (defaults shown).
 # CARDS_PER_INSTALL_DAY = "200"
 # REQUESTS_PER_IP_HOUR = "50"

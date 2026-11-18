@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -173,6 +173,65 @@ test('developer build keeps what the tests rely on and loses only what the store
   assert.ok(existsSync(path.join(devDir, 'lib', 'drawn-examples-store.js')));
   assert.match(read('lib/condition-pricing.js'), /127\.0\.0\.1:3000/);
   assert.match(read('options.js'), /requestAllSites/);
+});
+
+test('neither the store build, the dev build nor the source manifest carries a manifest key', win32, () => {
+  assert.equal('key' in manifestOf(storeDir), false);
+  assert.equal('key' in manifestOf(devDir), false);
+  assert.equal('key' in JSON.parse(readFileSync(path.join(sourceRoot, 'manifest.json'), 'utf8')), false);
+});
+
+function extractZip(zip, dir) {
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+    `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${zip}', '${dir}')`], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+}
+
+test('the installer package is the store zip plus the key in its manifest, and the store zip is untouched', win32, () => {
+  const base = mkdtempSync(path.join(tmpdir(), 'lotwise keyed '));
+  try {
+    const repo = path.join(base, 'repo');
+    mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+    mkdirSync(path.join(repo, 'dist'));
+    mkdirSync(path.join(repo, 'tools', 'extension-wasm'), { recursive: true });
+    mkdirSync(path.join(repo, 'tools', 'installer'), { recursive: true });
+    writeFileSync(path.join(repo, 'tools', 'extension-wasm', 'a.js'), 'a');
+    copyFileSync(path.join(repoRoot, 'scripts', 'build-installer.ps1'), path.join(repo, 'scripts', 'build-installer.ps1'));
+    for (const name of ['install.ps1', 'uninstall.ps1', 'guide.html', 'launch.cmd', 'extension-key.json']) {
+      copyFileSync(path.join(repoRoot, 'tools', 'installer', name), path.join(repo, 'tools', 'installer', name));
+    }
+    const storeZip = path.join(repo, 'dist', 'extension-wasm-store.zip');
+    copyFileSync(`${storeDir}.zip`, storeZip);
+    const future = new Date('2030-01-01T00:00:00Z');
+    utimesSync(storeZip, future, future);
+    const before = readFileSync(storeZip);
+
+    const staged = path.join(base, 'staged.zip');
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(repo, 'scripts', 'build-installer.ps1'),
+      '-SkipExtensionBuild', '-StagedZipPath', staged], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(readFileSync(storeZip), before, 'the store zip on disk was modified');
+
+    const { key } = JSON.parse(readFileSync(path.join(repoRoot, 'tools', 'installer', 'extension-key.json'), 'utf8'));
+    assert.deepEqual(zipNames(readFileSync(staged)).sort(), zipNames(before).sort());
+    const storeOut = path.join(base, 'store-out');
+    const stagedOut = path.join(base, 'staged-out');
+    extractZip(storeZip, storeOut);
+    extractZip(staged, stagedOut);
+
+    const manifestBytes = readFileSync(path.join(stagedOut, 'manifest.json'));
+    assert.ok(!(manifestBytes[0] === 0xef && manifestBytes[1] === 0xbb && manifestBytes[2] === 0xbf), 'the staged manifest has a BOM');
+    const stagedManifest = JSON.parse(manifestBytes.toString('utf8'));
+    assert.equal(stagedManifest.key, key);
+    const withoutKey = { ...stagedManifest };
+    delete withoutKey.key;
+    assert.deepEqual(withoutKey,JSON.parse(readFileSync(path.join(storeOut, 'manifest.json'), 'utf8')));
+    for (const name of listFiles(storeOut).filter((f) => f !== 'manifest.json')) {
+      assert.deepEqual(readFileSync(path.join(stagedOut, name)), readFileSync(path.join(storeOut, name)), name);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  }
 });
 
 test('both builds carry the disclaimer on the options page', win32, () => {

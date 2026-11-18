@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -899,6 +899,38 @@ test('-SkipExtensionBuild also checks the store transform and the extension buil
       const result = powershell(['-File', script, '-SkipExtensionBuild']);
       assert.notEqual(result.status, 0, `a newer ${relative} was not noticed`);
       assert.ok(result.stderr.includes(path.basename(relative)), result.stderr);
+    });
+  }
+});
+
+const keyFile = path.join(installerDir, 'extension-key.json');
+
+test('the installer extension id is what Chrome derives from the key, and the relay allows it', () => {
+  const { key, id } = JSON.parse(readFileSync(keyFile, 'utf8'));
+  assert.match(id, /^[a-p]{32}$/);
+  const hex = createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex').slice(0, 32);
+  const derived = [...hex].map((digit) => String.fromCharCode('a'.charCodeAt(0) + parseInt(digit, 16))).join('');
+  assert.equal(id, derived);
+
+  const wrangler = readFileSync(path.join(repoRoot, 'tools', 'relay', 'wrangler.toml'), 'utf8');
+  const allowed = wrangler.match(/^ALLOWED_EXTENSION_IDS = "([^"]*)"/m);
+  assert.ok(allowed, 'ALLOWED_EXTENSION_IDS is missing from wrangler.toml');
+  assert.ok(allowed[1].split(',').map((item) => item.trim()).includes(id), `${id} is not in ALLOWED_EXTENSION_IDS`);
+});
+
+test('the build script fails clearly when the installer key file is missing or malformed, before building anything', win32, () => {
+  const bad = [['missing', null], ['not json', 'nope'], ['no key', '{"id":"x"}'], ['short key', '{"key":"abc"}'], ['not base64', `{"key":"${'!'.repeat(120)}"}`]];
+  for (const [label, content] of bad) {
+    withBuildRepo(({ base, repo, script }) => {
+      const zip = path.join(repo, 'dist', 'extension-wasm-store.zip');
+      copyFileSync(makeZip(base, 'store', { 'manifest.json': '{"version":"1.2.3"}' }), zip);
+      const future = new Date('2030-01-01T00:00:00Z');
+      utimesSync(zip, future, future);
+      if (content !== null) writeFile(path.join(repo, 'tools', 'installer', 'extension-key.json'), content);
+      const result = powershell(['-File', script, '-SkipExtensionBuild']);
+      assert.notEqual(result.status, 0, `${label}: the build went on`);
+      assert.match(result.stderr, /extension key file/i, `${label}: ${result.stderr}`);
+      assert.ok(!existsSync(path.join(repo, 'dist', 'Lotwise-Setup-1.2.3.exe')), label);
     });
   }
 });

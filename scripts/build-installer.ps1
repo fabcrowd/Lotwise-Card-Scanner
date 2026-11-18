@@ -2,7 +2,9 @@
 #
 # IExpress stores files flat, so the extension travels as one zip (the store package) next to install.ps1.
 # Use -SkipExtensionBuild to reuse an existing dist\extension-wasm-store.zip.
-param([switch]$SkipExtensionBuild)
+# The packaged copy of the zip gets the fixed extension key from tools\installer\extension-key.json; the store zip is not changed.
+# -StagedZipPath <file> (for tests) writes that packaged copy to the file and stops without building the exe.
+param([switch]$SkipExtensionBuild, [string]$StagedZipPath)
 
 $ErrorActionPreference = 'Stop'
 
@@ -49,6 +51,49 @@ function Get-ZipVersion([string]$ZipPath) {
 $Version = Get-ZipVersion $StoreZip
 if ([string]::IsNullOrWhiteSpace($Version)) { throw "The store package's manifest.json has no version, so the installer cannot be named: $StoreZip" }
 
+# The installer's copy of the extension carries a manifest "key", so every PC gets the same extension id (the relay allows
+# it). The store package must not: the Chrome Web Store assigns its own id. Only the staged copy below gets the key.
+$KeyFile = Join-Path $InstallerSource 'extension-key.json'
+if (-not (Test-Path -LiteralPath $KeyFile)) { throw "The installer's extension key file was not found: $KeyFile" }
+try { $KeyInfo = Get-Content -LiteralPath $KeyFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { throw "The installer's extension key file is not valid JSON: $KeyFile" }
+$ExtensionKey = $KeyInfo.key
+if (-not ($ExtensionKey -is [string]) -or $ExtensionKey -notmatch '^[A-Za-z0-9+/]{100,}={0,2}$') { throw "The installer's extension key file has no usable base64 `"key`" value: $KeyFile" }
+
+# Copies the zip and adds "key" to its top-level manifest.json as text, so every other byte of the manifest stays as it was.
+function New-KeyedZip([string]$SourceZip, [string]$TargetZip, [string]$Key) {
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  Copy-Item -LiteralPath $SourceZip -Destination $TargetZip
+  $zip = [System.IO.Compression.ZipFile]::Open($TargetZip, [System.IO.Compression.ZipArchiveMode]::Update)
+  try {
+    $entry = $zip.Entries | Where-Object { $_.FullName -eq 'manifest.json' } | Select-Object -First 1
+    if (-not $entry) { throw "The store package has no top-level manifest.json: $SourceZip" }
+    $reader = New-Object System.IO.StreamReader($entry.Open(), (New-Object System.Text.UTF8Encoding($false)))
+    try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    if ($null -ne ($text | ConvertFrom-Json).PSObject.Properties['key']) { throw "The store package's manifest.json already has a key, which a store package must not: $SourceZip" }
+    $open = $text.IndexOf('{')
+    if ($open -lt 0) { throw "The store package's manifest.json is not a JSON object: $SourceZip" }
+    $keyed = $text.Substring(0, $open + 1) + "`n  `"key`": `"$Key`"," + $text.Substring($open + 1)
+    $entry.Delete()
+    $new = $zip.CreateEntry('manifest.json', [System.IO.Compression.CompressionLevel]::Optimal)
+    $stream = $new.Open()
+    try { $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($keyed); $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+  } finally {
+    $zip.Dispose()
+  }
+}
+function Get-ZipManifestKey([string]$ZipPath) {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+  try {
+    $entry = $zip.Entries | Where-Object { $_.FullName -eq 'manifest.json' } | Select-Object -First 1
+    $reader = New-Object System.IO.StreamReader($entry.Open(), [System.Text.Encoding]::UTF8)
+    try { return ($reader.ReadToEnd() | ConvertFrom-Json).key } finally { $reader.Dispose() }
+  } finally {
+    $zip.Dispose()
+  }
+}
+
 # IExpress is unreliable with spaces in paths, so the stage folder must not have any.
 $Stage = Join-Path $env:TEMP ('lotwise-installer-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 if ($Stage -match '\s') { throw "The stage folder path contains a space ($Stage) and IExpress cannot be trusted with it. Set TEMP to a path without spaces for this build, for example: `$env:TEMP = 'C:\Temp'" }
@@ -59,7 +104,14 @@ try {
     Copy-Item -LiteralPath (Join-Path $InstallerSource $name) -Destination (Join-Path $Stage $name)
   }
   [System.IO.File]::WriteAllText((Join-Path $Stage 'version.txt'), $Version, [System.Text.Encoding]::ASCII)
-  Copy-Item -LiteralPath $StoreZip -Destination (Join-Path $Stage 'lotwise-extension.zip')
+  $StagedZip = Join-Path $Stage 'lotwise-extension.zip'
+  New-KeyedZip $StoreZip $StagedZip $ExtensionKey
+  if ((Get-ZipManifestKey $StagedZip) -ne $ExtensionKey) { throw 'The staged extension package does not carry the key in its manifest.json.' }
+  # For tests: write the staged package here and stop before IExpress.
+  if ($StagedZipPath) {
+    Copy-Item -LiteralPath $StagedZip -Destination $StagedZipPath -Force
+    return
+  }
 
   $Exe = Join-Path $Stage 'Lotwise-Setup.exe'
   $files = 'install.ps1', 'uninstall.ps1', 'guide.html', 'launch.cmd', 'version.txt', 'lotwise-extension.zip'
