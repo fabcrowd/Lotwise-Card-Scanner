@@ -796,6 +796,14 @@ test('the build script ships launch.cmd and starts the exe through it', () => {
   assert.match(build, /foreach \(\$name in [^\r\n]*'launch\.cmd'/);
 });
 
+test('the build script gives both quiet commands the AppLaunched command, so /Q and /Q:A do not run <None>', () => {
+  const build = readFileSync(path.join(repoRoot, 'scripts', 'build-installer.ps1'), 'utf8');
+  const launch = 'cmd.exe /c .\\launch.cmd';
+  assert.ok(build.includes(`'AdminQuietInstCmd="${launch}"'`));
+  assert.ok(build.includes(`'UserQuietInstCmd="${launch}"'`));
+  assert.ok(!/QuietInstCmd=(""|<None>)?'/.test(build), 'an empty quiet command makes /Q fail with Error creating process <<None>>');
+});
+
 // The build script runs top to bottom, so these cases run a copy of it inside a throwaway repo layout.
 function withBuildRepo(run) {
   const base = mkdtempSync(path.join(tmpdir(), 'sweep build '));

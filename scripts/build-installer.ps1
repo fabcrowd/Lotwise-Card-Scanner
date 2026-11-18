@@ -81,7 +81,9 @@ try {
     # launch.cmd starts install.ps1 and tells the user if this PC blocks PowerShell scripts. The line is capped near 259
     # characters. The ".\" matters: when NoDefaultCurrentDirectoryInExePath is set, cmd does not find a bare launch.cmd.
     'AppLaunched="cmd.exe /c .\launch.cmd"',
-    'PostInstallCmd=<None>', 'AdminQuietInstCmd=""', 'UserQuietInstCmd=""'
+    # With empty quiet commands, /Q fails with "Error creating process <<None>>. Reason: The system cannot find the file specified."
+    # and /Q:A installs nothing, so both quiet commands repeat AppLaunched.
+    'PostInstallCmd=<None>', 'AdminQuietInstCmd="cmd.exe /c .\launch.cmd"', 'UserQuietInstCmd="cmd.exe /c .\launch.cmd"'
   ))
   for ($i = 0; $i -lt $files.Count; $i++) { $sed.Add('FILE' + $i + '="' + $files[$i] + '"') }
   $sed.Add('[SourceFiles]')
