@@ -85,6 +85,14 @@ class Drift(unittest.TestCase):
         js_row = next(r for r in rows if r[0] == int(m.group(1)))
         self.assertEqual(js_row, gate.UNKNOWN_HEIGHT_ROW)
 
+    def test_digital_only_pattern_matches_search_js(self):
+        from pipeline import new_sets
+
+        m = re.search(r"const\s+DIGITAL_ONLY\s*=\s*/(.*?)/\s*;", source("search.js"))
+        self.assertIsNotNone(m, "DIGITAL_ONLY not found in search.js")
+        self.assertEqual(new_sets.DIGITAL_ONLY.pattern, m.group(1))
+        self.assertEqual(new_sets.DIGITAL_ONLY.flags & re.IGNORECASE, 0)
+
     def test_const_parser_tolerates_format_and_fails_on_missing(self):
         self.assertEqual(js_const("export const CLEAR_GAP   =0.5 ;", "CLEAR_GAP"), 0.5)
         self.assertEqual(js_const("const CLEAR_GAP = 0.02;  // x", "CLEAR_GAP"), 0.02)

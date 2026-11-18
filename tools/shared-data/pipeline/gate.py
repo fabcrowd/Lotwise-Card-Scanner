@@ -10,7 +10,8 @@ import numpy as np
 
 from .catalog import Catalog
 from .exam import TOP_K, is_high
-from .pack import Pack, read_pack
+from .new_sets import read_extra
+from .pack import SCALE, Pack, read_pack
 from .train_adapter import apply_adapter, parse_adapter
 
 MIN_EXAM_CASES = 30
@@ -31,6 +32,24 @@ CONFIRM_ROWS = ((350, 0.76, 0.02), (300, 0.74, 0.02), (250, 0.72, 0.03), (200, 0
 UNKNOWN_HEIGHT_ROW = next(r for r in CONFIRM_ROWS if r[0] == CONFIRM_MIN_HEIGHT)
 CONFIRM_EPSILON = 1e-9  # float slack so a value exactly at T or G passes
 MAX_ABSTAIN_RISE = 0.02  # abstain rate may not rise by more than 2 points
+
+
+def _with_extra(catalog, part):
+    """The catalog plus the rows of a catalogExtra.bin (None: the catalog itself) and the ids of those rows. The rows are
+    dequantised like a memory pack's. ValueError when the file is malformed."""
+    if part is None:
+        return catalog, set()
+    cards, rows = read_extra(part)
+    known = set(catalog.ids)
+    keep = [i for i, c in enumerate(cards) if c["id"] not in known]  # the extension drops rows whose id the catalog has
+    cards, rows = [cards[i] for i in keep], rows[keep]
+    if not cards:
+        return catalog, set()
+    vectors = rows.astype(np.float32) / SCALE
+    vectors /= np.maximum(np.linalg.norm(vectors, axis=1, keepdims=True), 1e-12)
+    names = None if catalog.names is None else catalog.names + [str(c.get("name", c["id"])) for c in cards]
+    ids = [c["id"] for c in cards]
+    return Catalog(np.vstack([catalog.vectors, vectors]), catalog.ids + ids, names), set(ids)
 
 
 def _memory(part):
@@ -64,7 +83,7 @@ def rival_margin(ranks, ids, names=None):
 
 def _replay(parts, embeddings, truths, catalog):
     """Counts for one bundle: top-1 right, wrong "high" reads, and the accepted-right / accepted-wrong / abstained split."""
-    counts = {"right": 0, "wrongHigh": 0, "acceptedRight": 0, "acceptedWrong": 0, "abstained": 0, "n": len(truths)}
+    counts = {"right": 0, "wrongHigh": 0, "acceptedRight": 0, "acceptedWrong": 0, "abstained": 0, "n": len(truths), "predicted": []}
     if len(truths) == 0:
         return counts
     embeddings = np.asarray(embeddings, dtype=np.float32).reshape(-1, 512)
@@ -87,6 +106,7 @@ def _replay(parts, embeddings, truths, catalog):
             best = int(np.argmax(sims))
             if sims[best] >= REF_MIN and sims[best] - raw_scores[i][0] >= REF_MARGIN and mem_ids[best] in top_ids:
                 predicted, high, gap = mem_ids[best], False, 0.0  # promoted at the top score: a tie with the old top
+        counts["predicted"].append(predicted)
         counts["right"] += predicted == truth
         counts["wrongHigh"] += high and predicted != truth
         if confirms(float(scores[i][0]), gap):
@@ -130,9 +150,16 @@ def _rate(count, n):
 def evaluate(candidate, live, exam, regression, catalog):
     reg_emb, reg_ids = regression
     exam_emb, exam_ids = exam
-    replays, wrong_high = {}, {}
+    replays, wrong_high, extra_ids = {}, {}, {}
     for label, parts in (("after", candidate), ("before", live)):
-        reg, ex = _replay(parts, reg_emb, reg_ids, catalog), _replay(parts, exam_emb, exam_ids, catalog)
+        try:
+            searched, extra_ids[label] = _with_extra(catalog, parts.get("catalogExtra"))
+        except ValueError:
+            if label == "after":
+                raise
+            print("live catalogExtra is unreadable: replayed without its rows")
+            searched, extra_ids[label] = catalog, set()
+        reg, ex = _replay(parts, reg_emb, reg_ids, searched), _replay(parts, exam_emb, exam_ids, searched)
         replays[label] = (reg, ex)
         wrong_high[label] = _rate(reg["wrongHigh"] + ex["wrongHigh"], len(reg_ids) + len(exam_ids))
     n_reg, n_exam = len(reg_ids), len(exam_ids)
@@ -143,8 +170,19 @@ def evaluate(candidate, live, exam, regression, catalog):
         and wrong_high["after"] <= wrong_high["before"]
         and (n_exam < MIN_EXAM_CASES or _no_worse(_outcome(exam_before), _outcome(exam_after), exam_before["right"], exam_after["right"]))
     )
+    was_right = [p == t for p, t in zip(reg_before["predicted"], reg_ids)]
+    is_right = [p == t for p, t in zip(reg_after["predicted"], reg_ids)]
+    new_cards = {
+        "firstHit": {
+            "before": sum(p in extra_ids["before"] for p in reg_before["predicted"]),
+            "after": sum(p in extra_ids["after"] for p in reg_after["predicted"]),
+        },
+        "lost": sum(b and not a for b, a in zip(was_right, is_right)),
+        "gained": sum(a and not b for b, a in zip(was_right, is_right)),
+    }
     return {
         "improved": bool(improved),
+        "newCards": new_cards,
         "regression": {"before": _rate(reg_before["right"], n_reg), "after": _rate(reg_after["right"], n_reg), "n": n_reg},
         "exam": {"before": _rate(exam_before["right"], n_exam), "after": _rate(exam_after["right"], n_exam), "n": n_exam},
         "wrongHigh": wrong_high,

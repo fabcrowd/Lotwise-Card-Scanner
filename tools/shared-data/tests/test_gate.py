@@ -4,7 +4,7 @@ import _paths  # noqa: F401
 import numpy as np
 
 import helpers as h
-from pipeline import gate
+from pipeline import gate, new_sets
 from pipeline.catalog import Catalog
 from pipeline.pack import write_pack
 from pipeline.train_adapter import pack_adapter
@@ -209,6 +209,64 @@ class Gate(unittest.TestCase):
         res = gate.evaluate({}, {}, (np.zeros((0, 512), dtype=np.float32), []), (q, ["c-1"] * 5), catalog=catalog())
         self.assertEqual(res["wrongHigh"], {"before": 1.0, "after": 1.0})
         self.assertFalse(res["improved"])
+
+
+def extra_file(vectors, ids=None):
+    """A catalogExtra.bin whose rows are the given unit vectors."""
+    ids = ids or [f"n-{i}" for i in range(len(vectors))]
+    cards = [{"id": i, "name": f"New {i}", "set": "n", "setName": "N", "number": str(k), "image": "https://assets.tcgdex.net/x"} for k, i in enumerate(ids)]
+    rows = np.rint(np.stack(vectors) * 127).astype(np.int8)
+    return new_sets.write_extra(cards, rows)
+
+
+class NewCardRows(unittest.TestCase):
+    """The replay searches the catalog plus the extra rows, before (the live bundle's) and after (the candidate's)."""
+
+    def crops(self, n=5):
+        return np.stack([blend(0, 1, 0.97)] * n), ["c-0"] * n
+
+    def test_a_new_row_that_is_the_nearest_neighbour_of_another_card_costs_correct_reads(self):
+        reg = self.crops()
+        res = gate.evaluate({"catalogExtra": extra_file([reg[0][0]])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 1.0, "after": 0.0, "n": 5})
+        self.assertEqual(res["newCards"], {"firstHit": {"before": 0, "after": 5}, "lost": 5, "gained": 0})
+        self.assertFalse(res["improved"])
+
+    def test_a_harmless_new_row_changes_nothing(self):
+        reg = self.crops()
+        res = gate.evaluate({"catalogExtra": extra_file([h.unit(100)])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 1.0, "after": 1.0, "n": 5})
+        self.assertEqual(res["newCards"], {"firstHit": {"before": 0, "after": 0}, "lost": 0, "gained": 0})
+        self.assertEqual(res["wrongHigh"]["after"], res["wrongHigh"]["before"])
+
+    def test_the_live_bundles_rows_count_for_before(self):
+        reg = self.crops()
+        file = extra_file([reg[0][0]])
+        res = gate.evaluate({"catalogExtra": file}, {"catalogExtra": file}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 0.0, "after": 0.0, "n": 5})
+        self.assertEqual(res["newCards"]["firstHit"], {"before": 5, "after": 5})
+        self.assertEqual((res["newCards"]["lost"], res["newCards"]["gained"]), (0, 0))
+
+    def test_rows_that_help_are_gained(self):
+        q = blend(0, 1, 0.6)  # c-1 is the plain answer; a new row named for c-0's truth is not possible, so the truth is the new card
+        reg = (np.stack([q] * 4), ["n-0"] * 4)
+        res = gate.evaluate({"catalogExtra": extra_file([q])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual((res["newCards"]["gained"], res["newCards"]["lost"]), (4, 0))
+        self.assertEqual(res["regression"], {"before": 0.0, "after": 1.0, "n": 4})
+
+    def test_an_extra_row_whose_id_is_now_in_the_catalog_is_dropped_on_both_sides(self):
+        reg = self.crops()
+        stale = extra_file([reg[0][0]], ["c-1"])  # c-1 is a catalog card now; the extension drops such rows when merging
+        res = gate.evaluate({"catalogExtra": stale}, {"catalogExtra": stale}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 1.0, "after": 1.0, "n": 5})
+        self.assertEqual(res["newCards"], {"firstHit": {"before": 0, "after": 0}, "lost": 0, "gained": 0})
+
+    def test_an_unreadable_candidate_file_is_an_error_and_an_unreadable_live_one_counts_as_none(self):
+        reg = self.crops()
+        with self.assertRaises(ValueError):
+            gate.evaluate({"catalogExtra": b"EXTRA"}, {}, EMPTY, reg, catalog=catalog())
+        res = gate.evaluate({}, {"catalogExtra": b"EXTRA"}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"]["before"], 1.0)
 
 
 if __name__ == "__main__":

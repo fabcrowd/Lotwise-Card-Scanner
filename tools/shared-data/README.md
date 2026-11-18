@@ -68,7 +68,12 @@ A GitHub fine-grained token cannot be limited to one branch, so the guarantee co
     `regression.npz` to the root of `main`:
     `python scripts/build_regression.py --labels labels.json --root <crops folder> --model clip_visual_int8.onnx --out regression.npz`.
     It holds embeddings and catalog ids only, no images. Without it the manifest never says `improved`, so no
-    user ever receives the pack.
+    user ever receives the pack. The file also records the recognizer model (first 16 hex of the sha256 of `--model`)
+    and the crop version (`pins.json`, or `--pins`) that made it, and the nightly job ignores a regression set that
+    was made with another model or has no such tag. After a model change, rebuild it with the new model or nothing
+    ships. The same check applies to the live release: until a bundle made with the new model has shipped as the
+    latest release, each night ignores the live bundle (it is another model) and rebuilds the new-card file
+    (`catalog-extra.bin`) from scratch.
 
     **How blind is this gate?** The adapter's learning rate and epoch count were chosen while looking at HiBid scores,
     so the HiBid regression gate is not fully blind to the adapter. The independent checks are the community exam
@@ -79,7 +84,9 @@ A GitHub fine-grained token cannot be limited to one branch, so the guarantee co
     It embeds labelled real crops plus synthetic photo-like variants of catalog images and stores embeddings and card
     ids only, no images. Any input path containing `hibid`, `sealed` or `realworld` is refused. Commit `seed.npz` to the
     root of `main`; the nightly reads it from the `main` checkout (`--seed seed.npz`) and trains the adapter on it
-    together with promoted contributions. Without the file the adapter trains on contributions alone.
+    together with promoted contributions. Without the file the adapter trains on contributions alone. The seed is
+    optional and is tagged with the model and crop like the regression set; an untagged or other-model seed is ignored,
+    which means the adapter is trained only from contributed rows, if any, until you rebuild the seed with the new model.
 11. **Where packs are published.** The Action publishes releases in the data repo itself, which is public, so
     nothing more is needed. Only if you ever make the data repo private: set the Actions variable
     `PACK_RELEASE_REPO` to a public repo and the secret `PACK_RELEASE_TOKEN` to a fine-grained token with
@@ -90,6 +97,14 @@ A GitHub fine-grained token cannot be limited to one branch, so the guarantee co
     - `PACK_PUBLIC_KEY` = the base64 SPKI line from step 8
 13. **First run.** Actions tab, "nightly-pack", Run workflow. With no contributions it publishes an empty,
     valid, not-improved bundle (a pre-release), which proves the signing key and release path work.
+
+**Go-live order after a model change** (the first nightly run must publish a bundle for the new model):
+1. Push this template to the root of `main` (step 1).
+2. Rebuild `regression.npz` with the tagged script (step 10).
+3. Decide on `seed.npz` (step 10a): rebuild it with the new model, or leave it out.
+4. Run the workflow once (step 13) and read the log lines that say what was ignored (`... not ours`,
+   `... was made with another model (or is untagged): ignored`, `catalogExtra was made with another model: rebuilding`,
+   `dropped N previous catalogExtra rows`, and the `new-card rows are the first hit ...` line).
 
 ## Contribution schema v1
 
@@ -127,7 +142,7 @@ rejects any other combination.
 
 `model.clip` and `catalog` are the first 16 hex digits of the sha256 pinned in the extension's `setup.js` for
 `clip_visual_int8.onnx` and `catalog.bin.gz`. The pin lives in `tools/shared-data/pins.json` and in `setup.js`; read it there.
-`model.crop` is `EMBEDDING_VERSION` (currently 2). The crop is the rectified card image, the same canvas
+`model.crop` is `EMBEDDING_VERSION` (currently 3). The crop is the rectified card image, the same canvas
 `embedCard` receives; the pipeline takes its own art strip from it.
 
 **Crop limits.** A real JPEG: SOF0/SOF1/SOF2 header with at most 3 components, width and height at most 400, long
@@ -196,6 +211,16 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
    additionally requires, on that set, a rise in top-1 and in accepted-right answers, no rise in accepted-wrong answers
    and an abstain rate up by at most 2 points (`pipeline/gate.py`; accepted/abstained follow the accept rule of
    `lib/fusion.js`, read on the raw cosine because the adapter only ranks); without the file it is never true.
+   Every night the replay (regression set and exam) searches the catalog plus the `catalog-extra.bin` rows: "before"
+   with the live bundle's rows (none when the live bundle is ignored or has none), "after" with tonight's. A night
+   that only adds new cards (the learned parts, memory pack and adapter, are unchanged from the live bundle, or there is
+   no live memory part and nothing was learned tonight) ships only when a tagged, non-empty regression set shows, with
+   tonight's rows, no fewer correct reads and no more confident wrong reads than before. The log says how many
+   regression rows have a new-card row as their first hit before and after, and how many correct reads were lost and gained.
+   A candidate with fewer new cards than the live bundle's `catalog-extra.bin` (when the live bundle is ours) never ships.
+
+   **Not checked:** the regression set may contain no photos of cards that look like the new ones, so a new row that
+   confuses real photos of other cards can pass this gate. It only catches harm to cards the set contains.
 7. `manifest.json` is signed by the `sign` job (ECDSA P-256, SHA-256) over its exact bytes. `manifest.sig` is the
    base64 of the 64-byte raw `r||s` signature, which is what WebCrypto `verify` takes with
    `{name: "ECDSA", hash: "SHA-256"}`. The public key is imported as `spki`. Before signing, `sign_release.py`
@@ -213,7 +238,7 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
 ### manifest.json (v2)
 
 ```
-{ "v": 2, "model": "<clip 16 hex>", "crop": 2,
+{ "v": 2, "model": "<clip 16 hex>", "crop": 3,
   "assets": { "memory"?: A, "adapter"?: A, "check"?: A, "catalogExtra"?: A },   A = { "url", "sha256", "bytes" }
   "exam": { "before": 0.0-1.0, "after": 0.0-1.0, "n": N, "wrongAtHigh": { "before": .., "after": .. } },
   "regression": { "before": .., "after": .., "n": N } | null,
@@ -232,7 +257,12 @@ a bad bundle, publish a new improved one without the part (an `improved: false` 
 | memory | `community-pack.bin` | pack v1 below |
 | adapter | `adapter.bin` | header `{v:1,dim:512,rank:r<=64,scale:s}`, then U and V (`512*r` int8 each, row-major); `e' = normalize(e + U(Vt e))` on queries and catalog rows |
 | check | `check.bin` | header `{v:1,dim:512,bias,threshold}`, then 512 float32 weights; a detected box is dropped when `sigmoid(w.e+b) < threshold` on the raw embedding |
-| catalogExtra | `catalog-extra.bin` | pack v1 plus `"cards":[{id,name,set,setName,number,image}]` parallel to `cardIds`; made by `pipeline/new_sets.py` from TCGdex, cumulative, at most 500 new cards per night |
+| catalogExtra | `catalog-extra.bin` | pack v1 plus `"cards":[{id,name,set,setName,number,image}]` parallel to `cardIds`; made by `pipeline/new_sets.py` from TCGdex, cumulative, at most 500 new cards per night; the header also carries `"model"` and `"crop"`, and a previous file with another (or no) tag is rebuilt from scratch. TCG Pocket sets are skipped. A card TCGdex lists without a picture gets its `images.large` URL from pokemontcg.io when both its number and its name match a card of that set there (read from the static per-set files of the `PokemonTCG/pokemon-tcg-data` repo on raw.githubusercontent.com, at most 150 sets a night) |
+
+New cards (`catalog-extra.bin`), in short:
+- Newest sets first (the TCGdex set list, read from its end), at most 500 cards added a night and 20,000 in total.
+- A failed set list (retried once), a used-up time budget, or a set whose pictures keep failing means the rest waits for the next night.
+- Card ids over 64 characters are refused (the signer refuses the whole bundle over that).
 
 ### Pack byte format (v1)
 

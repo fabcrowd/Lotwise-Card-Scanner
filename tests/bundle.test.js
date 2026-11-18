@@ -364,6 +364,14 @@ test('parseCatalogExtra gives unit float rows and meta in the catalog\'s own sha
   assert.throws(() => parseCatalogExtra(one(null)), /cards/);
 });
 
+test('parseCatalogExtra accepts a header with model and crop and keeps a pokemontcg.io picture unchanged', () => {
+  const cards = [{ ...CARDS[0], image: 'https://images.pokemontcg.io/sv9/1_hires.png' }];
+  const tagged = withHeader({ v: 1, dim: DIM, entries: 1, cardIds: ['sv9-1'], cards, model: '0dba1302580da2a6', crop: 3 }, rowsBody([20]));
+  const extra = parseCatalogExtra(tagged);
+  assert.equal(extra.meta[0].imageUrl, 'https://images.pokemontcg.io/sv9/1_hires.png');
+  assert.equal(extra.meta[0].id, 'sv9-1');
+});
+
 test('mergeExtra drops extra cards the base catalog already has, keeping rows and meta aligned', () => {
   const extra = parseCatalogExtra(makeExtra());
   const merged = mergeExtra([{ id: 'sv9-1' }, { id: 'base1-1' }], extra);
