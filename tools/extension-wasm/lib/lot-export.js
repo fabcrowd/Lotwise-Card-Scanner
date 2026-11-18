@@ -77,7 +77,7 @@ export function lotExportRows(cards, choiceFor, enabledConditions = ['NM'], now 
     if (seen) { seen[6] += 1; continue; }
     const named = found.printing && found.printing !== OPEN ? formatPrinting(found.printing) : found.printing || '';
     const age = priceAge(card.price_grid?.updatedAt, now);
-    const basis = `raw, English, ${conditionName(found.condition)}`;
+    const basis = `raw, ${identity.lang === 'ja' ? 'Japanese' : 'English'}, ${conditionName(found.condition)}`;
     merged.set(key, [
       identity.name || '', identity.set || '', identity.number || '', named,
       found.printing === OPEN ? '' : finishOf(found.printing), found.condition, 1,

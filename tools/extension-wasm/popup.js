@@ -17,6 +17,7 @@ import { UNREAD_ROW_TEXT, hiddenCount, isNotCard, overlayCards, renderNotCardGro
 import { finishChips, formatPrinting, renderChipGroup, renderTileStrip, setTiles, versionTiles } from "./lib/option-strip.js";
 import { correctedMark, memoryChipHtml, whyHtml } from "./lib/memory-ui.js";
 import { userWhy } from "./lib/why.js";
+import { JAPANESE_REASON } from "./lib/why-text.js";
 import { bestMatchPrice, isHighValue, priceTypicalOf, unconfirmedTotal } from "./lib/stakes.js";
 import { DEFAULT_FILTERS, mergeFilters } from "./lib/price-prefs.js";
 import { CONDITION_TIP, conditionName, lotExportLabels, lotExportRows, lotFileName, lotToCsv, lotToTsv } from "./lib/lot-export.js";
@@ -1468,7 +1469,7 @@ function renderChooseRow(card, idx, changing = false) {
     </div>
     <div class="picker" role="group" aria-labelledby="picker-title-${idx}">
       <div class="picker-title" id="picker-title-${idx}">Which card is this?</div>
-      <div class="picker-sub">${candidates.length ? "Closest matches, best one first" : NO_MATCH_TEXT}</div>
+      <div class="picker-sub">${card.japanese ? JAPANESE_REASON : candidates.length ? "Closest matches, best one first" : NO_MATCH_TEXT}</div>
       ${candidates.length ? `<div class="pick-row">${renderScannedCard(card, idx)}${renderCandidateCards(card, idx)}</div>` : ""}
       <div class="choose-actions">${confirm}${search}${cancel}</div>
     </div>
@@ -1576,7 +1577,7 @@ function onSearchInput(idx, query) {
   _searchTimer = setTimeout(async () => {
     let resp;
     try {
-      resp = await chrome.runtime.sendMessage({ action: "findCards", query, era: eraSelect.value || null });
+      resp = await chrome.runtime.sendMessage({ action: "findCards", query, era: eraSelect.value || null, japanese: Boolean(scan?.cards?.[idx]?.japanese) });
     } catch (err) {
       resp = { error: explainScanError(err?.message || err) };
     }
@@ -1601,6 +1602,8 @@ function showSearchResults(idx) {
 function shownAnswers(cards) {
   return cards.map((card, index) => {
     if (card.drawn) return null;
+    // A box read as a Japanese card (shown, or hidden as "not a card") is never part of an exam contribution.
+    if (card.japanese || card.hiddenRead?.japanese) return { index, japanese: true };
     if (card.tooSmall || card.unread) return { index, unknown: true };
     if (card.cardBack) return { index, notACard: true };
     return card.identity?.id ? { index, cardId: card.identity.id } : { index, unknown: true };

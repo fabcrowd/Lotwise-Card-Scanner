@@ -35,10 +35,12 @@ import { setRangeSummary } from "./lib/card-display.js";
 import { applyBatchedPrices as applyBatchedPricesWith, batchPriceCards as batchPriceCardsWith, collectBatchIds, createPriceCache, createRetryLoader } from "./lib/batch-price.js";
 import { looksLikeCard, mergeSourceRead, sourceRefineOrder, tileSource } from "./lib/refine.js";
 import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage, titleChoiceIds, wrongIdOf } from "./lib/card-picker.js";
+import { JA_ASSET, chooseCandidates, createJaLoader, gunzip, isJaId, japaneseRead, parseJaCatalog, searchAll } from "./lib/japanese.js";
+import { createJaPriceClient, jaLookup } from "./lib/ja-prices.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, cropTooSmall, modelTags } from "./lib/contribution.js";
-import { agreeWithReference, holdExamPick, storeCorrection } from "./lib/correction-save.js";
+import { agreeWithReference, keepsNoPicture, settleExamPick, storeCorrection } from "./lib/correction-save.js";
 import { skipDraft, unskipDraft } from "./lib/skip.js";
 import { memoryVerdict, skipVerdict } from "./lib/memory-confirm.js";
 import { referenceBar } from "./lib/reference-bars.js";
@@ -252,6 +254,7 @@ async function loadModels() {
     _ready = true;
     _loadHubPenalty();
     _loadNumberReader();
+    _loadJapaneseCatalogIfOn();
     // dev-only:start
     _loadVariantModel();
     // dev-only:end
@@ -318,6 +321,50 @@ async function straightenCardsInUse() {
     return false;
   }
 }
+
+// The Japanese cards are a separate list: never in _meta, never in searchCatalog. Null until loaded; scans work without it.
+let _ja = null;
+let _jaById = null;
+const _loadJapaneseCatalog = createJaLoader(async () => {
+  try {
+    const buffer = await getOptionalAsset(JA_ASSET);
+    if (!buffer) throw new Error("file missing or failed its hash");
+    const { clip, crop } = modelTags();
+    _ja = parseJaCatalog(await gunzip(buffer), { query: clip, crop });
+    _jaById = new Map(_ja.cards.map((card) => [card.id, card]));
+    console.log("[BG] Japanese catalog loaded", _ja.n);
+  } catch (err) {
+    _ja = null;
+    _jaById = null;
+    console.log("[BG] Japanese catalog not available", err?.message || err);
+    throw err;
+  }
+});
+
+// "Japanese cards" in the options page; on unless it is switched off.
+async function japaneseCardsInUse() {
+  try {
+    return (await chrome.storage.local.get("japaneseCards")).japaneseCards !== false;
+  } catch {
+    return true;
+  }
+}
+
+async function _loadJapaneseCatalogIfOn() {
+  if (await japaneseCardsInUse()) await _loadJapaneseCatalog();
+}
+
+// The catalog to scan and search with now: the setting is read each time, like straightenCards, so a change applies to the
+// next scan without a restart. Switching it on starts the load in the background; that scan runs without it.
+async function activeJapaneseCatalog() {
+  if (!(await japaneseCardsInUse())) return null;
+  if (!_ja) _loadJapaneseCatalog();
+  return _ja;
+}
+
+const _jaPrices = createJaPriceClient();
+// A candidate list for a card treated as Japanese: its Japanese cards first, then the English ones the picture also resembles.
+const candidatesWithJapanese = (card, era) => chooseCandidates(card, candidatesFor(card, _meta, 5, era), _jaById);
 
 // The corner session shares the embedder's queue: single-threaded WASM cannot run two sessions at once.
 function cornersSerial(source, box) {
@@ -1283,11 +1330,11 @@ async function handleScanPage(sendResponse, era) {
       ? { ...card, hiddenRead: hiddenReadWithCandidates(card.hiddenRead), crop: encoded[i] ?? null }
       : card.notCard ? { ...card, crop: encoded[i] ?? null }
       : isUnsure(card)
-      ? { ...card, candidates: candidatesFor(card, _meta, 5, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
+      ? { ...card, candidates: candidatesWithJapanese(card, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
       : { ...card, crop: encoded[i] ?? null }));
     function hiddenReadWithCandidates({ rankedScores, ...read }) {
       const asChoose = { ...read, unsure: true };
-      return { ...read, candidates: candidatesFor(asChoose, _meta, 5, era), ...(read.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) };
+      return { ...read, candidates: candidatesWithJapanese(asChoose, era), ...(read.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) };
     }
     const asked = applyTitlePrior(withCandidates, {
       kind: pageFocus.kind,
@@ -1483,7 +1530,7 @@ async function readDrawnBox(msg, tab, era, capture = null) {
     if (ids.size) applyBatchedPrices([entry], await batchPriceCards([...ids]));
     const { rankedScores, ...rest } = entry;
     return isUnsure(entry)
-      ? { ...rest, candidates: candidatesFor(entry, _meta, 5, era), ...(entry.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) }
+      ? { ...rest, candidates: candidatesWithJapanese(entry, era), ...(entry.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) }
       : rest;
   } finally {
     photoBitmap?.close?.();
@@ -1523,6 +1570,9 @@ async function shareCrop(cropDataUrl) {
 
 // Never lets sharing break the pick the user made.
 async function contributeTeachPick(scan, msg) {
+  // A Japanese card is never shared as a card answer; box rows (drawn, removed, put back) are still sent without a card id.
+  // So a pick on a Japanese row sends nothing here, plain pick or drawn box (the drawn box's own signal comes from shareBoxSignal).
+  if (keepsNoPicture(msg)) return;
   try {
     const { share, crop: scanCrop } = correctionSource(scan, msg);
     if (!share || share.split !== "teach" || !(await _sharing.enabled())) return;
@@ -1685,16 +1735,27 @@ const _ownPageActions = {
   shareBoxSignal: (msg) => contributeBoxSignal(msg),
   findCards: async (msg) => {
     await _ensureCatalog();
-    return { cards: findCards(_meta, msg.query, { era: eraById(msg.era) }) };
+    const english = findCards(_meta, msg.query, { era: eraById(msg.era) });
+    return { cards: searchAll(english, await activeJapaneseCatalog(), msg.query, msg.japanese) };
+  },
+  // The options page's line under the Japanese switch: off, ready with the card count, or not available yet.
+  japaneseState: async () => {
+    if (!(await japaneseCardsInUse())) return { state: "off" };
+    await _loadJapaneseCatalog();
+    return _ja ? { state: "ready", count: _ja.n } : { state: "unavailable" };
   },
   saveCorrection: async (msg) => {
     await _ensureCatalog();
-    if (!catalogCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
+    // A Japanese card picked from an earlier scan is known even after the setting was switched off or the worker restarted.
+    if (isJaId(msg.pickedId)) await _loadJapaneseCatalog();
+    if (!anyCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
     // A scan older than the last two has lost its pictures; the answer is still worth keeping.
     const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
     // An exam photo's answers leave only as a whole, when sharing is on and the user confirms the photo; they never enter
     // the shared training queue. That is the only thing the exam split decides: the correction itself is always kept here.
-    if (examHoldAllowed(msg)) await holdExamPick(_corrections, scan, msg, await _sharing.enabled().catch(() => false));
+    // A Japanese card is never shared as a card answer; box rows (drawn, removed, put back) are still sent without a card id.
+    // So a Japanese card, or any pick on a Japanese row, is never held for sharing and removes an answer held earlier for the box.
+    await settleExamPick(_corrections, scan, msg, { holdAllowed: examHoldAllowed(msg), sharingEnabled: () => _sharing.enabled().catch(() => false) });
     // The same card the user corrected before, confirmed again from a different crop: that counts as "x2" on the earlier
     // correction instead of storing a near-duplicate picture.
     const agreed = await agreeWithReference(_corrections, msg);
@@ -1712,7 +1773,7 @@ const _ownPageActions = {
       guess: msg.guess,
       pickedId: msg.pickedId,
       via: msg.via,
-      crop: correctionSource(scan, msg).crop,
+      crop: keepsNoPicture(msg) ? null : correctionSource(scan, msg).crop,
       extVersion: chrome.runtime.getManifest().version,
       why: msg.guess?.why,
       wrongId,
@@ -2104,6 +2165,11 @@ async function handleDetect(imageB64, sendResponse) {
         cards.push({ box, score, identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null });
         continue;
       }
+      const japanese = japaneseRead(await activeJapaneseCatalog(), embedding, { bestEn: rawHits[0]?.score ?? 0, height: box[3] - box[1] });
+      if (japanese) {
+        cards.push({ box, score, ...japanese });
+        continue;
+      }
       const { hits }   = await withReferenceHit(embedding, catalogHits, rawHits[0]?.score ?? 0);
       const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, rawHits, _meta);
       const priceData  = abstain ? null : await getPrice(identity);
@@ -2215,7 +2281,7 @@ const TITLE_RERANK_DEPTH = 20;
  * Silent, nothing changes. A changed name is always asked about, never shown as identified.
  */
 async function checkTitle(result, cardCanvas, height, era) {
-  if (!result || result.cardBack || result.numberRead || !(height >= TITLE_MIN_HEIGHT)) return result;
+  if (!result || result.cardBack || result.japanese || result.numberRead || !(height >= TITLE_MIN_HEIGHT)) return result;
   const name = result.abstain ? null : result.identity?.name || null;
   let text = "";
   try {
@@ -2582,6 +2648,13 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = so
   if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
     return { identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null, price_grid: null };
   }
+  // A card that resembles a Japanese card more than any English one is asked about with Japanese candidates first. It is
+  // never confirmed here, so the saved-correction memory, the number reader and the title read are skipped for it.
+  const japanese = japaneseRead(await activeJapaneseCatalog(), embedding, { bestEn: rawHits[0]?.score ?? 0, height: sourceHeight });
+  if (japanese) {
+    seen.ranked = rankedIds(catalogHits);
+    return { ...japanese, nearest: closestIds(catalogHits), ranked: seen.ranked };
+  }
   // The user said when these cards are from: the name, the set choices and the closest cards offered all come from that era's rows,
   // so a modern card that outscores every printing from the era can neither name the card nor be suggested for it.
   const inEraHits = era ? eraHits(embedding, _meta, era) : null;
@@ -2891,6 +2964,14 @@ async function priceIdentity(identity) {
     return _scanPriceCache.get(cacheKey);
   }
 
+  // A Japanese card is priced from TCGPlayer's own list for its set; the English lookups below know nothing of it.
+  if (isJaId(identity.id)) {
+    const { result: japanesePrice, failed } = await jaLookup(identity, _jaPrices, Date.now());
+    // A lookup that got no answer is not kept: the next ask tries again.
+    if (!failed) _scanPriceCache.set(cacheKey, japanesePrice);
+    return japanesePrice;
+  }
+
   // TCGdex is keyed by our catalog id and answers when pokemontcg.io's keyless tier times out.
   // Run independent fetches in parallel.
   const [tcgdex, full, snapshot] = await Promise.all([
@@ -2959,10 +3040,15 @@ function catalogCardsInSet(setCode) {
   return _meta.filter((card) => card.setCode === setCode);
 }
 
+// A catalog card or a Japanese one. Only the price lookup and "is this card known" for a saved pick use it; everything else is English-only.
+const anyCard = (id) => catalogCard(id) ?? _jaById?.get(id);
+
 async function handlePriceCard(id, sendResponse) {
   if (!(await _ensureReady(sendResponse))) return;
   try {
-    const identity = catalogCard(id);
+    // A Japanese card may be picked while its catalog is still loading.
+    if (isJaId(id)) await _loadJapaneseCatalog();
+    const identity = anyCard(id);
     if (!identity) {
       sendResponse({ error: "That card isn't in the catalog." });
       return;

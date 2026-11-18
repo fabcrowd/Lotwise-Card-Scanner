@@ -10,6 +10,7 @@ const SOURCE_NAMES = {
   pokemontcg: 'TCGPlayer',
   tcgdex: 'TCGPlayer',
   snapshot: 'TCGPlayer',
+  tcgcsv: 'TCGPlayer',
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;

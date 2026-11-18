@@ -73,6 +73,11 @@ export const OPTIONAL_ASSETS = [
     release: "v2.2",
     sha256: "d85aba2af7c30c868df9353ec6f5750973133dfffdb2dbc2c1f4784ca968d57e",
   },
+  {
+    name: "catalog-ja.bin.gz",
+    release: "v3.2",
+    sha256: "64e574fc24f844f142e6c13a0568dde4aafe7879f0608d5c313d3fb514ef774a",
+  },
 ];
 
 export function assetUrl(name) {

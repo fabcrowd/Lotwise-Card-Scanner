@@ -10,6 +10,7 @@
     "https://api.pokemontcg.io/*",
     "https://api.tcgdex.net/*",
     "https://www.pokemonpricetracker.com/*",
+    "https://tcgcsv.com/*",
     "http://127.0.0.1:3000/*",
     "http://localhost:3000/*",
     "https://github.com/*",

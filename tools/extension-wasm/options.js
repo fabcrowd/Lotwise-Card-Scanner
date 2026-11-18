@@ -2,6 +2,7 @@ import { pptCardUrl } from "./lib/condition-pricing.js";
 import { clearPptKey, getPptKey, savePptKey } from "./lib/ppt-key.js";
 import { DEFAULT_FILTERS, mergeFilters, primaryCondition, withCondition, withGrader } from "./lib/price-prefs.js";
 import { referencesCountText } from "./lib/journey.js";
+import { japaneseStateText } from "./lib/japanese.js";
 import { hasAllSites, releaseAllSites, requestAllSites, watchAllSites } from "./lib/site-access.js";
 // dev-only:start
 import { LIMITS, describeSize } from "./lib/test-photos.js";
@@ -376,6 +377,32 @@ straightenToggle.addEventListener("change", async () => {
   straightenNote.className = "test-result ok";
 });
 
+/* ─── Japanese cards ─── */
+
+const japaneseToggle = document.getElementById("japanese-cards");
+const japaneseNote   = document.getElementById("japanese-note");
+const japaneseState  = document.getElementById("japanese-state");
+
+// On unless switched off: unset means on.
+async function loadJapaneseToggle() {
+  const { japaneseCards } = await chrome.storage.local.get("japaneseCards").catch(() => ({}));
+  japaneseToggle.checked = japaneseCards !== false;
+  showJapaneseState();
+}
+
+// The state of the card list, asked of the background: off, ready with the count, or not available yet.
+async function showJapaneseState() {
+  const info = await chrome.runtime.sendMessage({ action: "japaneseState" }).catch(() => null);
+  japaneseState.textContent = japaneseStateText(info);
+}
+
+japaneseToggle.addEventListener("change", async () => {
+  await chrome.storage.local.set({ japaneseCards: japaneseToggle.checked }).catch(() => {});
+  showJapaneseState();
+  japaneseNote.textContent = japaneseToggle.checked ? "Scans will ask about Japanese cards with Japanese matches." : "Japanese cards are read as English cards.";
+  japaneseNote.className = "test-result ok";
+});
+
 // dev-only:start
 /* ─── Test photos ─── */
 
@@ -506,6 +533,7 @@ refreshReferenceCount();
 loadReferencesToggle();
 loadLookalikeToggle();
 loadStraightenToggle();
+loadJapaneseToggle();
 loadPrices();
 loadShareToggle();
 // dev-only:start

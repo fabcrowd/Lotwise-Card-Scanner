@@ -39,7 +39,8 @@ export const GUESS_CONFIDENCE_CAP = 0.49;
  * @param lookup id => catalog row
  */
 export function asLowCertaintyGuess(read, lookup, floor = GUESS_FLOOR) {
-  if (!read || !read.abstain || read.cardBack) return read;
+  // A card treated as Japanese is asked about with Japanese candidates, never named as the closest English card.
+  if (!read || !read.abstain || read.cardBack || read.japanese) return read;
   const card = read.nearest?.length ? lookup(read.nearest[0]) : null;
   if (!card?.id || !(read.catalogTop >= floor)) return read;
   return {
@@ -221,6 +222,8 @@ export function guessOf(card) {
     abstain: Boolean(card?.abstain),
     choiceIds: (card?.setChoices || []).map((choice) => choice.id),
     catalogTop: Number.isFinite(card?.catalogTop) ? card.catalogTop : null,
+    // A row treated as Japanese: whatever the user picks for it, its picture is never kept as a reference (lib/correction-save.js).
+    ...(card?.japanese ? { japanese: true } : {}),
   };
 }
 

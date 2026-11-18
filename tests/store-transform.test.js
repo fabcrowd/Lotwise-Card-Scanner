@@ -37,6 +37,7 @@ test('the store manifest has exactly the required hosts and the optional all-sit
     'https://api.pokemontcg.io/*',
     'https://api.tcgdex.net/*',
     'https://www.pokemonpricetracker.com/*',
+    'https://tcgcsv.com/*',
     'https://github.com/fabcrowd/pokemon-auto-lister/releases/download/*',
     'https://objects.githubusercontent.com/*',
     'https://release-assets.githubusercontent.com/*',

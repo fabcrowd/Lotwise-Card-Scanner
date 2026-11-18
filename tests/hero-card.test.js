@@ -77,6 +77,20 @@ test('bad input yields no plan rather than a throw', () => {
   assert.equal(planHeroCard({ imageW: 500, imageH: 700, detections: null }).kind, 'whole-photo');
 });
 
+test('a Japanese whole-photo read is judged by its Japanese similarity where an English one is judged by catalogTop', () => {
+  const japanese = (extra) => ({ abstain: true, identity: null, japanese: true, ...extra });
+  assert.equal(acceptWholePhoto(japanese({ bestJa: WHOLE_PHOTO_MIN_SIMILARITY, catalogTop: 0.1 })), true);
+  assert.equal(acceptWholePhoto(japanese({ bestJa: WHOLE_PHOTO_MIN_SIMILARITY - 0.01, catalogTop: 0.9 })), false);
+  assert.equal(acceptWholePhoto(japanese({ catalogTop: 0.9 })), false);
+  assert.equal(acceptWholePhoto(japanese({ bestJa: 0.9, cardBack: true })), false);
+  // Strict mode is unchanged: it drops an abstained read, Japanese or not, unless the view is cropped by its slot.
+  assert.equal(acceptWholePhoto(japanese({ bestJa: 0.9 }), { strict: true }), false);
+  assert.equal(acceptWholePhoto(japanese({ bestJa: 0.9 }), { strict: true, croppedView: true }), true);
+  assert.equal(acceptWholePhoto(japanese({ bestJa: 0.3 }), { strict: true, croppedView: true }), false);
+  // An English read ignores bestJa.
+  assert.equal(acceptWholePhoto({ abstain: true, identity: null, catalogTop: 0.3, bestJa: 0.9 }), false);
+});
+
 test('a whole-photo read is kept when it named a card, or when it at least resembles one', () => {
   assert.equal(acceptWholePhoto({ abstain: false, identity: { name: 'Umbreon' }, catalogTop: 0.5 }), true);
   assert.equal(acceptWholePhoto({ abstain: true, identity: null, catalogTop: WHOLE_PHOTO_MIN_SIMILARITY }), true);

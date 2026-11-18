@@ -33,13 +33,13 @@ Privacy
 - No account. No analytics. No ads.
 - Optional and off by default: "Help improve recognition for everyone" sends small pictures of cards you correct or confirm, and the card you chose, and small pictures of boxes you draw or remove, which may show something that is not a card. No page address, no full photo, no account. These pictures are cut from photos that other people (sellers) posted, and they are stored in a public repository, so only turn it on if you are comfortable sharing them.
 - Only card identifiers are sent to the price sources.
-- The first run downloads about 147 MB of recognition models and lookup data. After that, scanning works without a download.
+- The first run downloads about 147 MB of recognition models and lookup data. After that, scanning works without a download. With "Recognize Japanese cards" on (the default), a list of Japanese cards (about 9 MB) is downloaded once as well.
 
 Optional site access
 By default the extension scans a screenshot of the visible page. If you turn on "Read full-size photos on sites you scan", it can read the full-size photo for better accuracy. It asks for this permission only when you turn it on, either in the extension options or from the notice the popup can show after a scan that used a screenshot.
 
 Limits
-- Cards that are not in English can be read as a similar English card and priced as English. Check them before you rely on a price.
+- Japanese cards: a large, clear Japanese card is shown as a question with Japanese matches for you to pick, and is priced from TCGplayer once you pick. Small Japanese cards, and cards in other languages, can still be read as a similar English card and priced as English. Check them before you rely on a price.
 - Graded cards in slabs and sealed product are not recognized as such and would show a raw card price.
 - Your unconfirmed picks are lost when the popup closes.
 
@@ -78,11 +78,14 @@ Look up card prices by card identifier.
 **www.pokemonpricetracker.com**
 Look up condition-based prices by card identifier, using the API key you entered. Used only if you add a key.
 
+**tcgcsv.com**
+Look up prices for Japanese cards. The request names a Japanese set, not a card, and is made only when a scanned card looks Japanese or you pick a Japanese card. Nothing about you is sent.
+
 **The developer's relay address (added to the store build only when the owner sets it)**
 Receives the opt-in contributions of "Help improve recognition for everyone". It does not serve any downloads; the signed update of combined card fingerprints comes from GitHub (see below). It is requested only in a build where the owner set the address, and nothing is sent to it unless the user turned the setting on.
 
 **github.com/fabcrowd/pokemon-auto-lister/releases/download/*, objects.githubusercontent.com, release-assets.githubusercontent.com**
-Download the recognition models and lookup data on first run (about 147 MB in total). They are published as GitHub release files. GitHub redirects the download to its file hosts. Each file is checked against a fixed SHA-256 hash.
+Download the recognition models and lookup data on first run (about 147 MB in total), and the optional list of Japanese cards (about 9 MB). They are published as GitHub release files. GitHub redirects the download to its file hosts. Each file is checked against a fixed SHA-256 hash.
 
 **github.com/fabcrowd/card-scanner-data/releases/***
 Once a day, the shared TCGPlayer price snapshot, and the signed update of combined card fingerprints (the learning pack) when shared learning is on. The request is for a public file. Nothing about you is sent.

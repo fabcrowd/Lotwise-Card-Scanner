@@ -317,7 +317,7 @@ export function tcgPlayerIdFromTcgdex(card) {
 
 // ---- helpers ----
 
-function numOrNull(v) {
+export function numOrNull(v) {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : null;
 }
 
@@ -328,14 +328,14 @@ function firstNonNull(conds) {
 
 // Prefer holofoil > normal > reverseHolofoil > first available.
 const PRINTING_PRIORITY = ["holofoil", "Holofoil", "1stEditionHolofoil", "normal", "Normal", "reverseHolofoil", "Reverse Holofoil"];
-function pickDefaultPrinting(variants) {
+export function pickDefaultPrinting(variants) {
   const keys = Object.keys(variants);
   if (keys.length === 0) return null;
   for (const p of PRINTING_PRIORITY) if (variants[p]) return p;
   return keys[0];
 }
 
-function computeSpread(variants) {
+export function computeSpread(variants) {
   const markets = Object.values(variants).map((v) => v.market).filter((n) => n != null && n > 0);
   if (markets.length < 2) return 1;
   return Math.max(...markets) / Math.min(...markets);

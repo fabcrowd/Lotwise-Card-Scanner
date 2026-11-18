@@ -35,7 +35,13 @@ for (const [name, text] of Object.entries(variants)) {
     for (const id of ['ppt-card', 'prices-card', 'price-condition']) assert.ok(at(id) > prices && at(id) < photos, id);
     assert.ok(at('site-access') > photos && at('site-access') < help);
     assert.ok(at('share-optin') > help && at('share-optin') < advanced);
-    for (const id of ['use-references', 'straighten-cards', 'reduce-lookalikes']) assert.ok(at(id) > advanced, id);
+    for (const id of ['use-references', 'straighten-cards', 'japanese-cards', 'reduce-lookalikes']) assert.ok(at(id) > advanced, id);
+  });
+
+  test(`${name} options page: the Japanese cards switch is a visible checkbox with its hint`, () => {
+    assert.match(text, /<input type="checkbox" id="japanese-cards"> Recognize Japanese cards<\/label>/);
+    assert.match(text, /Japanese cards are shown as a question with Japanese matches\. Prices come from TCGplayer\./);
+    assert.doesNotMatch(text, /id="japanese-card"[^>]*hidden/);
   });
 
   test(`${name} options page: Corrections is renamed Remember my fixes`, () => {
@@ -68,6 +74,15 @@ test('the status texts on the fixes card say fixes, not corrections', () => {
 test('the saved-fixes count no longer says Corrections', () => {
   assert.doesNotMatch(optionsJs, /`Corrections: \$\{resp\.count\} saved`/);
   assert.doesNotMatch(optionsJs, /"Corrections: unavailable"/);
+});
+
+test('the Japanese cards setting is stored as a boolean and is on unless it is false, in the page and in the background', () => {
+  assert.match(optionsJs, /japaneseCards: japaneseToggle\.checked/);
+  assert.match(optionsJs, /japaneseToggle\.checked = japaneseCards !== false/);
+  const background = readFileSync(path.join(root, 'background.js'), 'utf8');
+  assert.match(background, /\.japaneseCards !== false/);
+  // Read at each scan and search, not once per worker start, so a change applies without a restart.
+  assert.match(background, /async function activeJapaneseCatalog\(\) \{\s*if \(!\(await japaneseCardsInUse\(\)\)\) return null;/);
 });
 
 test('the developer-only controls stay inside dev-only blocks', () => {

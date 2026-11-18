@@ -12,6 +12,7 @@ import {
   CONDITION_TIP,
 } from '../tools/extension-wasm/lib/lot-export.js';
 import { fromTcgdexPayload } from '../tools/extension-wasm/lib/condition-pricing.js';
+import { fromTcgcsvPrices } from '../tools/extension-wasm/lib/ja-prices.js';
 import { lotEstimate } from '../tools/extension-wasm/lib/card-display.js';
 
 const NOW = Date.parse('2026-10-23T12:00:00.000Z');
@@ -63,6 +64,26 @@ test('a confirmed single-printing card becomes one row with the quoted price', (
   assert.equal(r[col('Price date')], '2026-10-20');
   assert.equal(r[col('Price age days')], 3);
   assert.equal(r[col('Basis')], 'raw, English, Near Mint');
+});
+
+test('a Japanese card says Japanese in the Basis, an English one still says English', () => {
+  const japanese = card({ identity: { id: 'jp-709157', name: 'Heracross', set: 'M6: Storm Emeralda (Japanese)', number: '001/076', lang: 'ja' } });
+  const out = rows([japanese, card()]);
+  assert.deepEqual(out.rows.map((r) => r[col('Basis')]).sort(), ['raw, English, Near Mint', 'raw, Japanese, Near Mint']);
+});
+
+test('a picked Japanese card exports with its tcgcsv price, the TCGPlayer source and its Japanese set', () => {
+  const identity = { id: 'jp-709157', name: 'Heracross', set: 'M6: Storm Emeralda (Japanese)', number: '001/076', lang: 'ja', tcgPlayerId: 709157, groupId: 24791 };
+  const price_grid = fromTcgcsvPrices([{ productId: 709157, marketPrice: 1.5, midPrice: 1.2, subTypeName: 'Holofoil' }], 709157, NOW);
+  const out = rows([card({ identity, price_grid, userConfirmed: true, setConfirmed: true })]);
+  assert.equal(out.count, 1);
+  const [r] = out.rows;
+  assert.equal(r[col('Name')], 'Heracross');
+  assert.equal(r[col('Set')], 'M6: Storm Emeralda (Japanese)');
+  assert.equal(r[col('Number')], '001/076');
+  assert.equal(r[col('Price')], '1.50');
+  assert.equal(r[col('Price source')], 'TCGPlayer');
+  assert.equal(r[col('Basis')], 'raw, Japanese, Near Mint');
 });
 
 test('only confirmed cards are exported; the rest are counted as not included', () => {
@@ -165,7 +186,7 @@ test('the active condition is used and named in Basis; no data at that condition
   assert.equal(q[col('High')], '');
 });
 
-test('the Basis text never claims graded or Japanese', () => {
+test('the Basis text of English cards never claims graded or Japanese',() => {
   for (const c of ['NM', 'LP', 'MP', 'HP', 'DMG']) {
     assert.doesNotMatch(conditionName(c), /graded|japanese/i);
   }

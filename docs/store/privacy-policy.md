@@ -36,8 +36,9 @@ With "Help improve recognition for everyone" off, only the following requests ar
 | api.pokemontcg.io | A card identifier (for example a set and number) | Look up prices |
 | api.tcgdex.net | A card identifier | Look up prices |
 | www.pokemonpricetracker.com | A card identifier and your own API key, if you entered one | Look up condition-based prices |
-| github.com and its download hosts (objects.githubusercontent.com, release-assets.githubusercontent.com) | A normal file request. No personal data is sent by us. | Download the recognition models on first run, and once a day the shared price snapshot (and the learning pack) from the public data repository. |
-| images.pokemontcg.io and assets.tcgdex.net | A normal image request for a card picture | Show card thumbnails in the "which card is this?" list |
+| github.com and its download hosts (objects.githubusercontent.com, release-assets.githubusercontent.com) | A normal file request. No personal data is sent by us. | Download the recognition models on first run, the list of Japanese cards if "Recognize Japanese cards" is on, and once a day the shared price snapshot (and the learning pack) from the public data repository. |
+| tcgcsv.com | The identifier of a Japanese set | Look up prices when a scanned card looks Japanese or you pick a Japanese card |
+| images.pokemontcg.io, assets.tcgdex.net and tcgplayer-cdn.tcgplayer.com | A normal image request for a card picture | Show card thumbnails in the "which card is this?" list |
 | The image address on the page you scan | A plain request with no cookies or login | Fetch a full-size copy of a photo, only if you turned on optional site access |
 
 Like any web request, these reach servers run by others. They can see your IP address and the time of the request. They have their own privacy policies. We do not control them.

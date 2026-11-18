@@ -24,6 +24,7 @@ export const STORE_HOSTS = [
   'https://api.pokemontcg.io/*',
   'https://api.tcgdex.net/*',
   'https://www.pokemonpricetracker.com/*',
+  'https://tcgcsv.com/*',
   // Models are release files of this repository; GitHub redirects the download to the two hosts below.
   'https://github.com/fabcrowd/pokemon-auto-lister/releases/download/*',
   'https://objects.githubusercontent.com/*',
