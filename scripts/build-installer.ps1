@@ -1,4 +1,4 @@
-# Builds dist\Sweep-Setup-<version>.exe, a self-extracting installer made with IExpress (ships with Windows).
+# Builds dist\Lotwise-Setup-<version>.exe, a self-extracting installer made with IExpress (ships with Windows).
 #
 # IExpress stores files flat, so the extension travels as one zip (the store package) next to install.ps1.
 # Use -SkipExtensionBuild to reuse an existing dist\extension-wasm-store.zip.
@@ -50,7 +50,7 @@ $Version = Get-ZipVersion $StoreZip
 if ([string]::IsNullOrWhiteSpace($Version)) { throw "The store package's manifest.json has no version, so the installer cannot be named: $StoreZip" }
 
 # IExpress is unreliable with spaces in paths, so the stage folder must not have any.
-$Stage = Join-Path $env:TEMP ('sweep-installer-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$Stage = Join-Path $env:TEMP ('lotwise-installer-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 if ($Stage -match '\s') { throw "The stage folder path contains a space ($Stage) and IExpress cannot be trusted with it. Set TEMP to a path without spaces for this build, for example: `$env:TEMP = 'C:\Temp'" }
 New-Item -ItemType Directory -Path $Stage | Out-Null
 
@@ -59,10 +59,10 @@ try {
     Copy-Item -LiteralPath (Join-Path $InstallerSource $name) -Destination (Join-Path $Stage $name)
   }
   [System.IO.File]::WriteAllText((Join-Path $Stage 'version.txt'), $Version, [System.Text.Encoding]::ASCII)
-  Copy-Item -LiteralPath $StoreZip -Destination (Join-Path $Stage 'sweep-extension.zip')
+  Copy-Item -LiteralPath $StoreZip -Destination (Join-Path $Stage 'lotwise-extension.zip')
 
-  $Exe = Join-Path $Stage 'Sweep-Setup.exe'
-  $files = 'install.ps1', 'uninstall.ps1', 'guide.html', 'launch.cmd', 'version.txt', 'sweep-extension.zip'
+  $Exe = Join-Path $Stage 'Lotwise-Setup.exe'
+  $files = 'install.ps1', 'uninstall.ps1', 'guide.html', 'launch.cmd', 'version.txt', 'lotwise-extension.zip'
   $sed = New-Object System.Collections.Generic.List[string]
   $sed.AddRange([string[]]@(
     '[Version]', 'Class=IEXPRESS', 'SEDVersion=3',
@@ -74,10 +74,10 @@ try {
     'PostInstallCmd=%PostInstallCmd%', 'AdminQuietInstCmd=%AdminQuietInstCmd%', 'UserQuietInstCmd=%UserQuietInstCmd%',
     'SourceFiles=SourceFiles',
     '[Strings]',
-    'InstallPrompt="Install Sweep, the card scanner for Chrome, for this Windows user?"',
+    'InstallPrompt="Install Lotwise, the card scanner for Chrome, for this Windows user?"',
     'DisplayLicense=""', 'FinishMessage=""',
     ('TargetName="' + $Exe + '"'),
-    'FriendlyName="Sweep Setup"',
+    'FriendlyName="Lotwise Setup"',
     # launch.cmd starts install.ps1 and tells the user if this PC blocks PowerShell scripts. The line is capped near 259
     # characters. The ".\" matters: when NoDefaultCurrentDirectoryInExePath is set, cmd does not find a bare launch.cmd.
     'AppLaunched="cmd.exe /c .\launch.cmd"',
@@ -90,7 +90,7 @@ try {
   $sed.Add('SourceFiles0=' + $Stage + '\')
   $sed.Add('[SourceFiles0]')
   for ($i = 0; $i -lt $files.Count; $i++) { $sed.Add('%FILE' + $i + '%=') }
-  $SedPath = Join-Path $Stage 'sweep.sed'
+  $SedPath = Join-Path $Stage 'lotwise.sed'
   [System.IO.File]::WriteAllLines($SedPath, $sed, [System.Text.Encoding]::ASCII)
 
   Start-Process -FilePath 'C:\Windows\System32\iexpress.exe' -ArgumentList @('/N', '/Q', $SedPath) -Wait
@@ -104,7 +104,7 @@ try {
   $exeSize = (Get-Item -LiteralPath $Exe).Length
   if ($exeSize -lt ($zipSize / 2)) { throw "The installer exe is too small ($exeSize bytes for a $zipSize byte package)." }
 
-  $Output = Join-Path $RepoRoot ('dist\Sweep-Setup-' + $Version + '.exe')
+  $Output = Join-Path $RepoRoot ('dist\Lotwise-Setup-' + $Version + '.exe')
   Move-Item -LiteralPath $Exe -Destination $Output -Force
 } finally {
   Remove-Item -LiteralPath $Stage -Recurse -Force -ErrorAction SilentlyContinue

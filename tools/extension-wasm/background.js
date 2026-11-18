@@ -671,7 +671,7 @@ async function handleScanPage(sendResponse, era) {
     else {
       sendResponse({
         error: choice.reason === "unreadable"
-          ? "Sweep cannot read this tab. Click the Sweep icon while you are on the page you want to scan."
+          ? "Lotwise cannot read this tab. Click the Lotwise icon while you are on the page you want to scan."
           : "No scannable tab — open a webpage first",
       });
       return;
@@ -1390,7 +1390,7 @@ async function startDrawBox(msg) {
   } catch (err) {
     _drawTabId = null;
     console.error("[BG] draw mode failed:", err?.message || err);
-    return { error: "Sweep cannot draw on this tab." };
+    return { error: "Lotwise cannot draw on this tab." };
   }
 }
 

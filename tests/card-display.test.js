@@ -160,13 +160,13 @@ test('model download rows use plain names', () => {
 
 test('scan failures are explained without service-worker jargon', () => {
   // The error names the action: where to reload, then what to press.
-  assert.equal(explainScanError('Could not establish connection. Receiving end does not exist.'), 'Reload Sweep at chrome://extensions, then press Scan Page.');
+  assert.equal(explainScanError('Could not establish connection. Receiving end does not exist.'), 'Reload Lotwise at chrome://extensions, then press Scan Page.');
   assert.match(explainScanError('Models not loaded'), /downloading/);
   assert.equal(explainScanError('No scannable tab — open a webpage first'), 'No scannable tab — open a webpage first');
 });
 
 test('a tab the extension was not opened on says how to give it access', () => {
-  const advice = /Click the Sweep icon/;
+  const advice = /Click the Lotwise icon/;
   assert.match(explainScanError('Could not query page for cards: Cannot access contents of the page. Extension manifest must request permission to access the respective host.'), advice);
   assert.match(explainScanError("Either the '<all_urls>' or 'activeTab' permission is required."), advice);
   assert.match(explainScanError('Cannot access a chrome:// URL'), advice);

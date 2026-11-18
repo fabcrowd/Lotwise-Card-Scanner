@@ -17,10 +17,10 @@ const indexOfOrFail = (text, needle) => {
 };
 
 for (const [name, text] of Object.entries(variants)) {
-  test(`${name} options page: Prices, Photos and Help improve Sweep come first, then a closed Advanced`, () => {
+  test(`${name} options page: Prices, Photos and Help improve Lotwise come first, then a closed Advanced`, () => {
     const prices = indexOfOrFail(text, '<div class="section-title">Prices</div>');
     const photos = indexOfOrFail(text, '<div class="section-title">Photos</div>');
-    const help = indexOfOrFail(text, '<div class="section-title">Help improve Sweep</div>');
+    const help = indexOfOrFail(text, '<div class="section-title">Help improve Lotwise</div>');
     const advanced = indexOfOrFail(text, '<details class="advanced" id="advanced-settings">');
     assert.ok(prices < photos && photos < help && help < advanced);
     assert.match(text, /<details class="advanced" id="advanced-settings">\s*<summary>[^<]*Advanced/);
@@ -30,7 +30,7 @@ for (const [name, text] of Object.entries(variants)) {
     const at = (id) => indexOfOrFail(text, `id="${id}"`);
     const prices = text.indexOf('>Prices</div>');
     const photos = text.indexOf('>Photos</div>');
-    const help = text.indexOf('>Help improve Sweep</div>');
+    const help = text.indexOf('>Help improve Lotwise</div>');
     const advanced = text.indexOf('id="advanced-settings"');
     for (const id of ['ppt-card', 'prices-card', 'price-condition']) assert.ok(at(id) > prices && at(id) < photos, id);
     assert.ok(at('site-access') > photos && at('site-access') < help);

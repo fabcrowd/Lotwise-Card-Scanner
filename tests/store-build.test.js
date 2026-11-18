@@ -62,7 +62,7 @@ const manifestOf = (dir) => JSON.parse(readFileSync(path.join(dir, 'manifest.jso
 
 test('store manifest: exactly the specified permissions and hosts', win32, () => {
   const manifest = manifestOf(storeDir);
-  assert.equal(manifest.name, 'Sweep: Card Scanner & Price Checker');
+  assert.equal(manifest.name, 'Lotwise: Card Lot Scanner & Price Checker');
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
   assert.deepEqual(manifest.host_permissions, [
     'https://api.pokemontcg.io/*',
@@ -149,7 +149,7 @@ test('store files not stripped are identical to the source; stripped ones only l
 
 test('developer build keeps what the tests rely on and loses only what the store plan removes', win32, () => {
   const manifest = manifestOf(devDir);
-  assert.equal(manifest.name, 'Sweep');
+  assert.equal(manifest.name, 'Lotwise');
   assert.equal(manifest.version, '3.1.0');
   assert.equal(manifest.minimum_chrome_version, '116');
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);

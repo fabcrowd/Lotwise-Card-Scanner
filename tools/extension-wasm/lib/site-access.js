@@ -105,7 +105,7 @@ export async function requestSites(permissions, origins) {
 
 /** Why the popup asks: what the scan could not read on this site, and what reading it gives. */
 export function accessOfferText({ site }) {
-  return `Let Sweep read the original photos on ${site || "the sites you scan"}? It finds more cards.`;
+  return `Let Lotwise read the original photos on ${site || "the sites you scan"}? It finds more cards.`;
 }
 
 /** Whether this site's offer was put off: by "Not now" on this site, or on any site before per-site answers. */

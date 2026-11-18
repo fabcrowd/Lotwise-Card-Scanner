@@ -123,8 +123,8 @@ test('asking for one site requests exactly its origins; a refusal or a throw is 
 });
 
 test('the offer is one plain question: which site, and what reading the original photos gives', () => {
-  assert.equal(accessOfferText({ site: 'facebook.com', galleryUnread: 8 }), 'Let Sweep read the original photos on facebook.com? It finds more cards.');
-  assert.equal(accessOfferText({ site: '' }), 'Let Sweep read the original photos on the sites you scan? It finds more cards.');
+  assert.equal(accessOfferText({ site: 'facebook.com', galleryUnread: 8 }), 'Let Lotwise read the original photos on facebook.com? It finds more cards.');
+  assert.equal(accessOfferText({ site: '' }), 'Let Lotwise read the original photos on the sites you scan? It finds more cards.');
 });
 
 test('"Not now" on one site does not silence the offer on another', () => {

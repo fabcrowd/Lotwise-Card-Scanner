@@ -12,10 +12,10 @@ const installerDir = path.join(repoRoot, 'tools', 'installer');
 const installScript = path.join(installerDir, 'install.ps1');
 const uninstallScript = path.join(installerDir, 'uninstall.ps1');
 const win32 = { skip: process.platform !== 'win32' };
-const KEY_PARENT = 'HKCU:\\Software\\SweepInstallerTest';
+const KEY_PARENT = 'HKCU:\\Software\\LotwiseInstallerTest';
 // install.ps1 exits 0 when installed, and this code when it failed after showing its own message.
 const EXIT_SHOWN_FAILURE = 3;
-const CHROME_SENTENCE ='If Chrome is open, close it and run Sweep Setup again.';
+const CHROME_SENTENCE ='If Chrome is open, close it and run Lotwise Setup again.';
 
 function powershell(args, options = {}) {
   return spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', ...args], { encoding: 'utf8', ...options });
@@ -65,7 +65,7 @@ function waitUntil(condition, seconds) {
 
 // Each case gets a temp folder with a space in its name and its own registry key.
 function withSandbox(run, rootName = 'install root') {
-  const base = mkdtempSync(path.join(tmpdir(), 'sweep test '));
+  const base = mkdtempSync(path.join(tmpdir(), 'lotwise test '));
   const root = path.join(base, rootName);
   const key = `${KEY_PARENT}\\${randomBytes(6).toString('hex')}`;
   const install = (zip, version) => powershell([
@@ -100,7 +100,7 @@ test('a fresh install expands the package, writes the guide and the uninstall en
     assert.ok(guide.includes('9.8.7'));
     assert.ok(!guide.includes('{{'));
 
-    assert.equal(regValue(key, 'DisplayName'), 'Sweep card scanner (Chrome extension)');
+    assert.equal(regValue(key, 'DisplayName'), 'Lotwise card scanner (Chrome extension)');
     assert.equal(regValue(key, 'DisplayVersion'), '9.8.7');
     assert.equal(regValue(key, 'Publisher'), 'fabcrowd');
     const uninstallString = regValue(key, 'UninstallString');
@@ -110,13 +110,13 @@ test('a fresh install expands the package, writes the guide and the uninstall en
   });
 });
 
-test('the packaged layout reads version.txt and sweep-extension.zip beside the script', win32, () => {
+test('the packaged layout reads version.txt and lotwise-extension.zip beside the script', win32, () => {
   withSandbox(({ base, root, key }) => {
     const packaged = path.join(base, 'packaged');
     mkdirSync(packaged);
     for (const name of ['install.ps1', 'uninstall.ps1', 'guide.html']) copyFileSync(path.join(installerDir, name), path.join(packaged, name));
     writeFileSync(path.join(packaged, 'version.txt'), '4.5.6');
-    copyFileSync(makeZip(base, 'fixture', baseFiles), path.join(packaged, 'sweep-extension.zip'));
+    copyFileSync(makeZip(base, 'fixture', baseFiles), path.join(packaged, 'lotwise-extension.zip'));
 
     const result = powershell(['-File', path.join(packaged, 'install.ps1'), '-NoLaunch', '-InstallRoot', root, '-UninstallKey', key]);
     assert.equal(result.status, 0, result.stderr);
@@ -143,7 +143,7 @@ test('an install root with a space, an ampersand and an apostrophe works end to 
     // The detached cmd line deletes the script and the folder after this process exits.
     const gone = waitUntil(() => !existsSync(path.join(root, 'uninstall.ps1')) && !existsSync(root), 15);
     assert.ok(gone, 'uninstall.ps1 and the install root were not removed within 15 seconds');
-  }, "Tom & Co's Sweep");
+  }, "Tom & Co's Lotwise");
 });
 
 test('installing again replaces the files and leaves no leftover folders', win32, () => {
@@ -207,7 +207,7 @@ test('uninstall removes the extension folder, the guide and the registry key', w
   });
 });
 
-test('uninstall refuses folders that are not a complete Sweep install', win32, () => {
+test('uninstall refuses folders that are not a complete Lotwise install', win32, () => {
   withSandbox(({ base, key }) => {
     const unrelated = path.join(base, 'unrelated');
     writeFile(path.join(unrelated, 'notes.txt'), 'mine');
@@ -235,27 +235,27 @@ test('uninstall refuses folders that are not a complete Sweep install', win32, (
 // The functions only validate a string or a path, so nothing is installed or removed. The input travels in an
 // environment variable so an empty string survives. Exit 0 means accepted, 3 means the function threw.
 function runGuard(file, names, call, input) {
-  const dir = mkdtempSync(path.join(tmpdir(), 'sweep guard '));
+  const dir = mkdtempSync(path.join(tmpdir(), 'lotwise guard '));
   try {
     const harness = path.join(dir, 'harness.ps1');
     const body = names.map((name) => functionText(file, name)).join('\n');
     writeFileSync(harness, `$ErrorActionPreference = 'Stop'\n${body}\ntry { ${call} } catch { [Console]::Out.WriteLine('REFUSED: ' + $_.Exception.Message); exit 3 }\n`);
-    return powershell(['-File', harness], { env: { ...process.env, SWEEP_GUARD_INPUT: input } });
+    return powershell(['-File', harness], { env: { ...process.env, LOTWISE_GUARD_INPUT: input } });
   } finally {
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   }
 }
 
 test('both scripts refuse a drive root, a share root and a path that is not full, without touching anything', win32, () => {
-  const acceptable = path.join(tmpdir(), 'sweep install root');
+  const acceptable = path.join(tmpdir(), 'lotwise install root');
   for (const file of [installScript, uninstallScript]) {
     for (const bad of ['C:', 'C:\\', 'C:\\.', 'D:\\', 'C:\\foo\\..', 'C:\\..', '\\\\?\\C:\\', '\\\\.\\C:\\', 'relative-root', '', '\\\\127.0.0.1\\nosuchshare\\', '\\\\127.0.0.1\\nosuchshare']) {
-      const result = runGuard(file, ['Resolve-InstallRoot'], "[Console]::Out.WriteLine((Resolve-InstallRoot $env:SWEEP_GUARD_INPUT))", bad);
+      const result = runGuard(file, ['Resolve-InstallRoot'], "[Console]::Out.WriteLine((Resolve-InstallRoot $env:LOTWISE_GUARD_INPUT))", bad);
       assert.equal(result.status, 3, `${path.basename(file)} accepted ${JSON.stringify(bad)}: ${result.stdout}`);
     }
-    const drive = runGuard(file, ['Resolve-InstallRoot'], "[Console]::Out.WriteLine((Resolve-InstallRoot $env:SWEEP_GUARD_INPUT))", 'C:\\');
+    const drive = runGuard(file, ['Resolve-InstallRoot'], "[Console]::Out.WriteLine((Resolve-InstallRoot $env:LOTWISE_GUARD_INPUT))", 'C:\\');
     assert.ok(drive.stdout.includes('drive root'), drive.stdout);
-    const good = runGuard(file, ['Resolve-InstallRoot'], "[Console]::Out.WriteLine((Resolve-InstallRoot $env:SWEEP_GUARD_INPUT))", `${acceptable}\\`);
+    const good = runGuard(file, ['Resolve-InstallRoot'], "[Console]::Out.WriteLine((Resolve-InstallRoot $env:LOTWISE_GUARD_INPUT))", `${acceptable}\\`);
     assert.equal(good.status, 0, good.stdout + good.stderr);
     assert.equal(good.stdout.trim(), acceptable);
   }
@@ -270,12 +270,12 @@ function functionText(file, name) {
 }
 
 function displayNameLine(file) {
-  const match = readFileSync(file, 'utf8').match(/^\$SweepDisplayName = .*$/m);
-  assert.ok(match, `$SweepDisplayName is missing from ${path.basename(file)}`);
+  const match = readFileSync(file, 'utf8').match(/^\$LotwiseDisplayName = .*$/m);
+  assert.ok(match, `$LotwiseDisplayName is missing from ${path.basename(file)}`);
   return match[0].trim();
 }
 
-// A registry key that looks like another program's uninstall entry: a value that is not Sweep's, and a subkey.
+// A registry key that looks like another program's uninstall entry: a value that is not Lotwise's, and a subkey.
 function seedForeignKey(key) {
   const result = powershell(['-Command',
     `New-Item -Path '${key}' -Force | Out-Null; ` +
@@ -292,13 +292,13 @@ function assertForeignKeyIntact(key) {
 }
 
 test('the guard code that each script carries alone is textually identical in both', () => {
-  for (const name of ['Resolve-InstallRoot', 'Test-SweepInstall', 'Assert-UninstallKey', 'Assert-KeyIsFreeOrSweep']) {
+  for (const name of ['Resolve-InstallRoot', 'Test-LotwiseInstall', 'Assert-UninstallKey', 'Assert-KeyIsFreeOrLotwise']) {
     assert.equal(functionText(installScript, name), functionText(uninstallScript, name), name);
   }
   assert.equal(displayNameLine(installScript), displayNameLine(uninstallScript));
 });
 
-test('install refuses a non-empty folder that is not a Sweep install and leaves it alone', win32, () => {
+test('install refuses a non-empty folder that is not a Lotwise install and leaves it alone', win32, () => {
   withSandbox(({ base, root, key, install }) => {
     writeFile(path.join(root, 'extension', 'mine.txt'), 'mine');
     writeFile(path.join(root, 'extension.old', 'older.txt'), 'older');
@@ -306,7 +306,7 @@ test('install refuses a non-empty folder that is not a Sweep install and leaves 
     const result = install(makeZip(base, 'pkg1', baseFiles), '1.0.0');
 
     assert.notEqual(result.status, 0);
-    assert.ok(result.stderr.includes('Sweep install'), result.stderr);
+    assert.ok(result.stderr.includes('Lotwise install'), result.stderr);
     assert.equal(readFileSync(path.join(root, 'extension', 'mine.txt'), 'utf8'), 'mine');
     assert.equal(readFileSync(path.join(root, 'extension.old', 'older.txt'), 'utf8'), 'older');
     assert.equal(readFileSync(path.join(root, 'notes.txt'), 'utf8'), 'notes');
@@ -341,7 +341,7 @@ test('both scripts refuse a root that is not a full path, or is a drive or share
       result = powershell(['-File', uninstallScript, '-NoLaunch', '-InstallRoot', root, '-UninstallKey', key], options);
       assert.notEqual(result.status, 0, `uninstall accepted ${label}`);
       assert.deepEqual(readdirSync(base).sort(), before, `${label} created or removed something in the working folder`);
-      // PowerShell itself creates a Microsoft folder under LOCALAPPDATA, so only Sweep's own folder counts.
+      // PowerShell itself creates a Microsoft folder under LOCALAPPDATA, so only Lotwise's own folder counts.
       assert.deepEqual(readdirSync(local).filter((name) => name !== 'Microsoft'), [], `${label} created something in the default location`);
       assert.ok(!keyExists(key), `${label} wrote the registry entry`);
     }
@@ -354,11 +354,11 @@ test('a filesystem path, another hive or a bad name is refused as the uninstall 
     const victim = path.join(base, 'victim');
     writeFile(path.join(victim, 'keep.txt'), 'keep');
     const badName = `${KEY_PARENT}\\bad name!`;
-    // Without the guard, 'HKCU:\SweepInstallerTest\x' would be created; it is removed in finally, but only if it did not exist before.
-    const strayParent = 'HKCU:\\SweepInstallerTest';
+    // Without the guard, 'HKCU:\LotwiseInstallerTest\x' would be created; it is removed in finally, but only if it did not exist before.
+    const strayParent = 'HKCU:\\LotwiseInstallerTest';
     assert.ok(!keyExists(strayParent), `${strayParent} already exists, refusing to run`);
     try {
-      for (const bad of [victim, 'HKCU:\\SweepInstallerTest\\x', badName]) {
+      for (const bad of [victim, 'HKCU:\\LotwiseInstallerTest\\x', badName]) {
         assert.equal(install(zip, '1.0.0').status, 0);
         const uninstallArgs = ['-File', path.join(root, 'uninstall.ps1'), '-NoLaunch', '-InstallRoot', root, '-UninstallKey', bad];
         assert.notEqual(powershell(uninstallArgs).status, 0, `uninstall accepted ${bad}`);
@@ -381,8 +381,8 @@ test('a filesystem path, another hive or a bad name is refused as the uninstall 
 
 // This test never runs a script against a key like HKCU:\Software: Assert-UninstallKey only validates a string.
 test('Assert-UninstallKey in both scripts refuses every key outside a plain HKCU:\\Software subpath', win32, () => {
-  const defaultKey = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Sweep';
-  const call = "Assert-UninstallKey $env:SWEEP_GUARD_INPUT; [Console]::Out.WriteLine('accepted')";
+  const defaultKey = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Lotwise';
+  const call = "Assert-UninstallKey $env:LOTWISE_GUARD_INPUT; [Console]::Out.WriteLine('accepted')";
   for (const file of [installScript, uninstallScript]) {
     const names = path.basename(file);
     for (const bad of [
@@ -392,14 +392,14 @@ test('Assert-UninstallKey in both scripts refuses every key outside a plain HKCU
       const result = runGuard(file, ['Assert-UninstallKey'], call, bad);
       assert.equal(result.status, 3, `${names} accepted ${JSON.stringify(bad)}: ${result.stdout}`);
     }
-    for (const good of ['HKCU:\\Software\\SweepInstallerTest\\abc123', defaultKey]) {
+    for (const good of ['HKCU:\\Software\\LotwiseInstallerTest\\abc123', defaultKey]) {
       const result = runGuard(file, ['Assert-UninstallKey'], call, good);
       assert.equal(result.status, 0, `${names} refused ${good}: ${result.stdout}${result.stderr}`);
     }
   }
 });
 
-test('an existing registry key that is not a Sweep entry is never overwritten or deleted', win32, () => {
+test('an existing registry key that is not a Lotwise entry is never overwritten or deleted', win32, () => {
   withSandbox(({ base, root, key, install }) => {
     const foreign = `${KEY_PARENT}\\foreign-${randomBytes(4).toString('hex')}`;
     const zip = makeZip(base, 'pkg1', baseFiles);
@@ -407,7 +407,7 @@ test('an existing registry key that is not a Sweep entry is never overwritten or
       seedForeignKey(foreign);
       const refused = powershell(['-File', installScript, '-NoLaunch', '-InstallRoot', root, '-UninstallKey', foreign, '-PackageZip', zip, '-Version', '1.0.0']);
       assert.notEqual(refused.status, 0);
-      assert.ok(refused.stderr.includes('not a Sweep'), refused.stderr);
+      assert.ok(refused.stderr.includes('not a Lotwise'), refused.stderr);
       assert.ok(!existsSync(root), 'install created the folder before refusing the key');
       assertForeignKeyIntact(foreign);
 
@@ -429,7 +429,7 @@ test('install then uninstall removes exactly the key install wrote', win32, () =
     try {
       seedForeignKey(sibling);
       assert.equal(install(makeZip(base, 'pkg1', baseFiles), '1.0.0').status, 0);
-      assert.equal(install(makeZip(base, 'pkg2', baseFiles), '1.0.1').status, 0, 'an update over the existing Sweep key must work');
+      assert.equal(install(makeZip(base, 'pkg2', baseFiles), '1.0.1').status, 0, 'an update over the existing Lotwise key must work');
       assert.equal(regValue(key, 'DisplayVersion'), '1.0.1');
       assert.equal(uninstall().status, 0);
       assert.ok(!keyExists(key));
@@ -456,13 +456,13 @@ test('a failure after the folder swap says the files were updated and names the 
   });
 });
 
-test('install writes a Sweep marker file, keeps it current on update and uninstall removes it', win32, () => {
+test('install writes a Lotwise marker file, keeps it current on update and uninstall removes it', win32, () => {
   withSandbox(({ base, root, install, uninstall }) => {
-    const marker = path.join(root, 'sweep-install.json');
+    const marker = path.join(root, 'lotwise-install.json');
     assert.equal(install(makeZip(base, 'pkg1', baseFiles), '9.8.7').status, 0);
     const bytes = readFileSync(marker);
     assert.ok(!(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf), 'the marker has a BOM');
-    assert.deepEqual(JSON.parse(bytes.toString('utf8')), { app: 'Sweep', installer: 1, version: '9.8.7' });
+    assert.deepEqual(JSON.parse(bytes.toString('utf8')), { app: 'Lotwise', installer: 1, version: '9.8.7' });
 
     assert.equal(install(makeZip(base, 'pkg2', baseFiles), '9.8.8').status, 0, 'an update of a real install must work');
     assert.equal(JSON.parse(readFileSync(marker, 'utf8')).version, '9.8.8');
@@ -489,13 +489,13 @@ test('a folder with only uninstall.ps1 and guide.html is refused by both scripts
   });
 });
 
-test('a marker whose app is not Sweep, or that is not JSON, is refused by both scripts', win32, () => {
+test('a marker whose app is not Lotwise, or that is not JSON, is refused by both scripts', win32, () => {
   withSandbox(({ base, key }) => {
     const zip = makeZip(base, 'pkg1', baseFiles);
     for (const [name, content] of [['other', '{"app":"Other","installer":1}'], ['broken', 'not json'], ['empty', '']]) {
       const folder = path.join(base, name);
       writeFile(path.join(folder, 'uninstall.ps1'), 'x');
-      writeFile(path.join(folder, 'sweep-install.json'), content);
+      writeFile(path.join(folder, 'lotwise-install.json'), content);
       writeFile(path.join(folder, 'extension', 'manifest.json'), '{}');
 
       let result = powershell(['-File', uninstallScript, '-NoLaunch', '-InstallRoot', folder, '-UninstallKey', key]);
@@ -503,7 +503,7 @@ test('a marker whose app is not Sweep, or that is not JSON, is refused by both s
       result = powershell(['-File', installScript, '-NoLaunch', '-InstallRoot', folder, '-UninstallKey', key, '-PackageZip', zip, '-Version', '1.0.0']);
       assert.notEqual(result.status, 0, `install accepted the ${name} marker`);
       assert.equal(readFileSync(path.join(folder, 'uninstall.ps1'), 'utf8'), 'x');
-      assert.equal(readFileSync(path.join(folder, 'sweep-install.json'), 'utf8'), content);
+      assert.equal(readFileSync(path.join(folder, 'lotwise-install.json'), 'utf8'), content);
       assert.ok(existsSync(path.join(folder, 'extension', 'manifest.json')));
     }
   });
@@ -515,7 +515,7 @@ test('a first install that fails after the folder swap cleans up, so running set
     mkdirSync(packaged);
     for (const name of ['install.ps1', 'uninstall.ps1']) copyFileSync(path.join(installerDir, name), path.join(packaged, name));
     writeFileSync(path.join(packaged, 'version.txt'), '4.5.6');
-    copyFileSync(makeZip(base, 'fixture', baseFiles), path.join(packaged, 'sweep-extension.zip'));
+    copyFileSync(makeZip(base, 'fixture', baseFiles), path.join(packaged, 'lotwise-extension.zip'));
     const run = () => powershell(['-File', path.join(packaged, 'install.ps1'), '-NoLaunch', '-InstallRoot', root, '-UninstallKey', key]);
 
     // No guide.html beside the script, so the guide step fails after the swap and after uninstall.ps1 was copied.
@@ -594,7 +594,7 @@ test('a leftover extension.old that cannot be removed fails the install and remo
 test('an install root with square brackets and a space installs, updates and uninstalls in that exact folder', win32, () => {
   withSandbox(({ base, root, key, install, uninstall }) => {
     assert.equal(install(makeZip(base, 'pkg1', { ...baseFiles, 'only-first.txt': '1' }), '1.0.0').status, 0);
-    for (const name of ['extension\\manifest.json', 'uninstall.ps1', 'guide.html', 'sweep-install.json']) {
+    for (const name of ['extension\\manifest.json', 'uninstall.ps1', 'guide.html', 'lotwise-install.json']) {
       assert.ok(existsSync(path.join(root, name)), `${name} is missing from ${root}`);
     }
     assert.equal(install(makeZip(base, 'pkg2', { ...baseFiles, 'only-second.txt': '2' }), '1.0.1').status, 0);
@@ -602,12 +602,12 @@ test('an install root with square brackets and a space installs, updates and uni
     assert.ok(!existsSync(path.join(root, 'extension', 'only-first.txt')));
     assert.equal(regValue(key, 'DisplayVersion'), '1.0.1');
     // Nothing may land in a folder the brackets would match as a wildcard.
-    assert.deepEqual(readdirSync(base).filter((name) => name.startsWith('sweep ') && name !== path.basename(root) && !name.endsWith('-src')).sort(), []);
+    assert.deepEqual(readdirSync(base).filter((name) => name.startsWith('lotwise ') && name !== path.basename(root) && !name.endsWith('-src')).sort(), []);
 
     assert.equal(uninstall().status, 0);
     assert.ok(waitUntil(() => !existsSync(root), 15), 'the install root was not removed');
     assert.ok(!keyExists(key));
-  }, 'sweep [1] test');
+  }, 'lotwise [1] test');
 });
 
 test('guide.html tells the user about the SmartScreen notice and the developer mode notice', () => {
@@ -694,13 +694,13 @@ test('uninstall that cannot remove a file tells the user to close Chrome and run
       // The files go first, then the registry entry, then the marker. After a failed file removal the Installed apps
       // entry and the marker are both still there, so the uninstall can be run again from Settings.
       assert.ok(keyExists(key), 'the registry entry was removed although the files were not');
-      assert.ok(existsSync(path.join(root, 'sweep-install.json')), 'the marker was removed although the files were not');
+      assert.ok(existsSync(path.join(root, 'lotwise-install.json')), 'the marker was removed although the files were not');
     } finally {
       release();
     }
     const rerun = uninstall();
     assert.equal(rerun.status, 0, rerun.stderr);
-    assert.ok(!existsSync(path.join(root, 'sweep-install.json')));
+    assert.ok(!existsSync(path.join(root, 'lotwise-install.json')));
     assert.ok(!existsSync(path.join(root, 'extension')));
     assert.ok(!keyExists(key));
   });
@@ -712,18 +712,18 @@ test('uninstall removes the files, then the registry entry, then the marker, and
   const order = ['Remove-InstalledFiles $InstallRoot', 'Remove-UninstallEntry $UninstallKey', 'Remove-InstallMarker $InstallRoot'].map((call) => tryBlock.indexOf(call));
   assert.ok(order.every((index) => index > 0), `a removal step is missing: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'the removal steps run in the wrong order');
-  assert.ok(!/foreach \(\$name in [^\r\n]*'sweep-install\.json'/.test(text), 'the marker must not be in the list removed with the other files');
+  assert.ok(!/foreach \(\$name in [^\r\n]*'lotwise-install\.json'/.test(text), 'the marker must not be in the list removed with the other files');
 
   // Test-Path and Remove-Item are replaced in the child, so no real key or file is touched.
   const result = runGuard(uninstallScript, ['Remove-UninstallEntry'],
-    "function Test-Path { $true }; function Remove-Item { throw 'denied' }; Remove-UninstallEntry 'HKCU:\\Software\\SweepInstallerTest\\named-key'", '');
+    "function Test-Path { $true }; function Remove-Item { throw 'denied' }; Remove-UninstallEntry 'HKCU:\\Software\\LotwiseInstallerTest\\named-key'", '');
   assert.equal(result.status, 3, result.stdout);
-  assert.ok(result.stdout.includes('HKCU:\\Software\\SweepInstallerTest\\named-key') && result.stdout.includes('denied'), result.stdout);
+  assert.ok(result.stdout.includes('HKCU:\\Software\\LotwiseInstallerTest\\named-key') && result.stdout.includes('denied'), result.stdout);
 });
 
 test('a percent sign in the install folder is refused by install and uninstall with a clear message', win32, () => {
   withSandbox(({ base, key }) => {
-    const root = path.join(base, 'sweep 100% test');
+    const root = path.join(base, 'lotwise 100% test');
     let result = powershell(['-File', installScript, '-NoLaunch', '-InstallRoot', root, '-UninstallKey', key, '-PackageZip', makeZip(base, 'pkg1', baseFiles), '-Version', '1.0.0']);
     assert.equal(result.status, EXIT_SHOWN_FAILURE);
     assert.ok(result.stderr.includes('percent sign'), result.stderr);
@@ -731,7 +731,7 @@ test('a percent sign in the install folder is refused by install and uninstall w
 
     // Built by hand, because install would refuse to make one.
     writeFile(path.join(root, 'uninstall.ps1'), 'x');
-    writeFile(path.join(root, 'sweep-install.json'), '{"app":"Sweep","installer":1,"version":"1"}');
+    writeFile(path.join(root, 'lotwise-install.json'), '{"app":"Lotwise","installer":1,"version":"1"}');
     writeFile(path.join(root, 'extension', 'manifest.json'), '{}');
     result = powershell(['-File', uninstallScript, '-NoLaunch', '-InstallRoot', root, '-UninstallKey', key]);
     assert.equal(result.status, 1);
@@ -754,18 +754,18 @@ const launchScript = path.join(installerDir, 'launch.cmd');
 // launch.cmd runs install.ps1 beside it. The environment variable makes it print its message to stderr instead of
 // opening a message box.
 function runLaunchWith(stubExit) {
-  const dir = mkdtempSync(path.join(tmpdir(), 'sweep launch '));
+  const dir = mkdtempSync(path.join(tmpdir(), 'lotwise launch '));
   try {
     copyFileSync(launchScript, path.join(dir, 'launch.cmd'));
     writeFileSync(path.join(dir, 'install.ps1'), `Set-Content -LiteralPath (Join-Path $PSScriptRoot 'ran.txt') -Value 1\nexit ${stubExit}\n`);
-    const result = spawnSync('cmd.exe', ['/c', '.\\launch.cmd'], { cwd: dir, encoding: 'utf8', env: { ...process.env, SWEEP_SETUP_NO_DIALOG: '1' } });
+    const result = spawnSync('cmd.exe', ['/c', '.\\launch.cmd'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LOTWISE_SETUP_NO_DIALOG: '1' } });
     return { result, ran: existsSync(path.join(dir, 'ran.txt')) };
   } finally {
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   }
 }
 
-const BLOCKED_MESSAGE = "Sweep Setup could not start. The usual cause is that this PC does not allow PowerShell scripts (a policy set by your organization or Windows settings). Nothing was installed. You can still load Sweep by hand: see INSTALL in the project's README.";
+const BLOCKED_MESSAGE = "Lotwise Setup could not start. The usual cause is that this PC does not allow PowerShell scripts (a policy set by your organization or Windows settings). Nothing was installed. You can still load Lotwise by hand: see INSTALL in the project's README.";
 
 test('launch.cmd passes the exit code on and shows the blocked message only when install.ps1 gave no message of its own', win32, () => {
   for (const [stubExit, expectMessage] of [[0, false], [EXIT_SHOWN_FAILURE, false], [1, true]]) {
@@ -806,7 +806,7 @@ test('the build script gives both quiet commands the AppLaunched command, so /Q 
 
 // The build script runs top to bottom, so these cases run a copy of it inside a throwaway repo layout.
 function withBuildRepo(run) {
-  const base = mkdtempSync(path.join(tmpdir(), 'sweep build '));
+  const base = mkdtempSync(path.join(tmpdir(), 'lotwise build '));
   try {
     mkdirSync(path.join(base, 'repo', 'scripts'), { recursive: true });
     mkdirSync(path.join(base, 'repo', 'dist'), { recursive: true });
@@ -846,7 +846,7 @@ test('the build script fails clearly when the package has no version', win32, ()
     const result = powershell(['-File', script, '-SkipExtensionBuild']);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /no version/i);
-    assert.ok(!existsSync(path.join(repo, 'dist', 'Sweep-Setup-.exe')));
+    assert.ok(!existsSync(path.join(repo, 'dist', 'Lotwise-Setup-.exe')));
   });
 });
 

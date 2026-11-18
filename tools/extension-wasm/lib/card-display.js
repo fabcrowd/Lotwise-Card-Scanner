@@ -522,11 +522,11 @@ export function modelFileLabel(name) {
 export function explainScanError(message) {
   const raw = String(message || '');
   if (/receiving end does not exist|could not establish connection/i.test(raw)) {
-    return 'Reload Sweep at chrome://extensions, then press Scan Page.';
+    return 'Reload Lotwise at chrome://extensions, then press Scan Page.';
   }
   // The page can be read only after the user clicks the toolbar icon on it, or if site access was allowed.
   if (/cannot access (contents|a chrome)|must request permission|activetab|<all_urls>/i.test(raw)) {
-    return 'Sweep cannot read this tab. Click the Sweep icon while you are on the page you want to scan.';
+    return 'Lotwise cannot read this tab. Click the Lotwise icon while you are on the page you want to scan.';
   }
   if (/models not loaded/i.test(raw)) {
     return 'The card models are still downloading.';

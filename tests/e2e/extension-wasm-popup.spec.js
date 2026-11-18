@@ -48,7 +48,7 @@ test.describe('Consumer extension popup', () => {
     page.on('pageerror', (err) => errors.push(err.message));
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
 
-    await expect(page.locator('.logo')).toContainText('Sweep');
+    await expect(page.locator('.logo')).toContainText('Lotwise');
     await expect(page.locator('#btn-label')).toHaveText('SCAN PAGE');
     await expect(page.locator('.action-bar #era-select')).toBeVisible();
     // The scan button follows the background's readiness (models downloaded), which the popup asks for after it
@@ -66,7 +66,7 @@ test.describe('Consumer extension popup', () => {
     }));
     expect(paint.background).toBe('rgb(243, 243, 247)');
     if (paint.wizard !== 'none') {
-      expect(paint.wizardText).toMatch(/Set up Sweep|Sharper photos|Unlock full prices/);
+      expect(paint.wizardText).toMatch(/Set up Lotwise|Sharper photos|Unlock full prices/);
     }
     expect(errors, errors.join('\n')).toEqual([]);
 
@@ -3246,7 +3246,7 @@ test.describe('Consumer extension popup', () => {
         : real(msg));
       const b = document.getElementById('btn-scan'); b.disabled = false; b.click();
     });
-    await expect(failing.locator('#msg-bar')).toHaveText('Reload Sweep at chrome://extensions, then press Scan Page.');
+    await expect(failing.locator('#msg-bar')).toHaveText('Reload Lotwise at chrome://extensions, then press Scan Page.');
     await failing.close();
   });
 

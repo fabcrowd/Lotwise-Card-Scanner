@@ -1,4 +1,4 @@
-# Installs the Sweep extension for the current Windows user (no admin rights).
+# Installs the Lotwise extension for the current Windows user (no admin rights).
 #
 # Chrome only auto-installs extensions from the Chrome Web Store, so this copies the extension to a fixed
 # folder, registers an uninstall entry, and opens guide.html, which walks through Developer mode and
@@ -15,7 +15,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$DefaultUninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Sweep'
+$DefaultUninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lotwise'
 
 # Exit codes: 0 means installed, and this code means it failed after showing its own message. launch.cmd treats any other
 # code as "the script never got as far as showing a message" and says so.
@@ -24,32 +24,32 @@ $ExitShownFailure = 3
 # Anything that can fail on the machine's environment runs inside the try block at the bottom, so it shows the error box.
 function Get-DefaultInstallRoot {
   if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-    throw 'LOCALAPPDATA is not set, so there is no default install folder. Run Sweep Setup again from a normal Windows session.'
+    throw 'LOCALAPPDATA is not set, so there is no default install folder. Run Lotwise Setup again from a normal Windows session.'
   }
-  Join-Path $env:LOCALAPPDATA 'Sweep'
+  Join-Path $env:LOCALAPPDATA 'Lotwise'
 }
 
 # The guard code below (the next five items) is the same text in uninstall.ps1, because each script is copied alone
 # into the install; tests/installer.test.js keeps the two copies identical.
-$SweepDisplayName = 'Sweep card scanner (Chrome extension)'
+$LotwiseDisplayName = 'Lotwise card scanner (Chrome extension)'
 
 # Only a full path is accepted: a relative path or 'C:' would resolve against the current directory.
 function Resolve-InstallRoot([string]$Path) {
   if ([string]::IsNullOrWhiteSpace($Path) -or $Path -notmatch '^([A-Za-z]:\\|\\\\)') {
-    throw "The install folder must be a full path such as C:\Users\you\AppData\Local\Sweep, not: $Path"
+    throw "The install folder must be a full path such as C:\Users\you\AppData\Local\Lotwise, not: $Path"
   }
   $full = [System.IO.Path]::GetFullPath($Path)
   if ($full.TrimEnd('\') -eq [System.IO.Path]::GetPathRoot($full).TrimEnd('\')) { throw "Refusing to use a drive root or share root: $full" }
   $full.TrimEnd('\')
 }
 
-# install.ps1 writes uninstall.ps1 and sweep-install.json ({"app":"Sweep",...}) into every install root.
-function Test-SweepInstall([string]$Root) {
+# install.ps1 writes uninstall.ps1 and lotwise-install.json ({"app":"Lotwise",...}) into every install root.
+function Test-LotwiseInstall([string]$Root) {
   if (-not (Test-Path -LiteralPath (Join-Path $Root 'uninstall.ps1'))) { return $false }
-  $marker = Join-Path $Root 'sweep-install.json'
+  $marker = Join-Path $Root 'lotwise-install.json'
   if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return $false }
   try { $data = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json } catch { return $false }
-  return [bool]($data -and $data.PSObject.Properties['app'] -and $data.app -eq 'Sweep')
+  return [bool]($data -and $data.PSObject.Properties['app'] -and $data.app -eq 'Lotwise')
 }
 
 # A registry path under HKCU:\Software whose parts are plain names, so no filesystem path, other hive or wildcard gets through.
@@ -59,12 +59,12 @@ function Assert-UninstallKey([string]$Key) {
   }
 }
 
-# An existing key is only ever touched when it is a Sweep entry. A missing key is fine.
-function Assert-KeyIsFreeOrSweep([string]$Key) {
+# An existing key is only ever touched when it is a Lotwise entry. A missing key is fine.
+function Assert-KeyIsFreeOrLotwise([string]$Key) {
   if (-not (Test-Path -LiteralPath $Key)) { return }
   $found = Get-ItemProperty -LiteralPath $Key
-  if (-not ($found.PSObject.Properties['DisplayName'] -and $found.DisplayName -eq $SweepDisplayName)) {
-    throw "The registry key exists and is not a Sweep entry, so it was left untouched: $Key"
+  if (-not ($found.PSObject.Properties['DisplayName'] -and $found.DisplayName -eq $LotwiseDisplayName)) {
+    throw "The registry key exists and is not a Lotwise entry, so it was left untouched: $Key"
   }
 }
 
@@ -98,7 +98,7 @@ function Switch-ExtensionFolder([string]$Root) {
     try { Remove-Item -LiteralPath $old -Recurse -Force } catch {
       $reason = $_.Exception.Message
       Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction SilentlyContinue
-      throw "Could not remove the leftover folder $old ($reason). If Chrome is open, close it and run Sweep Setup again."
+      throw "Could not remove the leftover folder $old ($reason). If Chrome is open, close it and run Lotwise Setup again."
     }
   }
   $hadCurrent = Test-Path -LiteralPath $current
@@ -114,7 +114,7 @@ function Switch-ExtensionFolder([string]$Root) {
       }
     }
     Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction SilentlyContinue
-    throw "$reason$rollbackNote If Chrome is open, close it and run Sweep Setup again."
+    throw "$reason$rollbackNote If Chrome is open, close it and run Lotwise Setup again."
   }
   # The new folder is already live, so a stuck old copy is only clutter and must not stop the rest of the install.
   # The note it returns reaches the user in the final message.
@@ -125,19 +125,19 @@ function Switch-ExtensionFolder([string]$Root) {
 }
 
 function Get-LeftoverNote([string]$Folder) {
-  "Sweep is installed, but the old copy could not be removed. Delete the folder $Folder by hand when Chrome is closed."
+  "Lotwise is installed, but the old copy could not be removed. Delete the folder $Folder by hand when Chrome is closed."
 }
 
 # Names what a failed first install could not clean up, so the message never claims more than is true.
 function Get-FirstInstallFailureMessage([string]$Where, [string]$Reason, [string[]]$Left) {
-  $head = "Sweep could not be installed$Where. $Reason"
-  if (@($Left).Count -eq 0) { return "$head Nothing was left behind, so Sweep Setup can be run again." }
-  "$head Setup could not remove everything it wrote: delete $(@($Left) -join ' and ') by hand, then run Sweep Setup again."
+  $head = "Lotwise could not be installed$Where. $Reason"
+  if (@($Left).Count -eq 0) { return "$head Nothing was left behind, so Lotwise Setup can be run again." }
+  "$head Setup could not remove everything it wrote: delete $(@($Left) -join ' and ') by hand, then run Lotwise Setup again."
 }
 
 function Write-InstallMarker([string]$Root, [string]$Ver) {
-  $json = [ordered]@{ app = 'Sweep'; installer = 1; version = $Ver } | ConvertTo-Json -Compress
-  [System.IO.File]::WriteAllText((Join-Path $Root 'sweep-install.json'), $json, (New-Object System.Text.UTF8Encoding($false)))
+  $json = [ordered]@{ app = 'Lotwise'; installer = 1; version = $Ver } | ConvertTo-Json -Compress
+  [System.IO.File]::WriteAllText((Join-Path $Root 'lotwise-install.json'), $json, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 function Write-Guide([string]$Root, [string]$Ver) {
@@ -164,9 +164,9 @@ function Get-UninstallCommand([string]$Root, [string]$Key) {
 
 function Register-Uninstall([string]$Root, [string]$Key, [string]$Ver) {
   New-Item -Path $Key -Force | Out-Null
-  # DisplayName goes in first, so a partly written key is still recognized as a Sweep entry.
+  # DisplayName goes in first, so a partly written key is still recognized as a Lotwise entry.
   $strings = [ordered]@{
-    DisplayName     = $SweepDisplayName
+    DisplayName     = $LotwiseDisplayName
     DisplayVersion  = $Ver
     Publisher       = 'fabcrowd'
     InstallLocation = $Root
@@ -214,12 +214,12 @@ function Open-Guide([string]$Root) {
 
 function Show-Failure([string]$Message) {
   Add-Type -AssemblyName System.Windows.Forms
-  [void][System.Windows.Forms.MessageBox]::Show($Message, 'Sweep Setup')
+  [void][System.Windows.Forms.MessageBox]::Show($Message, 'Lotwise Setup')
 }
 
 # Last resort for an unexpected error outside the try block below: still show a message and use the shown-failure code.
 trap {
-  $unexpected = "Sweep Setup stopped unexpectedly. $($_.Exception.Message)"
+  $unexpected = "Lotwise Setup stopped unexpectedly. $($_.Exception.Message)"
   try {
     [Console]::Error.WriteLine($unexpected)
     if (-not $NoLaunch) { Show-Failure $unexpected }
@@ -231,7 +231,7 @@ trap {
 }
 
 # Setup into an empty or missing folder is a first install. If it fails, everything it wrote is removed again, so the
-# folder is empty and running setup again works (a half-written folder would otherwise fail the Sweep install check).
+# folder is empty and running setup again works (a half-written folder would otherwise fail the Lotwise install check).
 function Remove-FailedFirstInstall([string]$Root, [string]$Key, [bool]$RootExisted, [bool]$KeyWasMissing) {
   if (Test-Path -LiteralPath $Root) {
     Get-ChildItem -LiteralPath $Root -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
@@ -256,16 +256,16 @@ try {
   # A value that was passed but is empty is an error, not a request for the default.
   if (-not $PSBoundParameters.ContainsKey('InstallRoot')) { $InstallRoot = $DefaultInstallRoot }
   if (-not $PSBoundParameters.ContainsKey('UninstallKey')) { $UninstallKey = $DefaultUninstallKey }
-  if ([string]::IsNullOrWhiteSpace($PackageZip)) { $PackageZip = Join-Path $PSScriptRoot 'sweep-extension.zip' }
+  if ([string]::IsNullOrWhiteSpace($PackageZip)) { $PackageZip = Join-Path $PSScriptRoot 'lotwise-extension.zip' }
   $InstallRoot = Resolve-InstallRoot $InstallRoot
   # The uninstaller finishes with a cmd command line, where a percent sign would be expanded as a variable.
   if ($InstallRoot.Contains('%')) { throw "The install folder name cannot contain a percent sign, so nothing was changed: $InstallRoot" }
   Assert-UninstallKey $UninstallKey
-  Assert-KeyIsFreeOrSweep $UninstallKey
+  Assert-KeyIsFreeOrLotwise $UninstallKey
   $rootExisted = Test-Path -LiteralPath $InstallRoot
   $isEmpty = (-not $rootExisted) -or (@(Get-ChildItem -LiteralPath $InstallRoot -Force).Count -eq 0)
-  if (-not $isEmpty -and -not (Test-SweepInstall $InstallRoot)) {
-    throw "This folder is not empty and is not a Sweep install, so nothing was changed: $InstallRoot"
+  if (-not $isEmpty -and -not (Test-LotwiseInstall $InstallRoot)) {
+    throw "This folder is not empty and is not a Lotwise install, so nothing was changed: $InstallRoot"
   }
   $firstInstall = $isEmpty
   $keyWasMissing = -not (Test-Path -LiteralPath $UninstallKey)
@@ -296,7 +296,7 @@ try {
     if (-not $NoLaunch) { Show-Failure $message }
   } else {
     [Console]::Error.WriteLine($message)
-    if (-not $NoLaunch) { Show-Failure "Sweep could not be installed. $message" }
+    if (-not $NoLaunch) { Show-Failure "Lotwise could not be installed. $message" }
   }
   exit $ExitShownFailure
 }
@@ -307,7 +307,7 @@ $notices = @()
 if ($leftoverNote) { $notices += $leftoverNote }
 if (-not $NoLaunch) {
   try { Open-Guide $InstallRoot } catch {
-    $notices += "Sweep is installed, but its guide could not be opened ($($_.Exception.Message)). Open this file yourself to finish setup: $(Join-Path $InstallRoot 'guide.html')"
+    $notices += "Lotwise is installed, but its guide could not be opened ($($_.Exception.Message)). Open this file yourself to finish setup: $(Join-Path $InstallRoot 'guide.html')"
   }
 }
 foreach ($notice in $notices) { [Console]::Error.WriteLine($notice) }

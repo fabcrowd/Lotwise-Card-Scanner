@@ -1,4 +1,4 @@
-# Privacy Policy: Sweep
+# Privacy Policy: Lotwise
 
 Effective date: 2026-11-13
 

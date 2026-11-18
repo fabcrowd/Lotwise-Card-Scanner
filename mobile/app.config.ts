@@ -4,15 +4,15 @@ const CAMERA_REASON = 'The camera takes the photo of the card you want to scan. 
 const PHOTOS_REASON = 'Lets you pick a saved photo of cards to scan. Photos stay on this device.';
 
 const config: ExpoConfig = {
-  name: 'Sweep',
-  slug: 'sweep',
+  name: 'Lotwise',
+  slug: 'lotwise',
   version: '0.1.0',
-  scheme: 'sweep',
+  scheme: 'lotwise',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   ios: {
-    bundleIdentifier: 'com.fabcrowd.sweep',
+    bundleIdentifier: 'com.fabcrowd.lotwise',
     supportsTablet: true,
     infoPlist: {
       NSCameraUsageDescription: CAMERA_REASON,
@@ -20,7 +20,7 @@ const config: ExpoConfig = {
     },
   },
   android: {
-    package: 'com.fabcrowd.sweep',
+    package: 'com.fabcrowd.lotwise',
     permissions: ['android.permission.CAMERA'],
     blockedPermissions: ['android.permission.RECORD_AUDIO'],
     adaptiveIcon: {

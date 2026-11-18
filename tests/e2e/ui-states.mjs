@@ -538,14 +538,14 @@ try {
     await state('notices', scheme, async () => {
       const page = await popupWithScan(ctx, extId, fx, { scheme });
       await page.evaluate(() => {
-        document.getElementById('access-text').textContent = 'Let Sweep read the original photos on example.com? It finds more cards.';
+        document.getElementById('access-text').textContent = 'Let Lotwise read the original photos on example.com? It finds more cards.';
         document.getElementById('access-notice').hidden = false;
         document.getElementById('fullsize-text').textContent = 'Some cards are small. Open the full-size photo to read them better.';
         document.getElementById('fullsize-notice').hidden = false;
         document.getElementById('restore-text').textContent = 'Restored your last scan (12 min ago).';
         document.getElementById('restore-note').hidden = false;
         const bar = document.getElementById('msg-bar');
-        bar.textContent = 'Reload Sweep at chrome://extensions, then press Scan Page.';
+        bar.textContent = 'Reload Lotwise at chrome://extensions, then press Scan Page.';
         bar.classList.add('error');
         bar.classList.remove('hidden');
         bar.setAttribute('role', 'alert');
@@ -558,7 +558,7 @@ try {
     await state('notice-access-only', scheme, async () => {
       const page = await popupWithScan(ctx, extId, fx, { scheme });
       await page.evaluate(() => {
-        document.getElementById('access-text').textContent = 'Let Sweep read the original photos on example.com? It finds more cards.';
+        document.getElementById('access-text').textContent = 'Let Lotwise read the original photos on example.com? It finds more cards.';
         document.getElementById('access-notice').hidden = false;
       });
       await shoot(page, 'notice-access-only', scheme, 'forced', { note: 'only the access notice visible, as nextNotice would leave it' });
@@ -697,14 +697,14 @@ try {
   });
   await fcScan('fc-notices', async (p) => {
     await p.evaluate(() => {
-      document.getElementById('access-text').textContent = 'Let Sweep read the original photos on example.com? It finds more cards.';
+      document.getElementById('access-text').textContent = 'Let Lotwise read the original photos on example.com? It finds more cards.';
       document.getElementById('access-notice').hidden = false;
       document.getElementById('fullsize-text').textContent = 'Some cards are small. Open the full-size photo to read them better.';
       document.getElementById('fullsize-notice').hidden = false;
       document.getElementById('restore-text').textContent = 'Restored your last scan (12 min ago).';
       document.getElementById('restore-note').hidden = false;
       const bar = document.getElementById('msg-bar');
-      bar.textContent = 'Reload Sweep at chrome://extensions, then press Scan Page.';
+      bar.textContent = 'Reload Lotwise at chrome://extensions, then press Scan Page.';
       bar.classList.add('error');
       bar.classList.remove('hidden');
       bar.setAttribute('role', 'alert');

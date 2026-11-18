@@ -24,7 +24,7 @@ test('a disabled Scan Page says why: setup first, then a tab it cannot read', ()
 });
 
 test('a scan that failed on an unreadable tab is told apart from other failures', () => {
-  assert.equal(isUnreadableTabError('Sweep cannot read this tab. Click the Sweep icon while you are on the page you want to scan.'), true);
+  assert.equal(isUnreadableTabError('Lotwise cannot read this tab. Click the Lotwise icon while you are on the page you want to scan.'), true);
   assert.equal(isUnreadableTabError('No scannable tab — open a webpage first'), true);
   assert.equal(isUnreadableTabError('That tab is no longer in front. Scan again.'), false);
   assert.equal(isUnreadableTabError(undefined), false);
