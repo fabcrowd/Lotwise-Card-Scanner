@@ -1,4 +1,4 @@
-# Sweep
+# Lotwise
 
 Personal Windows toolkit that finds Pokémon TCG cards in photos, names them and shows prices.
 
@@ -51,14 +51,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension
 ### Windows installer
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1               # after the -Store build -> dist/Sweep-Setup-<version>.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1               # after the -Store build -> dist/Lotwise-Setup-<version>.exe
 ```
 
-The installer is for people who do not build from source. It copies the store package to `%LOCALAPPDATA%\Sweep\extension`, adds a per-user entry under "Installed apps" (no administrator rights) and opens a guide page. Chrome does not let a program load an unpacked extension, so the guide walks through the three clicks in `chrome://extensions`. The exe is not code-signed, so Windows SmartScreen warns on first run. Sources: `tools/installer/`.
+The installer is for people who do not build from source. It copies the store package to `%LOCALAPPDATA%\Lotwise\extension`, adds a per-user entry under "Installed apps" (no administrator rights) and opens a guide page. Chrome does not let a program load an unpacked extension, so the guide walks through the three clicks in `chrome://extensions`. The exe is not code-signed, so Windows SmartScreen warns on first run. Sources: `tools/installer/`.
 
 ### Load unpacked and first run
 
-Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick `dist/extension-wasm`. On first launch the scanner window shows "Set up Sweep": click **Download** (about 147 MB, one time). After that everything runs on your computer. **Scan Page** stays off until the download finishes. Full steps are in [`tools/extension-wasm/INSTALL.md`](tools/extension-wasm/INSTALL.md).
+Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick `dist/extension-wasm`. On first launch the scanner window shows "Set up Lotwise": click **Download** (about 147 MB, one time). After that everything runs on your computer. **Scan Page** stays off until the download finishes. Full steps are in [`tools/extension-wasm/INSTALL.md`](tools/extension-wasm/INSTALL.md).
 
 ### Build variants
 
@@ -124,7 +124,7 @@ This is the flow after the 2026-11-15 redesign. The spec is [`docs/plans/extensi
   - the crosshair, "Add card": draw a box around a missed card. The text label shows at 560 px wide and up;
   - a card-size slider;
   - Settings.
-- Settings are grouped as Prices, Photos and "Help improve Sweep", plus a collapsed Advanced section. Advanced holds straightening, "Remember my fixes" and the developer-only controls.
+- Settings are grouped as Prices, Photos and "Help improve Lotwise", plus a collapsed Advanced section. Advanced holds straightening, "Remember my fixes" and the developer-only controls.
 
 **What your choices teach it.** Picking a card, picking a set or version, or confirming a match saves a local correction, with the existing `via` values. These corrections stay on this device unless sharing is on.
 
@@ -321,7 +321,7 @@ Entry files (folder root):
 | `manifest.json` | MV3 manifest |
 | `background.js` | Service worker (about 2,900 lines): detection pipeline with onnxruntime-web on `globalThis.ort`, page scans, pricing, corrections |
 | `popup.html`, `popup.js` | The scanner window: markup and logic (`popup.js` about 2,400 lines; has `// dev-only:start` and `// dev-only:end` blocks). Its message listeners accept only the background, or the lot's own page for page clicks |
-| `options.html`, `options.js` | Settings: Prices (sources, PokemonPriceTracker key, "Price shown"), Photos (full-size photos, site access), "Help improve Sweep" (sharing), and a collapsed Advanced section (has dev-only blocks) |
+| `options.html`, `options.js` | Settings: Prices (sources, PokemonPriceTracker key, "Price shown"), Photos (full-size photos, site access), "Help improve Lotwise" (sharing), and a collapsed Advanced section (has dev-only blocks) |
 | `content.js` | Page-side overlay (about 2,200 lines; IIFE, guarded against double injection): corner brackets, price chips, the hover name card, the X and draw mode, on a canvas that ignores pointer events |
 | `ui/` *(new)* | `tokens.css` (the shared design tokens), `popup.css` and `options.css`, and `fonts/` (Bricolage Grotesque and Figtree, variable woff2, with their OFL licenses) |
 | `photo-detection.js` | Page-side window detection of one upright card, or one tilted up to 45 degrees or lying sideways |

@@ -67,7 +67,7 @@ Extension (the product), `tools/extension-wasm/`:
 Build and packaging:
 - `scripts/build-wasm-extension.ps1` builds `dist/extension-wasm`, `-wasm-sealed` and `-wasm-store` (plus the store zip); never hand-edit `dist/`.
 - `scripts/lib/store-package.mjs`: the store transform (name, hosts, `STRIP_FILES`); `tools/extension-wasm-sealed/` is the sealed-score variant source.
-- `scripts/build-installer.ps1` builds `dist/Sweep-Setup-<version>.exe`, a per-user Windows installer made with IExpress that wraps the store package. Its scripts and guide page are in `tools/installer/` (`install.ps1`, `uninstall.ps1`, `guide.html`); `tests/installer.test.js` covers them. Chrome ignores `chrome://` addresses on its command line and loads an unpacked extension only by hand, so the installer copies the files and opens the guide.
+- `scripts/build-installer.ps1` builds `dist/Lotwise-Setup-<version>.exe`, a per-user Windows installer made with IExpress that wraps the store package. Its scripts and guide page are in `tools/installer/` (`install.ps1`, `uninstall.ps1`, `guide.html`); `tests/installer.test.js` covers them. Chrome ignores `chrome://` addresses on its command line and loads an unpacked extension only by hand, so the installer copies the files and opens the guide.
 
 Tests:
 - `tests/*.test.js` (Node runner, one file per module). Contract pins: `store-build.test.js`, `store-clean.test.js`, `store-transform.test.js`, `extension-wasm-build.test.js`, `share-rows.test.js`, `share-queue.test.js`, `shared-data-pack.test.js`, `contribution.test.js`, `fusion.test.js`, `confirm-rule.test.js`, `bundle.test.js`, `packaged-check.test.js`, `relay-*.test.js`.

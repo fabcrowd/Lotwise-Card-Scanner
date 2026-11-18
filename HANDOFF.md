@@ -1,6 +1,78 @@
-# Handoff
+# Handoff: desktop (Chrome extension, Windows installer, nightly job)
 
-## Current state (2026-11-17): Japanese cards, newest sets, Windows installer
+This file covers the desktop side: the Chrome extension in `tools/extension-wasm/`, the Windows installer, the Node server, and the nightly job template in `tools/shared-data/`. The phone app in `mobile/` has its own handoff, [`mobile/HANDOFF.md`](mobile/HANDOFF.md). The phone app imports files of `tools/extension-wasm/lib` in place, so a change there concerns both; see "Effect on the phone app" below.
+
+## Current state (2026-11-18): renamed to Lotwise, bug hunt and fixes
+
+Two things were done on 2026-11-18, at the owner's request: the product was renamed from Sweep to Lotwise, and a bug hunt over the extension, the relay, the nightly template and the installer produced 42 findings, of which 30 are fixed. When the owner then asked for the remaining steps, the work was committed on branch `feat/mobile-app` (local, not pushed), the nightly fixes were pushed to `main` of `fabcrowd/card-scanner-data`, installer copies were given a fixed extension id, and the relay was deployed with that id on its allowlist. No sealed score was run.
+
+### The rename
+
+- The owner chose "Lotwise" from four candidates checked on the web. Store title: "Lotwise: Card Lot Scanner & Price Checker".
+- Changed: the extension's name and visible text, the store package transform, the icon and promo renders, the installer (`dist/Lotwise-Setup-<version>.exe`, folder `%LOCALAPPDATA%\Lotwise`, uninstall key `Lotwise`, marker `lotwise-install.json`), the phone app's name, slug, scheme and package id, the tests that pin the name, and the docs.
+- Not changed, on purpose: the model cache name, release addresses and pins in `lib/setup.js`, `lib/shared-config.js`, `tools/shared-data/pins.json`, `tools/relay`, and repository names. A cold review confirmed those files have no diff and that the installer's guards are the same as before apart from the name.
+- `docs/store/brand.md` section 8 records the rename and its open items.
+- The install made on this PC on 2026-11-17 under the old name is still there (`%LOCALAPPDATA%\Sweep`, "Sweep card scanner (Chrome extension)" under Installed apps). The Lotwise installer and uninstaller never look at it. Remove it from Installed apps before installing Lotwise, or the two sit side by side. `dist\Sweep-Setup-3.1.0.exe` is also still in `dist/`.
+
+### The bug hunt
+
+Nine areas were searched by separate agents, and each finding was checked against the code before it was accepted. Each fix was written test first by a builder, and the whole change was then reviewed cold twice. The first review found real problems in four fixes; those were corrected and reviewed again. `CHANGELOG.md` lists every fix.
+
+What matters most for "the scanner improves as all users scan":
+
+1. **Fixed and live: the nightly reader rejected every shared correction.** The relay stamps `received` as a date and `pipeline/contributions.py` required a full timestamp, so no contribution file the relay commits could be read. The fix is in `tools/shared-data` here and, since 2026-11-18, on `main` of `fabcrowd/card-scanner-data` (commit `1dd2610`, with the two other nightly fixes).
+2. **Fixed and live: only the owner's two build folders could contribute.** The relay allowed two fixed extension ids. An unpacked copy has no `key` in its manifest, so every PC that installed through the installer got its own id; the relay answered 403 and the uploader then deleted the batch (`lib/upload-queue.js`, 403 is not retried). Now `scripts/build-installer.ps1` puts a public manifest key (`tools/installer/extension-key.json`) into the installer's copy of the store package, which gives it the id `gppkiedgglhgagfmcnfebiccpkifbncm` on every PC, and that id is on the relay's allowlist (`tools/relay/wrangler.toml`, deployed 2026-11-18). Things to know:
+   - The store package, the dev build and the source manifest stay without a key (a test pins this). The Chrome Web Store will assign its own id when a store item exists; that id has to be added to the allowlist then, with another relay deploy.
+   - The private half of the key is not in the repository. It is in `C:\Users\daroo\.lotwise\installer-extension-private-key.pem` on this PC. Nothing needs it today (it would only be needed to pack a signed `.crx` with the same id). Keep it out of every repository.
+   - The allowlist is not a secret gate: the ids are public and a non-browser client can send any Origin. The relay's real limits are its input checks, its rate limits and writing only to the `inbox` branch.
+   - A PC that installed a Lotwise build made before this change would get a new id on update and lose that copy's extension storage. No such install exists (the Lotwise installer has not been run for real), so nothing has to migrate.
+3. Still true from 2026-11-17: the nightly job ships nothing until `regression.npz` is rebuilt.
+
+Other fixes, by area: the scanner window (edits lost to an automatic rescan, a lost printing after Put back, a dead "Confirm N"), the service worker (wrong tab scanned or targeted, state lost on a worker restart, the era ignored, a failed price lookup stored as "no price", an oversized photo decoded), the page overlay (drawn on the wrong page, clicks in draw mode, a leftover overlay after an update, the wrong card removed), the upload queue (batches over the relay's size limit, stale items sinking a batch), the price snapshot (an older snapshot over a fresher price), the private-address check (IPv6 ranges) and the installer (`Find-Chrome`).
+
+One more fault was found while fixing: when the scanner window opened, Chrome reported the window's own tab as activated and it could become the scan target. A lost race had hidden this. `background.js` now ignores a tab of the scanner window.
+
+### Findings not fixed, for the owner
+
+- A date rule in `lib/price-snapshot.js` `applyCatalogPrices`: when the snapshot adds a missing printing to a TCGdex grid, the whole grid takes the snapshot's date, so an old TCGdex price next to it looks fresh. A fix was written and then taken out, because `tests/price-snapshot-catalog.test.js` ("... with the snapshot's date") pins the present behavior on purpose. The reviewer's view is that the older date is the honest one. The same question for `applySnapshot` was fixed (a snapshot no longer re-dates printings it did not price).
+- Three findings that change what the scanner recognizes, so they need a measured comparison first: the listing-title reader counts a set code such as "SV08" as a second card number and turns the title hint off; the number reader loses a number when OCR puts spaces around the slash after capital letters; and with the look-alike penalty on, the saved-example margin is checked against a lower value than documented.
+- A page photo that redirects to a private address is requested before the check runs (the check is on the final address). Blocking it needs manual redirect handling.
+- Nightly design: one install alone can supply enough exam cases to block shipping; the live manifest goes stale after 30 days without a shipping night; `issuedAt` is stamped before a long build.
+- Low: draw mode and a held scan result are lost on a worker restart; the detector threshold can stick after two overlapping scans; the new-photos watcher misses images that load late; cached model files are not checked against a changed pin.
+- A card identified through its set stamp whose price lookup failed now shows "Couldn't get a price. Try again." (fixed in `a84ed4e`). What is left: the row does not ask again by itself; the user gets a new lookup by picking the printing again, the same as after any failed price.
+- From the reviews, low: the upload queue drops only past-dated items (the relay also refuses future-dated ones); the pack's total cap can push one install above its share once the pack passes 20,000 rows; several new tests are text pins on `background.js` and would not catch a subtly wrong fix; a HEIC, BMP, ICO or TIFF photo now falls back to the screenshot crop.
+
+### Evidence (2026-11-18, on the final tree)
+
+- `npm test`: 2,070 tests, 2,069 pass, 0 fail, 1 skipped (after the extension id change). `npm run lint`: exit 0.
+- Nightly template, from `tools/shared-data` with `PYTHONPATH=.`: `python -I -m unittest discover -s tests`: `Ran 323 tests`, `OK`.
+- Phone app, in `mobile/`: `npx tsc --noEmit` exit 0; `npx jest`: 6 suites, 60 tests passed.
+- Browser specs (`--project=extension`, one at a time, on a build of the final source): `extension-wasm-popup.spec.js` 166 passed (twice); `overlay-remove.spec.js` 7 passed (three times); `draw-box.spec.js` 4 passed; `japanese-cards.spec.js` 1 passed.
+- Builds: `scripts\build-wasm-extension.ps1` and `scripts\build-installer.ps1`. `dist\extension-wasm-store.zip`, 6,339,972 bytes; `dist\Lotwise-Setup-3.1.0.exe`, 6,508,544 bytes, SHA-256 `30d5874822f9e6f20494c9884ab95076dfc4eb49e19fefff7c6898fa3b3e4a02` (built with the extension key). The hash changes with every build.
+- Extension id: the installer's keyed package was unpacked and loaded in Chromium, which reported the id `gppkiedgglhgagfmcnfebiccpkifbncm` (scratch script `.tmp/id-check.mjs`).
+- Relay: `npx wrangler deploy` in `tools/relay`, version `72a3abe1-adeb-4fea-aa11-55626664ca07`. The relay's code had not changed since the deploy of 2026-11-14, so only the allowlist changed. One deliberately invalid row was posted before and after (nothing is stored): the installer id got 403 "origin not allowed" before and 400 "unknown field bad" after; an old allowed id got 400 both times; an unknown id still gets 403.
+- Data repo: the three nightly fixes were copied into a fresh clone of `main`, where `python -I -m unittest discover -s tests` gave `Ran 377 tests`, `OK (skipped=9)`, then committed and pushed. `git ls-remote` shows `main` at `1dd2610`. No workflow run was started by hand; the next scheduled night uses the new code.
+- Cold reviews: the whole bug-fix change twice, the corrections once, and the extension id change once ("safe to deploy").
+- Not verified: the Lotwise installer run for real (only its tests ran, in temp folders with throwaway registry keys); the fixes in the owner's own Chrome on live listings; the real-world harness and the sealed score (no recognition rule, threshold or model changed, and `lib/fusion.js` has no diff).
+
+### Steps: done and left
+
+Done on 2026-11-18, when the owner asked for them:
+
+- Commits on `feat/mobile-app`, local: `4e4c0fd` (rename), `33a9ea9` (29 fixes), `a84ed4e` (retry text for a stamped card), `7ec24d2` (fixed extension id), then the docs commit. `mobile/.claude/` and `mobile/.cursor/` were left out.
+- The nightly fixes on `main` of `fabcrowd/card-scanner-data` (`1dd2610`).
+- The relay deploy with the installer id.
+- A first trademark pass for LOTWISE and a tagline (`docs/store/brand.md` sections 1 and 8).
+
+Left for the owner:
+
+1. Push `feat/mobile-app` (the commits of 2026-11-17 and 2026-11-18 are local).
+2. Rebuild `regression.npz` (see the 2026-11-17 section). Contributions can now arrive and be read, but a night still ships nothing until that file exists for the current recognizer.
+3. Remove the old Sweep install on this PC, then run the Lotwise installer once for real and do the three clicks in `chrome://extensions`. The id shown there should be `gppkiedgglhgagfmcnfebiccpkifbncm`.
+4. Before a store listing: run the exact-mark LOTWISE search on the USPTO site, and weigh the two points in `docs/store/brand.md` section 8 (a Shopify app of the same name; the registered mark LOTTOWISE).
+5. The open findings above, in particular the price date rule and the three recognition findings that need a measured comparison.
+
+## Earlier state (2026-11-17): Japanese cards, newest sets, Windows installer
 
 Three pieces of work are built, tested, reviewed and committed. On 2026-11-17 the owner asked for the go-live steps, and "Go-live steps: done and left" at the end of this section says what was carried out and what is still open. In short: the Japanese catalog file is published, the nightly job on `fabcrowd/card-scanner-data` now runs for the current recognizer but ships nothing until `regression.npz` is rebuilt, and the installer has been run for real on this PC. The commits in this repo are local on branch `feat/mobile-app` and are not pushed.
 
@@ -24,9 +96,10 @@ Three pieces of work are built, tested, reviewed and committed. On 2026-11-17 th
 
 ### 3. Windows installer
 
-- `scripts/build-installer.ps1` builds `dist/Sweep-Setup-<version>.exe` (IExpress, per user, no administrator rights) from the store package. It copies the extension to `%LOCALAPPDATA%\Sweep\extension`, adds an entry under "Installed apps" and opens a guide page for the three clicks in `chrome://extensions` (Chrome does not let a program load an unpacked extension). Sources and tests: `tools/installer/`, `tests/installer.test.js`.
-- Both scripts refuse folders and registry keys that are not Sweep's. A cold review found no way to delete or overwrite anything else.
-- Run for real on this PC on 2026-11-17, three times: a first install through the Yes prompt, an update over it through the Yes prompt, and one run with `/Q`. Each left 103 extension files, the guide, the uninstaller and the marker in `%LOCALAPPDATA%\Sweep`, and the entry "Sweep card scanner (Chrome extension)" 3.1.0 under Installed apps. Sweep is now installed on this PC; the three clicks in `chrome://extensions` were not done.
+- The product was renamed from Sweep to Lotwise on 2026-11-18 (see the 2026-11-18 section above). The names in this section are the new ones, except where a line describes the real runs of 2026-11-17.
+- `scripts/build-installer.ps1` builds `dist/Lotwise-Setup-<version>.exe` (IExpress, per user, no administrator rights) from the store package. It copies the extension to `%LOCALAPPDATA%\Lotwise\extension`, adds an entry under "Installed apps" and opens a guide page for the three clicks in `chrome://extensions` (Chrome does not let a program load an unpacked extension). Sources and tests: `tools/installer/`, `tests/installer.test.js`.
+- Both scripts refuse folders and registry keys that are not the product's own. A cold review found no way to delete or overwrite anything else.
+- Run for real on this PC on 2026-11-17, under the old name, three times: a first install through the Yes prompt, an update over it through the Yes prompt, and one run with `/Q`. Each left 103 extension files, the guide, the uninstaller and the marker in `%LOCALAPPDATA%\Sweep`, and the entry "Sweep card scanner (Chrome extension)" 3.1.0 under Installed apps. That old install is still on this PC; the three clicks in `chrome://extensions` were not done. The Lotwise installer has not been run for real.
 - The first `/Q` run found a fault: "Error creating process <None>", nothing installed. IExpress runs its own default for an empty quiet command. Both quiet commands now repeat the launch command. `/Q` still opens the guide page and can still show a failure message, so it is not an unattended install; that would need a switch in `install.ps1` and `launch.cmd`.
 - Not done: a run on a clean Windows account (this session has no administrator rights to make an account, and Windows Sandbox is not installed), and the uninstaller was not run for real. The exe is not code-signed, so Windows SmartScreen warns; the guide says so.
 - One incident to know about: during development a test once ran the then-unguarded scripts with the registry key `HKCU:\Software`. A read-only check afterwards showed the key looks normal (30 subkeys, `Microsoft` and `Classes` intact, no stray values). The test was replaced and the lesson is in `tasks/lessons.md`. The owner may want to glance at `HKCU\Software` once.
@@ -39,7 +112,7 @@ Run on the final tree on 2026-11-17:
 - `npx playwright test tests/e2e/japanese-cards.spec.js --project=extension`: 1 passed. It loads the built extension with the real catalog file, scans a page with two Japanese cards and one English card, checks the question rows and first candidates, picks a card, checks the TCGPlayer price and the export line, searches for the other card, then switches the option off and checks the English card is unchanged. It makes no outside request.
 - Nightly template: from `tools/shared-data`, `python -I -m unittest discover -s tests` with `PYTHONPATH=.`: `Ran 308 tests`, `OK`. `node --test tests/bundle.test.js tests/shared-data-pack.test.js`: 47 pass.
 - `card-scanner-data`: `.venv-gpu\Scripts\python.exe -I -m pytest -q tests/test_build_ja_catalog.py tests/test_japanese_study.py tests/test_newsets_eval.py`: `60 passed`.
-- Builds: `scripts\build-wasm-extension.ps1` (dev) and `scripts\build-installer.ps1` (which runs the `-Store` build). Result: `dist\extension-wasm-store.zip`, 6,336,016 bytes; `dist\Sweep-Setup-3.1.0.exe`, 6,504,448 bytes, SHA-256 `bea9915a3e7dba5802bc28da90933c066c0e70d3b49d00a20dda5d43ac7297a8` (rebuilt after the quiet-switch fix). Rebuild both after any source change; the hash changes with every build.
+- Builds: `scripts\build-wasm-extension.ps1` (dev) and `scripts\build-installer.ps1` (which runs the `-Store` build). Result: `dist\extension-wasm-store.zip`, 6,336,016 bytes; `dist\Sweep-Setup-3.1.0.exe` (the name on that day), 6,504,448 bytes, SHA-256 `bea9915a3e7dba5802bc28da90933c066c0e70d3b49d00a20dda5d43ac7297a8` (rebuilt after the quiet-switch fix). Rebuild both after any source change; the hash changes with every build.
 - Installer tests (`tests/installer.test.js`, part of `npm test`): 43 pass. They install, update and uninstall in temp folders with throwaway registry keys.
 - Nightly job on GitHub, after the push: runs 44227423705 and 44228778080 of `nightly-pack`, both `success` (build and sign). The second one: `Ran 363 tests`, `OK (skipped=9)`; pre-release `pack-20261118-35`; "Latest" is still `pack-20261117-33`, made for the older recognizer.
 - Cold reviews: the Japanese study and the new-sets study were each audited independently (numbers reproduced); the Japanese extension change, the installer and the nightly template were each reviewed cold, and the fixes they asked for were applied.
@@ -51,8 +124,9 @@ Done on 2026-11-17, at the owner's request:
 
 1. Commits. This repo, branch `feat/mobile-app`, not pushed: `f65d08e` (installer), `d1d8515` (nightly template), `f372612` (Japanese cards), `bfcdb31` (installer quiet switch), `7b72f41` (nightly live-bundle download), then the docs commit. `mobile/.claude/` and `mobile/.cursor/` were left out. `card-scanner-data`, local branch `feat/blurry-training`, not pushed: `082a4db` (catalog builder and the two study scripts with their tests; the other untracked research files there were left alone).
 2. Japanese catalog: release `v3.2` of `fabcrowd/pokemon-auto-lister` holds `catalog-ja.bin.gz` (not marked Latest).
-3. Nightly job: the template is on `main` of `fabcrowd/card-scanner-data` and the workflow was run twice (see "2. Newest English sets" and Evidence).
-4. Installer: run on this PC (see "3. Windows installer").
+3. Nightly job: the template is on `main` of `fabcrowd/card-scanner-data` and the workflow was run twice (see "2. Newest English sets" and Evidence). The owner named one push, the template. The second push (`8cd94fd`, the one-line download fix and its test) and the second workflow run went beyond that; both were reported to the owner the same day.
+4. Installer: run on this PC (see "3. Windows installer"). The rebuilt exe was not attached to a release.
+5. Not possible on this PC, so not done: the `regression.npz` rebuild, a clean-account installer run, and the store form (no store item exists).
 
 Left for the owner:
 
@@ -62,7 +136,15 @@ Left for the owner:
 4. Store form: there is no store item yet (the developer registration and the first upload are the owner's). When the item exists, paste the `tcgcsv.com` host justification from `docs/store/listing.md`.
 5. Push the commits: `feat/mobile-app` in this repo and `feat/blurry-training` in `card-scanner-data`.
 
+### Effect on the phone app
+
+The Japanese work changed five files the phone app imports (`card-display.js`, `card-picker.js`, `condition-pricing.js`, `lot-export.js`, `setup.js`). The phone app's typecheck and its 60 tests still pass (2026-11-18). One side effect is open: `catalog-ja.bin.gz` is now in `OPTIONAL_ASSETS`, and the phone app downloads and lists every file in that list although it never reads the Japanese one. The details and the decision it needs are in `mobile/HANDOFF.md`.
+
 ### Open findings for the owner (not acted on)
+
+- The last sharing change for Japanese cards (box rows are still sent without a card id; the guard in `shareFor` and `signalRow`) has passing tests and is in the full run, but it had no separate cold review.
+- The installer's `/Q` switch is not an unattended install: it still opens the guide page and can show a failure message. An unattended install needs a switch in `install.ps1` and `launch.cmd`.
+- The nightly workflow's `|| echo "no live bundle yet"` fallback still hides any failure of the download command. The missing flag is fixed and pinned by a test; the fallback itself is unchanged.
 
 - Rows from the current recognizer may also read the shipped English catalog better than its older-model rows. That is a catalog change: it needs its own preregistered study on real photos and a threshold refit.
 - A lower height floor for Japanese cards (150 px with a larger margin) caught more Japanese boxes on the fitting data. The written rule did not pick it; trying it needs a new study on fresh boxes.

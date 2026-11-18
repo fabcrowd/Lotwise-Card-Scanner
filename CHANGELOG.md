@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased (2026-11-18: renamed to Lotwise, bug-hunt fixes)
+
+### Added
+- Installer copies have one fixed extension id, `gppkiedgglhgagfmcnfebiccpkifbncm`: `scripts/build-installer.ps1` puts the public manifest key from `tools/installer/extension-key.json` into the installer's copy of the store package, and the relay allows that id (`tools/relay/wrangler.toml`, deployed). Before, every PC that installed through the installer had its own id, the relay answered 403 and the uploader deleted the batch, so no installed copy could contribute. The store package, the dev build and the source manifest stay without a key.
+
+### Changed
+- The product is named Lotwise (was Sweep). Store title: "Lotwise: Card Lot Scanner & Price Checker". Changed: the extension name and its visible text, the store package transform, the icon and promo renders, the installer (`dist/Lotwise-Setup-<version>.exe`, folder `%LOCALAPPDATA%\Lotwise`, uninstall key `Lotwise`, marker `lotwise-install.json`), the phone app's name, slug, scheme and package id, and the docs. Not changed, on purpose: the model cache name, release addresses and pins in `lib/setup.js`, `lib/shared-config.js`, `tools/shared-data/pins.json`, the relay, and repository names. The Lotwise installer does not treat an install made under the old name as its own; remove the old one from "Installed apps" first. Details and open naming items: `docs/store/brand.md` section 8.
+
+### Fixed
+Scanner window (`popup.js`):
+- A card added with "Add card" was lost when the page rescanned on its own, both when it joined a lot and when it started one. A change of the 1st Edition choice was lost the same way.
+- Removing a card and putting it back reset its chosen printing.
+- "Confirm N" in the Review together panel did nothing, with no message, when any row had changed after the panel opened. It now gives up only when a different scan is on screen.
+- A reopened window treated the restored lot as unedited, so the next automatic rescan replaced it and discarded the user's picks, skips and removals. A card saved while its price was loading stayed on "Getting price…" for good.
+
+Service worker (`background.js`):
+- A finished scan re-targeted the tab it had scanned, so after a tab switch during the scan every later Scan failed with "That tab is no longer in front".
+- A new-photos message from a background tab or from a frame inside the page started a scan of the current target; only the scanned tab's top frame counts now (`isTargetTopFrame` in `lib/page-target.js`).
+- After the service worker restarted with the scanner window open, the target stopped following tab switches and rescans for late-loading photos stopped; the window id is kept in session storage (`lib/scanner-window.js`).
+- Automatic rescans ran without the era the user chose and replaced the filtered list; the era is kept and reused.
+- When the scanner window opened, its own tab could become the scan target, so a window reopened from a page card showed an empty lot. A tab of the scanner window is never the target now.
+- A guess from the listing title ignored the chosen era.
+- Agreeing with a saved example left this crop's own earlier, different answer active (`lib/correction-save.js`).
+- Skipping a row treated as Japanese kept its picture.
+- Picks made quickly on one exam photo could overwrite each other (`serializeByScan`).
+- A price lookup that failed at every source was stored as "no price" and hidden until the cache expired. It is now reported as a failure and can be retried; a card identified through its set stamp keeps its identity when that lookup fails and shows "Couldn't get a price. Try again." instead of "Reverse holo price not available".
+- Changing or clearing the PokemonPriceTracker key left prices fetched under the old setting in the cache.
+- A photo whose pixel size could not be read from the first bytes was decoded at full size. The whole file is read for the size now (AVIF included), and a photo whose size stays unknown falls back to the screenshot crop.
+
+Page overlay (`content.js`):
+- A lot's overlay could be drawn on another page of the same tab; the overlay message now names its page, and a different path or site is refused.
+- In draw mode a click on a card chip also picked that card.
+- After the extension was updated under an open page, the leftover overlay swallowed clicks; it now removes itself.
+- With the scanner window closed, the X on a page card could remove a different card when the overlay came from a later rescan than the saved lot; the removal is refused when the scan ids differ.
+
+Sharing, prices, network guard, installer:
+- Upload queue (`lib/upload-queue.js`): a batch could exceed the relay's 1 MiB limit, and one item older than the relay accepts made the relay refuse its whole batch. Batches now stay under 1,000,000 bytes, and an item the relay can never accept is removed before a batch is built.
+- Price snapshot (`lib/price-snapshot.js`): an older snapshot could overwrite a fresher price, and a snapshot that priced only some printings re-dated the others.
+- Private-address check (`lib/net.js`): the rest of the IPv6 link-local, site-local and multicast ranges, and IPv4 addresses written inside IPv6 (compatible and NAT64 forms).
+- Installer: `Find-Chrome` threw under strict mode when Chrome's App Paths key had no default value.
+
+Nightly template (`tools/shared-data`), also on `main` of `card-scanner-data` (`1dd2610`):
+- The reader rejected every contribution file the relay commits, because the relay stamps `received` as a date and the reader required a full timestamp (`pipeline/contributions.py`). No shared correction could have been counted.
+- Votes for cards added by the same night's new-sets step were thrown away as unknown ids (`pipeline/run.py`).
+- The pack could grow past the 20,000 rows the signer accepts (`pipeline/consensus.py`, `MAX_PACK_ROWS`).
+
 ## Unreleased (2026-11-17: Japanese cards, newest sets, Windows installer)
 
 ### Added

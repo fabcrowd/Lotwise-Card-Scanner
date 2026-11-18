@@ -200,3 +200,18 @@ Rule: after a workflow change, read the log of one real run for each `|| echo` f
 The installer tests ran `install.ps1` and `launch.cmd` in temp folders, and the exe had only been started the normal way. Its `/Q` switch showed "Error creating process <None>": IExpress runs its own default when a quiet command is empty.
 
 Rule: set `AdminQuietInstCmd` and `UserQuietInstCmd` to the launch command, and before calling an installer done run the built exe once with each switch (none, `/Q`, `/Q:A`).
+
+## Two programs that share a file format need one test that reads both (2026-11-18)
+The relay stamps `received` as a date (`2026-11-18`). The nightly reader required a full timestamp and rejected every contribution file the relay commits. Each side had passing tests, written against its own idea of the format, so the shared-learning loop could not have counted one correction and nothing was red.
+
+Rule: when one program writes what another reads (relay to nightly reader, uploader to relay limits, signer to pack size), pin the contract in a test that imports or reads the other side's real constant or sample, as `tests/share-queue.test.js` now does with the relay's `MAX_BODY_BYTES`. Also check who can send at all: the relay's allowlist holds two extension ids, and an unpacked copy on another PC has a different id.
+
+## A fix that removes a race can uncover a fault the race was hiding (2026-11-18)
+Keeping a fresh scanner-window id (instead of overwriting it with the stored one) made `overlay-remove.spec.js` fail. The old overwrite had been stopping the tab-activated handler by accident. With the id right, the handler made the scanner window's own tab the scan target, because a new tab has no address yet and so was not seen as an extension page.
+
+Rule: when a correct change breaks a browser test, log the values in the failing path before choosing between the change and the test. Do not put the race back.
+
+## A test that needs an empty start must make it so (2026-11-18)
+A new popup test for "no lot yet" passed alone and failed in the full file: the test before it left a saved lot for the same page address in `chrome.storage.session`.
+
+Rule: a popup test that needs no saved lot uses a page address of its own and asserts the empty state first; a test that saves a lot removes `lotSessions` before it closes. Run a new browser test in the full file, not only with `-g`.

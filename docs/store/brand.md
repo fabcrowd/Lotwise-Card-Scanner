@@ -1,26 +1,35 @@
 # Brand
 
-Status: **the name is applied in the extension** (owner approved it on 2026-11-15; see §7 for
-the evidence and what is still open). Written 2026-11-15, name revised the same day after a
-second availability search. The brand covers both the Chrome extension and the phone app in
-`docs/plans/mobile-app.md`, because they share a relay, a data repo and a privacy policy.
+Status: **the name is Lotwise, applied on 2026-11-18** (see §8). The owner first approved
+"Sweep" on 2026-11-15 and replaced it on 2026-11-18 because it was hard to tell apart from
+other products. Written 2026-11-15. The brand covers both the Chrome extension and the phone
+app in `docs/plans/mobile-app.md`, because they share a relay, a data repo and a privacy policy.
 
 ---
 
 ## 1. The name
 
-**Sweep.**
+**Lotwise.**
 
-Extension and app name: **Sweep**
-Store name: **Sweep: Card Scanner & Price Checker**
-Tagline: **One pass. Every card.**
+Extension and app name: **Lotwise**
+Store name: **Lotwise: Card Lot Scanner & Price Checker**
+Tagline: **Know what the lot is worth.** Chosen on 2026-11-18 when the owner handed the choice over; it is used nowhere in the product yet, so it costs nothing to change. Alternates: "Every card in the lot, named and priced." and "Price the whole lot." ("One pass. Every card." was written for Sweep.)
+
+Why Lotwise: it is a coined word, so a search for it finds this product, and it names what
+sets the product apart: it works by the lot and knows what the lot is worth. It was the first
+alternate below. A web search on 2026-11-18 found no card or collectibles product with the
+name; the one hit is a small Shopify inventory app for batch and expiry tracking, a different
+field. "Sweep" failed the same search: Sweep AI has a Chrome extension of that name, and
+ChatSweep and others sit beside it in the Chrome Web Store.
+
+The rest of this section is the 2026-11-15 reasoning for Sweep, kept as history.
 
 The store name keeps the descriptive keywords the old one had and drops only the trademark:
-"Card Scanner & Price Checker for Pokémon TCG" becomes "Sweep: Card Scanner & Price
+"Card Scanner & Price Checker for Pokémon TCG" became "Sweep: Card Scanner & Price
 Checker". The word Pokémon stays in the listing body, where it is factual description rather
 than the product's name.
 
-Why this name:
+Why Sweep was chosen then:
 
 - **It names the capability the product is built around.** One pass over a whole page or a
   whole lot, rather than one card at a time. A sweep covers an area; that is the gesture in
@@ -98,7 +107,7 @@ deciding confirmation. The category's accuracy claims are self-published, up to 
 first-scan figure, and the recurring review complaint is foils and variants priced as the
 wrong printing.
 
-So: **Sweep finds every card in one pass, and marks the ones it is not sure about.**
+So: **Lotwise finds every card in one pass, and marks the ones it is not sure about.**
 
 What that rules out: "instant AI valuation", any accuracy percentage the sealed set has not
 backed, and a hero screenshot showing a tidy grid of confident prices. The honest screenshot
@@ -109,8 +118,9 @@ is the "4 need you" state, which is also the more interesting one.
 ## 3. Voice
 
 The UI wording rules already in the repo stay as they are: say "version", "unconfirmed" and
-"skip"; never "printing", "variant" or "finish". Add "sweep" as the word for a scan, used
-consistently. Extend the rules to everything else the brand writes.
+"skip"; never "printing", "variant" or "finish". The word for a scan stays "scan" (the
+"sweep" wording of §6.2 was never applied and ended with the Sweep name). Extend the rules to
+everything else the brand writes.
 
 - Plain, calm and specific. "Found 9 cards · 4 need you" is the house style.
 - Never claim certainty the scanner does not have, and never publish an accuracy number
@@ -279,4 +289,48 @@ both already modified at the start of the session. Only the product name changed
   the `ui/*.css` header comments, and the continuity docs under `docs/`. None is
   user-visible in the shipped extension.
 - Whether the icon and promo images get drawn now or at Phase 8 of the mobile plan.
-- A USPTO check on SWEEP in classes 9 and 42, per §1.
+- A USPTO check on SWEEP in classes 9 and 42, per §1. No longer needed: see §8.
+
+---
+
+## 8. Renamed to Lotwise on 2026-11-18
+
+The owner chose Lotwise from four checked candidates (Lotwise, Riffle, Lotworth, Flatlay).
+Lotworth was set aside because "CardWorth" is a live card scanner in the same category.
+
+Changed (commit `4e4c0fd` on branch `feat/mobile-app`):
+
+- Extension: `manifest.json` name, `popup.html`, `options.html`, and the user messages in
+  `background.js`, `lib/card-display.js` and `lib/site-access.js`.
+- Store: `STORE_NAME` in `scripts/lib/store-package.mjs` is "Lotwise: Card Lot Scanner &
+  Price Checker", and `docs/store/listing.md` matches it (a test compares the two). The promo
+  tile was redrawn by `scripts/render-icons.mjs`.
+- Windows installer: `dist/Lotwise-Setup-<version>.exe`, install folder
+  `%LOCALAPPDATA%\Lotwise`, uninstall key `...\Uninstall\Lotwise`, display name "Lotwise card
+  scanner (Chrome extension)", marker file `lotwise-install.json`.
+- Phone app: `mobile/app.config.ts` (name, slug, scheme, and the bundle id and package
+  `com.fabcrowd.lotwise`) and the package name `lotwise-mobile`. The app was never built or
+  published, so nothing has to migrate.
+- Tests that pin the name, and the docs that state it.
+
+Not renamed, for the reasons in §6.4 and §6.5: `CACHE_NAME`, the model release host, the relay
+host, `lib/shared-config.js`, `tools/shared-data/pins.json`, repository names, and the CSS
+keyframes `scan-sweep` and `es-sweep` (they name a motion).
+
+Open after the rename:
+
+- This PC still has the 2026-11-17 install under the old name (`%LOCALAPPDATA%\Sweep`, "Sweep
+  card scanner (Chrome extension)" under Installed apps). The Lotwise installer does not
+  treat it as its own. Remove it from Installed apps before installing Lotwise.
+- Trademark, first pass done on 2026-11-18 by web search (third-party listings of USPTO records, not
+  the USPTO's own search, and no lawyer): no record for the exact mark LOTWISE was found. Two things to
+  weigh before the store submission:
+  - "Lotwise" is in use as the name of a Shopify app by Blue Crate (lot numbers and expiry dates on
+    orders; https://apps.shopify.com/lotwise). It is software, so the same broad class, but a different
+    purpose and a different store.
+  - The nearest registered mark found is LOTTOWISE (US registration 8098354, registered 2026-01-13,
+    PRET Lotto Inc., lottery software, classes 9, 16, 35 and 41). Also seen: LOTTERYWISE (lottery retail
+    software) and a pending LOADWISE (trucking).
+  The owner should run the exact-mark search on the USPTO Trademark Search site (classes 9 and 42)
+  once before submitting. If either point above is a worry, the fallback is "Riffle" from the checked list.
+- The tagline was chosen (section 1); the owner can change it.
