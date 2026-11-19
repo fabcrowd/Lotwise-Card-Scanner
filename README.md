@@ -15,7 +15,7 @@ Shared learning is an opt-in loop. The extension can send crops and corrections 
 
 This section follows `HANDOFF.md` ("Current state", 2026-11-14) and the UI redesign of 2026-11-15.
 
-- The extension is at manifest version 3.1.0. Pull requests #2 and #3 were merged into `main` on 2026-11-14.
+- The extension is at manifest version 3.2.0. Pull requests #2 and #3 were merged into `main` on 2026-11-14.
 - The extension scans a page, names cards, lets you confirm a card or choose it and its version, draw a box around a missed card and remove a card with an X. The price follows the card you pick, and an unconfirmed price is always marked as unconfirmed.
 - **UI redesign (2026-11-15), built but not committed.** It is on branch `feat/price-follows-pick` as uncommitted changes, and it is described in [Using the scanner](#using-the-scanner). The spec is [`docs/plans/extension-ui-redesign.md`](docs/plans/extension-ui-redesign.md). The evidence on 2026-11-15:
   - `npm test`: 1888 pass, 0 fail, 1 skipped. Lint clean.
@@ -31,7 +31,7 @@ This section follows `HANDOFF.md` ("Current state", 2026-11-14) and the UI redes
 
 ## Browser extension
 
-Source is `tools/extension-wasm/` (manifest version 3.1.0). `dist/` is generated: rebuild after changing source and never edit it by hand. Shell is PowerShell.
+Source is `tools/extension-wasm/` (manifest version 3.2.0). `dist/` is generated: rebuild after changing source and never edit it by hand. Shell is PowerShell.
 
 ### Requirements
 

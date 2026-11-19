@@ -45,6 +45,8 @@ Like any web request, these reach servers run by others. They can see your IP ad
 
 The extension does not send your browsing history anywhere.
 
+A copy installed with the Windows installer (not the version in the Chrome Web Store) also asks github.com at most once a day, and when you click "Check now" in Settings, whether a newer version of the extension exists. It is a normal file request for a small version file. It carries no data about you and no cookies. The extension never downloads or runs an update by itself: it shows a notice with a button that opens the download page.
+
 ## Shared learning (optional, off by default)
 
 The options page has a setting called "Help improve recognition for everyone". It is off. You turn it on by clicking it, next to a one-line explanation of what it sends. When it is on:

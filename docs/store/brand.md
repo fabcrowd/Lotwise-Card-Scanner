@@ -331,6 +331,9 @@ Open after the rename:
   - The nearest registered mark found is LOTTOWISE (US registration 8098354, registered 2026-01-13,
     PRET Lotto Inc., lottery software, classes 9, 16, 35 and 41). Also seen: LOTTERYWISE (lottery retail
     software) and a pending LOADWISE (trucking).
-  The owner should run the exact-mark search on the USPTO Trademark Search site (classes 9 and 42)
-  once before submitting. If either point above is a worry, the fallback is "Riffle" from the checked list.
+  Exact-mark search on the USPTO's own Trademark Search site (https://tmsearch.uspto.gov), run on
+  2026-11-19 by the agent in the owner's browser: "Wordmark" search for LOTWISE, all classes, live and
+  dead records included. Result: "No results found" (live 0, dead 0). This is a search of the
+  register, not legal advice, and it does not cover similar marks such as LOTTOWISE above.
+  If either point above is a worry, the fallback is "Riffle" from the checked list.
 - The tagline was chosen (section 1); the owner can change it.

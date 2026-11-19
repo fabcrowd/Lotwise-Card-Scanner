@@ -215,3 +215,23 @@ Rule: when a correct change breaks a browser test, log the values in the failing
 A new popup test for "no lot yet" passed alone and failed in the full file: the test before it left a saved lot for the same page address in `chrome.storage.session`.
 
 Rule: a popup test that needs no saved lot uses a page address of its own and asserts the empty state first; a test that saves a lot removes `lotSessions` before it closes. Run a new browser test in the full file, not only with `-g`.
+
+## Two states that look the same on screen need a test for each origin (2026-11-19)
+An automatic price retry was written for "a card whose price lookup failed". A row in the Choose state with an identity has two origins: the user picked a card and its lookup failed, or the scanner made an unsure guess and the scan's batch pricing failed. The retry went through `pickSet` with the row's identity as the pick, which sets `setConfirmed` and `userConfirmed`. For the second origin that would have confirmed and priced a card the user never chose. The tests only built the first origin. A cold review caught it before it reached a build the owner uses.
+
+Rule: an automatic action never reuses a path that records a user decision. Give it its own narrow path (here: price only, for a row the scan itself confirmed) and write one test per origin of the state it acts on, built with the real function that produces that state (`asLowCertaintyGuess`), not a hand-made object.
+
+## An answer that arrives late must check the row is still the one it was asked for (2026-11-19)
+The corrected retry was guarded by the scan id and a pick counter. A version swap changes the row's card without touching either, so a retry answer that landed after the swap wrote the old card and its price over the user's choice. The same re-render also took keyboard focus out of an open search box.
+
+Rule: when an async answer lands, compare the row's current card id with the id the request was started for, and drop the answer on a mismatch. Do not rely on a counter that only some edit paths bump. A re-render that the user did not trigger must leave focus and caret where they were; test it by typing one more character after the answer lands.
+
+## State moved to session storage outlives the worker, so give it an age (2026-11-19)
+A finished scan result used to live in the service worker's memory, so it disappeared within minutes. Storing it in `chrome.storage.session` to survive a worker restart also made it survive for the whole browser session: the scanner reopened on the same page hours later would have shown old rows and prices as current.
+
+Rule: when state moves from memory to storage, write down its old lifetime and keep it on purpose (`HELD_SCAN_MAX_AGE_MS`). The restore must also not overwrite a value that was set after the worker started, and must always settle, or every message that waits for it hangs. Test the restore by stopping the real service worker (`tests/e2e/worker-restart.spec.js`), and prove the test fails with the restore switched off.
+
+## Extension session storage is cleared by a reload (2026-11-19)
+`chrome.runtime.reload()` clears `chrome.storage.session`, where the saved lots, the held scan and the draw state live. A self-update that reloads the extension at any time would silently delete the user's lot.
+
+Rule: reload by itself only when nothing is stored that a reload would lose and the scanner window is closed; otherwise show a notice and let the user restart. Chrome also disables an unpacked extension on `runtime.reload()` when Developer mode is off; an unpacked install needs Developer mode on anyway, and a browser test has to switch it on at `chrome://extensions`.

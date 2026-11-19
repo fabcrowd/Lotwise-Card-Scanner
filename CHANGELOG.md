@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.2.0 (2026-11-19: self-update, new sets by themselves, open findings from the bug hunt)
+
+Nothing here changes a recognition threshold, a model or `lib/fusion.js`. The extension's version is 3.2.0 (was 3.1.0).
+
+### Added
+- A note in the scanner window when new card data arrived: "Card data updated: 499 new cards from the newest sets can now be recognized. Sets include A, B and C." with an "OK" button (`lib/card-data-note.js`, `background.js`, `popup.html`, `popup.js`). It appears only when the number of new cards in the live bundle rose, and is in every build.
+- Nightly template (`tools/shared-data`): the regression set can hold rows labelled by card name (`pipeline/names.py`, `pipeline/regression.py`, `pipeline/gate.py`, a second mode in `scripts/build_regression.py`). A name-labelled row is read right when the first hit is a shipped card or a new card with that name; rows labelled by id and old files score as before. This lets the 3,363 name-labelled boxes from real listing photos serve as the regression set, so a night that adds a new set can ship without the lost HiBid crops.
+- Nightly template: when a night that only adds cards fails the unchanged ship rule, the job holds back the new cards the failing regression rows point at and tests the rest again (`pipeline/run.py`; at most 3 rounds and 10 cards, never when the exam got worse or a learned part changed). Held cards are listed in the log, `STATUS.md` and a warning on the workflow run, and are tried again every night. The README lists what this gate cannot see.
+- Self-update for copies installed by the Windows installer (`lib/self-update.js`, `background.js`, a banner in the scanner window, an "Updates" block in Settings). After the installer has put newer files on disk, the extension reloads itself when nothing would be lost (no page of the extension open, no click or message since the worker started, no scan, no draw mode, nothing in session storage) and otherwise shows "Restart now". At most once a day, and from "Check now" in Settings, it reads `lotwise-version.json` from the GitHub release tagged `installer` and shows "Lotwise <version> is available." with a button to that release page. Nothing is downloaded or run by the extension, no new host or permission is used, and the store and dev builds do nothing. `scripts/build-installer.ps1` writes `dist\lotwise-version.json`.
+- Browser tests: `tests/e2e/self-update.spec.js` (10 cases, with the installer's rename swap), and the block "box signals sent by the scanner window" in `tests/e2e/extension-wasm-popup.spec.js` (the exact `shareBoxSignal` messages for a drawn, removed and put-back box, and none for a skip).
+- A card the scan itself confirmed whose price lookup failed is asked for its price once more by itself, 5 seconds later (`lib/price-retry.js`, `popup.js`). The retry fetches the price only. It never confirms anything, never runs for an unsure guess or a failed pick, never runs for a row the user has acted on, and its answer is dropped when the row changed meanwhile.
+- Draw mode and a finished scan result survive a restart of the service worker (`lib/worker-state.js`, kept in session storage without the card pictures). A stored result older than 30 minutes is not brought back. `tests/e2e/worker-restart.spec.js` stops the real service worker.
+- Nightly template: on a quiet night with a live manifest older than 14 days, the job signs the live bundle again with a fresh issue time, so installs do not start refusing it at 30 days. A refused re-issue is a warning until the live manifest is 21 days old and fails the job after that. A problem with the signing key fails the job in every mode.
+- `tests/setup-pins.test.js` with a committed snapshot: a model file's pinned hash cannot change without the test noticing.
+
+### Changed
+- `applyCatalogPrices` (`lib/price-snapshot.js`) keeps a price grid's own date when the grid has a priced printing of its own, and takes the snapshot's date only when it has none. Before, adding one missing printing made an old TCGdex price next to it look fresh. `tests/price-snapshot-catalog.test.js` changed on purpose.
+- Phone app: only the two text-reading files are downloaded and listed as optional (`PHONE_OPTIONAL_FILES` in `mobile/src/core/assets.ts`). The 9 MB Japanese card list and `card_corners.onnx`, which the phone never reads, are no longer downloaded.
+- Nightly template: the issue time is stamped when the manifest is made, not before a long build; one install can supply at most 8 of the exam cases (`MAX_EXAM_CASES_PER_INSTALL`), so it cannot block shipping alone; the price snapshot is built before the pack with its own 15 minute limit; download steps forgive only "release not found".
+- The signer and the extension's bundle parser accept new-card rows only with pictures on `assets.tcgdex.net` or `images.pokemontcg.io` (`tools/shared-data/pipeline/image_hosts.py`, `PICTURE_HOSTS` in `lib/bundle.js`; a test keeps the two lists equal).
+
+### Fixed
+- The upload queue also drops items dated more than two days in the future, as the relay does (`lib/upload-queue.js`).
+- A listing title with a set code next to a card number ("SV08 123/191") no longer counts the set code as a second card number, which had switched the title hint off (`lib/title-prior.js`). A card number that OCR read with spaces around the slash is no longer lost (`lib/card-number.js`). Neither could be measured on stored data: no stored title or OCR line triggers them.
+- With the look-alike penalty on (off in every shipped build), the saved-example margin is checked against the unpenalised top score, as documented (`searchPair` in `lib/search.js`).
+- Two overlapping scans could leave the detector on its low threshold; the threshold is now passed per call (`lib/detect.js`).
+- The page watcher missed photos that finished loading late; it now also listens for image `load` events (`content.js`).
+- A search box lost keyboard focus when any price answer re-rendered the list; focus and caret now stay in the box (`replaceCard` in `popup.js`).
+- The card-back check, the Japanese check and `seen.catalogTop` in `background.js` read the highest raw score (`rawTop`) instead of the first hit's score. The two are the same number while the look-alike penalty is off, which it is in every build.
+- A new-card row whose picture address carries a user name or a password is refused (`pictureAllowed` in `lib/bundle.js`).
+
+### Docs
+- `docs/store/privacy-policy.md`: one paragraph on the daily version check of copies installed with the Windows installer.
+- `docs/store/brand.md`: the exact-mark search for LOTWISE on the USPTO's own site, run on 2026-11-19, found no record.
+
 ## Unreleased (2026-11-18: renamed to Lotwise, bug-hunt fixes)
 
 ### Added
