@@ -36,13 +36,37 @@ export const hasAsset = (files: ModelFiles, asset: ModelAsset): boolean => files
 
 /** The pinned entry for a model file, by the name the extension gives it. */
 export function assetNamed(name: string): ModelAsset {
-  const asset = [...ASSETS, ...OPTIONAL_ASSETS].find((entry) => entry.name === name);
+  const asset = [...ASSETS, ...PHONE_OPTIONAL_ASSETS].find((entry) => entry.name === name);
   if (!asset) throw new Error(`Unknown model file: ${name}`);
   return asset;
 }
 
+/** The text reading models (engine.ts loads these two). */
+export const TEXT_READING_FILES: readonly string[] = ['ocr_det.onnx', 'ocr_rec.onnx'];
+
+/**
+ * The optional files the phone reads. A file the extension later adds to OPTIONAL_ASSETS is neither downloaded nor
+ * listed here until it is added to this list.
+ */
+export const PHONE_OPTIONAL_FILES: readonly string[] = [...TEXT_READING_FILES];
+
+const PHONE_OPTIONAL_ASSETS: readonly ModelAsset[] = OPTIONAL_ASSETS.filter((asset) => PHONE_OPTIONAL_FILES.includes(asset.name));
+
 export const requiredAssets = (): readonly ModelAsset[] => ASSETS;
-export const optionalAssets = (): readonly ModelAsset[] => OPTIONAL_ASSETS;
+export const optionalAssets = (): readonly ModelAsset[] => PHONE_OPTIONAL_ASSETS;
+
+/** Whether every text reading file is on the device. */
+export const textReadingReady = (files: ModelFiles): boolean =>
+  PHONE_OPTIONAL_ASSETS.filter((asset) => TEXT_READING_FILES.includes(asset.name)).every((asset) => hasAsset(files, asset));
+
+/** What to tell the user when optional files could not be fetched; says text reading only when a text file failed. */
+export function optionalFailureNote(failed: readonly string[]): string | null {
+  if (failed.length === 0) return null;
+  if (failed.some((name) => TEXT_READING_FILES.includes(name))) {
+    return 'Some optional text files could not be downloaded, so text reading stays off. Scanning still works.';
+  }
+  return `Could not download ${failed.join(', ')}. Scanning still works.`;
+}
 
 export function missingAssets(files: ModelFiles, assets: readonly ModelAsset[] = ASSETS): ModelAsset[] {
   return assets.filter((asset) => !hasAsset(files, asset));
@@ -72,7 +96,7 @@ async function fetchVerified(
 
 /** Deletes what no current pin names: files of an older pin and unfinished downloads. */
 export function removeStaleFiles(files: ModelFiles): void {
-  const current = new Set([...ASSETS, ...OPTIONAL_ASSETS].map(storedName));
+  const current = new Set([...ASSETS, ...PHONE_OPTIONAL_ASSETS].map(storedName));
   for (const name of files.list()) {
     if (!current.has(name)) files.remove(name);
   }
@@ -93,7 +117,7 @@ export async function downloadModels(files: ModelFiles, onProgress?: (progress: 
 /** The text models are optional: scanning works without them. Returns the names that could not be fetched. */
 export async function downloadOptionalModels(files: ModelFiles): Promise<string[]> {
   const failed: string[] = [];
-  for (const asset of missingAssets(files, OPTIONAL_ASSETS)) {
+  for (const asset of missingAssets(files, PHONE_OPTIONAL_ASSETS)) {
     try {
       await fetchVerified(files, asset);
     } catch (err) {

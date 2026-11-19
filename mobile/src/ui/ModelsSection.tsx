@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import {
   type DownloadProgress, downloadModels, downloadOptionalModels, downloadSizeText, hasAsset, missingAssets, modelsReady,
-  optionalAssets, requiredAssets,
+  optionalAssets, optionalFailureNote, requiredAssets, textReadingReady,
 } from '../core/assets';
 import { resetEngine } from '../device/engine';
 import { deviceModelFiles } from '../device/files';
@@ -37,7 +37,7 @@ export function ModelsSection({ onChanged }: { onChanged: () => void }) {
   const [note, setNote] = useState<string | null>(null);
   const ready = modelsReady(deviceModelFiles);
   const missing = missingAssets(deviceModelFiles);
-  const textOn = optionalAssets().filter((a) => a.name.startsWith('ocr_')).every((a) => hasAsset(deviceModelFiles, a));
+  const textOn = textReadingReady(deviceModelFiles);
 
   const download = async (): Promise<void> => {
     setRunning(true);
@@ -46,7 +46,7 @@ export function ModelsSection({ onChanged }: { onChanged: () => void }) {
     try {
       await downloadModels(deviceModelFiles, setProgress);
       const failed = await downloadOptionalModels(deviceModelFiles);
-      if (failed.length > 0) setNote('Some optional text files could not be downloaded, so text reading stays off. Scanning still works.');
+      setNote(optionalFailureNote(failed));
       resetEngine();
     } catch (err) {
       console.error('[settings] model download failed:', err instanceof Error ? err.message : err);

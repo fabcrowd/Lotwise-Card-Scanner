@@ -2,8 +2,10 @@
 
 import {
   type ModelFiles, checkDataSources, downloadModels, downloadOptionalModels, downloadSizeText, hasAsset, missingAssets,
-  modelsReady, optionalAssets, removeStaleFiles, requiredAssets, storedName,
+  PHONE_OPTIONAL_FILES, modelsReady, optionalAssets, optionalFailureNote, removeStaleFiles, requiredAssets, storedName,
+  textReadingReady,
 } from '../src/core/assets';
+import { OPTIONAL_ASSETS } from '../src/core/ext';
 import { installPlatform } from '../src/platform/install';
 
 const RELEASES = 'https://github.com/fabcrowd/pokemon-auto-lister/releases/download/';
@@ -140,6 +142,57 @@ test('clearing stale files keeps every currently pinned file', async () => {
   removeStaleFiles(github.files);
   expect([...github.stored.keys()].sort()).toEqual(before);
   expect(before).toHaveLength(everyAsset().length);
+});
+
+test('every optional file the phone reads exists in the extension list', () => {
+  const extensionNames = OPTIONAL_ASSETS.map((asset) => asset.name);
+  for (const name of PHONE_OPTIONAL_FILES) expect(extensionNames).toContain(name);
+  expect(optionalAssets().map((asset) => asset.name).sort()).toEqual([...PHONE_OPTIONAL_FILES].sort());
+});
+
+test('an optional file the phone does not read is neither listed, downloaded nor kept', async () => {
+  const unused = OPTIONAL_ASSETS.find((asset) => asset.name === 'catalog-ja.bin.gz');
+  expect(unused).toBeDefined();
+  expect(optionalAssets().map((asset) => asset.name)).not.toContain('catalog-ja.bin.gz');
+  const github = fakeGitHub();
+  await downloadOptionalModels(github.files);
+  expect(github.requested.some((url) => url.endsWith('catalog-ja.bin.gz'))).toBe(false);
+  expect(github.requested).toHaveLength(PHONE_OPTIONAL_FILES.length);
+  github.stored.set(storedName(unused!), unused!.sha256);
+  removeStaleFiles(github.files);
+  expect(github.stored.has(storedName(unused!))).toBe(false);
+});
+
+test('the text reading message appears only when a text file failed', () => {
+  expect(optionalFailureNote([])).toBeNull();
+  expect(optionalFailureNote(['ocr_rec.onnx'])).toMatch(/text reading stays off/);
+  const other = optionalFailureNote(['something_else.bin']);
+  expect(other).toContain('something_else.bin');
+  expect(other).not.toMatch(/text reading/);
+});
+
+test('text reading is ready only when both text files are on the device', async () => {
+  const github = fakeGitHub();
+  expect(textReadingReady(github.files)).toBe(false);
+  await downloadOptionalModels(github.files);
+  expect(textReadingReady(github.files)).toBe(true);
+});
+
+test('text reading stays off with only one of the two text files on the device, and the next download fetches just the missing one', async () => {
+  for (const [kept, missing] of [['ocr_det.onnx', 'ocr_rec.onnx'], ['ocr_rec.onnx', 'ocr_det.onnx']]) {
+    const github = fakeGitHub();
+    await downloadOptionalModels(github.files);
+    const gone = optionalAssets().find((asset) => asset.name === missing)!;
+    github.stored.delete(storedName(gone));
+    expect(hasAsset(github.files, optionalAssets().find((asset) => asset.name === kept)!)).toBe(true);
+    expect(hasAsset(github.files, gone)).toBe(false);
+    expect(textReadingReady(github.files)).toBe(false);
+    github.requested.length = 0;
+    await downloadOptionalModels(github.files);
+    expect(github.requested).toHaveLength(1);
+    expect(github.requested[0].endsWith(missing)).toBe(true);
+    expect(textReadingReady(github.files)).toBe(true);
+  }
 });
 
 test('the download size is stated in megabytes', () => {
