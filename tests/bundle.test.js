@@ -1,9 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   adaptedRows, cardProbability, checkBundle, fetchBundle, liveParts, loadStoredBundle, mergeExtra, parseAdapter, parseCatalogExtra, parseCheck,
-  parsePack, signatureUrl, verifySignature,
+  parsePack, PICTURE_HOSTS, signatureUrl, verifySignature,
 } from '../tools/extension-wasm/lib/bundle.js';
 import { adaptVector } from '../tools/extension-wasm/lib/adapter.js';
 import { referenceHit } from '../tools/extension-wasm/lib/references.js';
@@ -370,6 +371,36 @@ test('parseCatalogExtra accepts a header with model and crop and keeps a pokemon
   const extra = parseCatalogExtra(tagged);
   assert.equal(extra.meta[0].imageUrl, 'https://images.pokemontcg.io/sv9/1_hires.png');
   assert.equal(extra.meta[0].id, 'sv9-1');
+});
+
+test('parseCatalogExtra refuses a row whose picture is not https on a host the signer allows', () => {
+  const one = (image) => withHeader({ v: 1, dim: DIM, entries: 1, cardIds: ['sv9-1'], cards: [{ ...CARDS[0], image }] }, rowsBody([1]));
+  assert.doesNotThrow(() => parseCatalogExtra(one('https://assets.tcgdex.net/en/sv/sv9/1/high.webp')));
+  assert.doesNotThrow(() => parseCatalogExtra(one('https://images.pokemontcg.io/sv9/1_hires.png')));
+  for (const bad of [
+    'http://assets.tcgdex.net/en/sv/sv9/1/high.webp', // not https
+    'https://assets.tcgdex.net.evil.example/x.png', // host only starts the same
+    'https://assets.tcgdex.net@evil.example/x.png', // the host is after the @
+    'https://assets.tcgdex.net:8443/x.png', // another port
+    'https://evil.example/assets.tcgdex.net/x.png',
+    'https://sub.images.pokemontcg.io/x.png',
+    'https://user:pass@images.pokemontcg.io/x.png', // a user name and password in front of an allowed host
+    'https://user@images.pokemontcg.io/x.png', // a user name alone
+    'https://:pass@assets.tcgdex.net/x.png', // a password alone
+    '//assets.tcgdex.net/x.png', 'assets.tcgdex.net/x.png', '', 'not a url',
+  ]) {
+    assert.throws(() => parseCatalogExtra(one(bad)), /malformed/, bad);
+  }
+  // One bad row among good ones refuses the whole asset.
+  const two = withHeader({ v: 1, dim: DIM, entries: 2, cardIds: ['sv9-1', 'sv9-2'], cards: [CARDS[0], { ...CARDS[1], image: 'https://evil.example/2.webp' }] }, rowsBody([1, 2]));
+  assert.throws(() => parseCatalogExtra(two), /malformed/);
+});
+
+test("the extension's picture hosts are the ones the nightly build and signer allow (image_hosts.py)", () => {
+  const python = readFileSync(new URL('../tools/shared-data/pipeline/image_hosts.py', import.meta.url), 'utf8');
+  const listed = [...python.matchAll(/^[A-Z_]+_IMAGE_HOST = "(https:\/\/[^"]+)"/gm)].map((m) => new URL(m[1]).host);
+  assert.ok(listed.length >= 2, 'found the hosts in image_hosts.py');
+  assert.deepEqual([...PICTURE_HOSTS].sort(), listed.sort());
 });
 
 test('mergeExtra drops extra cards the base catalog already has, keeping rows and meta aligned', () => {

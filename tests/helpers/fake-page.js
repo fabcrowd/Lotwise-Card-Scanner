@@ -187,6 +187,7 @@ export function loadPage({ viewport = { w: 2504, h: 1287 }, clientWidth = 2489, 
       return ran;
     },
     frame() { const fn = frames.shift(); if (fn) fn(); },
+    listenerCount(type) { return (listeners[type] || []).length; },
     fire(type, event = {}) { for (const fn of [...(listeners[type] || [])]) fn({ type, ...event }); },
     resizeWindow(w, h, cssW) { window.innerWidth = w; window.innerHeight = h; view.cssW = cssW; view.h = h; },
     stack(fn) { stackAt = fn; },

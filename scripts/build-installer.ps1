@@ -166,3 +166,8 @@ $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Output).Hash.ToLowerInvari
 Write-Output "Installer: $Output"
 Write-Output "Size: $((Get-Item -LiteralPath $Output).Length) bytes"
 Write-Output "SHA-256: $hash"
+
+# The file installed copies read to learn the newest version (lib/self-update.js). It goes on the release next to the exe.
+$VersionFile = Join-Path $RepoRoot 'dist\lotwise-version.json'
+[System.IO.File]::WriteAllText($VersionFile, ('{"product":"Lotwise","version":"' + $Version + '"}'), (New-Object System.Text.UTF8Encoding($false)))
+Write-Output "Release files for the GitHub release tagged installer: $Output and $VersionFile"

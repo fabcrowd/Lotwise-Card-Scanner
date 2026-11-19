@@ -94,7 +94,8 @@ export function parseSnapshot(text) {
 
 /**
  * Add the printings an ex10-ex16 card's TCGdex grid lacks (all of them when there is no grid) from the snapshot's
- * `byCatalog`, dated like any snapshot price. A printing TCGdex prices stays; a richer grid (backend, Price Tracker),
+ * `byCatalog`, dated like any snapshot price unless the grid has a priced printing and a valid date of its own (it keeps
+ * that date). A printing TCGdex prices stays; a richer grid (backend, Price Tracker),
  * another card, an undated snapshot or nothing to add returns the grid it was given.
  */
 export function applyCatalogPrices(grid, snapshot, identity) {
@@ -114,7 +115,10 @@ export function applyCatalogPrices(grid, snapshot, identity) {
   }
   if (!added) return grid;
   const base = grid || { source: "snapshot", graded: {}, defaultVariant: null };
-  return { ...base, variants, updatedAt, spreadRatio: spreadOf(variants) };
+  // Like applySnapshot: a printing the grid priced itself keeps the grid's own (older) date, so the added price does not look fresh.
+  const ownPriced = Object.values(grid?.variants || {}).some((variant) => variant?.market > 0);
+  const ownDated = typeof grid?.updatedAt === "string" && Number.isFinite(Date.parse(grid.updatedAt));
+  return { ...base, variants, updatedAt: ownPriced && ownDated ? grid.updatedAt : updatedAt, spreadRatio: spreadOf(variants) };
 }
 
 /**

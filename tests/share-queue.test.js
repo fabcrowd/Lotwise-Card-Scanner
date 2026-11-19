@@ -15,6 +15,9 @@ const contribution = (n = 0, over = {}) => ({
   ...over,
 });
 
+// The queue drops items whose day is far from its clock, so a clock must sit near the helper's default day.
+const T0 = Date.parse('2026-10-16T10:00:00Z');
+
 function memoryState() {
   let value = null;
   return { get: async () => value, set: async (v) => { value = v; }, clear: async () => { value = null; } };
@@ -55,7 +58,7 @@ test('batches hold at most 20 and are posted as JSON to the relay', async () => 
   for (let i = 0; i < 45; i++) await store.enqueue(contribution(i));
   const posts = [];
   const uploader = createUploader({
-    store, relayUrl: RELAY, backoff: memoryState(), now: () => 1000,
+    store, relayUrl: RELAY, backoff: memoryState(), now: () => T0,
     fetchFn: async (url, init) => { posts.push({ url, init, body: JSON.parse(init.body) }); return { ok: true, status: 200 }; },
   });
   assert.equal(BATCH_SIZE, 20);
@@ -117,10 +120,28 @@ test('queued items older than the relay allows are removed so they never share a
   assert.deepEqual(posts.map((p) => p.contributions.map((c) => c.day)), [['2026-11-16', '2026-11-18']]);
 });
 
+test('queued items dated in the future beyond the relay tolerance are removed; the edge day the relay accepts is kept', async () => {
+  const { validateContribution } = await import('../tools/relay/src/validate.js');
+  const clock = Date.parse('2026-11-18T09:00:00Z');
+  const days = ['2026-11-20', '2026-11-21', '2026-11-25'];
+  const store = createShareStore(fakeIndexedDB());
+  for (const [i, day] of days.entries()) await store.enqueue(contribution(i, { day }));
+  const posts = [];
+  const uploader = createUploader({
+    store, relayUrl: RELAY, backoff: memoryState(), now: () => clock,
+    fetchFn: async (url, init) => { posts.push(JSON.parse(init.body)); return { ok: true, status: 200 }; },
+  });
+  // The relay checks `day` before the cards, so the sample crop's own refusal does not hide the day verdict.
+  const accepted = days.filter((day) => !/day is too far/.test(validateContribution(contribution(0, { day }), { now: new Date(clock) }).error ?? ''));
+  assert.deepEqual(accepted, ['2026-11-20']);
+  assert.deepEqual(await uploader.flush(), { sent: accepted.length, left: 0, dropped: days.length - accepted.length });
+  assert.deepEqual(posts.map((p) => p.contributions.map((c) => c.day)), [accepted]);
+});
+
 test('a failed post keeps the batch and waits with growing delays', async () => {
   const store = createShareStore(fakeIndexedDB());
   await store.enqueue(contribution());
-  let clock = 0;
+  let clock = T0;
   let calls = 0;
   const uploader = createUploader({
     store, relayUrl: RELAY, backoff: memoryState(), now: () => clock,
@@ -142,7 +163,7 @@ test('a failed post keeps the batch and waits with growing delays', async () => 
 test('a network error is retried, and success clears the backoff', async () => {
   const store = createShareStore(fakeIndexedDB());
   await store.enqueue(contribution());
-  let clock = 0;
+  let clock = T0;
   let fail = true;
   const uploader = createUploader({
     store, relayUrl: RELAY, backoff: memoryState(), now: () => clock,
@@ -160,7 +181,7 @@ test('a batch the relay refuses as invalid is dropped, not retried forever', asy
   const store = createShareStore(fakeIndexedDB());
   await store.enqueue(contribution());
   const uploader = createUploader({
-    store, relayUrl: RELAY, backoff: memoryState(), now: () => 0,
+    store, relayUrl: RELAY, backoff: memoryState(), now: () => T0,
     fetchFn: async () => ({ ok: false, status: 400 }),
   });
   assert.deepEqual(await uploader.flush(), { sent: 0, left: 0, dropped: 1 });
@@ -170,7 +191,7 @@ test('429 and 408 are retried like a server error', async () => {
   for (const status of [429, 408]) {
     const store = createShareStore(fakeIndexedDB());
     await store.enqueue(contribution());
-    const uploader = createUploader({ store, relayUrl: RELAY, backoff: memoryState(), now: () => 0, fetchFn: async () => ({ ok: false, status }) });
+    const uploader = createUploader({ store, relayUrl: RELAY, backoff: memoryState(), now: () => T0, fetchFn: async () => ({ ok: false, status }) });
     assert.equal((await uploader.flush()).left, 1, String(status));
   }
 });
@@ -187,7 +208,7 @@ test('overlapping flushes send each batch once', async () => {
   await store.enqueue(contribution());
   let calls = 0;
   const uploader = createUploader({
-    store, relayUrl: RELAY, backoff: memoryState(), now: () => 0,
+    store, relayUrl: RELAY, backoff: memoryState(), now: () => T0,
     fetchFn: async () => { calls += 1; await new Promise((r) => setTimeout(r, 5)); return { ok: true, status: 200 }; },
   });
   await Promise.all([uploader.flush(), uploader.flush()]);

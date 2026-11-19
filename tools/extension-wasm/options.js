@@ -545,3 +545,40 @@ loadCollectionToggle();
 refreshDrawnCount();
 // dev-only:end
 loadKey();
+
+/* ─── Updates (the installer's copy only: the background says whether this is it) ─── */
+
+const updatesSection = document.getElementById("updates-section");
+const updatesVersion = document.getElementById("updates-version");
+const updatesStatus  = document.getElementById("updates-status");
+const updatesGet     = document.getElementById("updates-get");
+const updatesCheck   = document.getElementById("updates-check");
+const UPDATE_CHECK_FAILED = "Couldn't check for a new version. Try again later.";
+
+function showUpdates({ latestVersion, lastCheckedAt, failed }) {
+  updatesGet.hidden = !latestVersion;
+  if (failed) updatesStatus.textContent = UPDATE_CHECK_FAILED;
+  else if (latestVersion) updatesStatus.textContent = `Version ${latestVersion} is available.`;
+  else updatesStatus.textContent = "You have the latest version." + (Number.isFinite(lastCheckedAt) ? ` Last checked ${new Date(lastCheckedAt).toLocaleString()}.` : "");
+}
+
+async function loadUpdates() {
+  const info = await chrome.runtime.sendMessage({ action: "selfUpdateSettings" }).catch(() => null);
+  if (!info?.installer) return;
+  updatesVersion.textContent = `Lotwise ${info.runningVersion}.`;
+  updatesSection.hidden = false;
+  showUpdates({ latestVersion: info.latestVersion, lastCheckedAt: info.lastCheckedAt, failed: info.lastCheckOk === false && !info.latestVersion });
+}
+
+updatesCheck.addEventListener("click", async () => {
+  updatesCheck.disabled = true;
+  updatesStatus.textContent = "Checking for a new version…";
+  try {
+    const reply = await chrome.runtime.sendMessage({ action: "selfUpdateCheckNow" }).catch(() => null);
+    showUpdates({ latestVersion: reply?.latestVersion ?? null, lastCheckedAt: reply?.checkedAt ?? null, failed: reply?.ok !== true });
+  } finally {
+    updatesCheck.disabled = false;
+  }
+});
+updatesGet.addEventListener("click", () => { chrome.runtime.sendMessage({ action: "selfUpdateOpenRelease" }).catch(() => {}); });
+loadUpdates();

@@ -49,7 +49,9 @@ function l2Page() {
     page.flush();
   };
   const newCards = () => page.sent.filter((m) => m.action === 'newCardsDetected').length;
-  return { page, img, backdrop, layout, scan, settle, newCards, canvas: () => canvas };
+  // Only the quiet timer runs: no mutation record reaches the observers.
+  const tick = () => { while (timers.length) timers.shift()(); page.flush(); };
+  return { page, img, backdrop, layout, scan, settle, tick, newCards, canvas: () => canvas };
 }
 
 function mapped(box, from, to) {
@@ -124,6 +126,26 @@ test('(c) a picture that is really new still asks for a rescan: a new image, and
   // Once asked, the same picture does not ask again.
   lazy.settle();
   assert.equal(lazy.newCards(), 1);
+});
+
+test('(c2) an image added before its picture loads is judged when it finishes loading, with one listener that stop removes', () => {
+  const late = l2Page();
+  late.scan();
+  const pending = late.page.addImg(late.page.body, rectOf(200, 300, 250, 350), { src: 'https://scontent.example/late-card_n.jpg', natural: [750, 1050] });
+  Object.assign(pending, { complete: false, naturalWidth: 0, naturalHeight: 0 });
+  late.settle();
+  assert.equal(late.newCards(), 0, 'not loaded yet, so not judged as a card yet');
+  // No further DOM change happens: the picture simply finishes loading.
+  Object.assign(pending, { complete: true, naturalWidth: 750, naturalHeight: 1050 });
+  late.page.fire('load', { target: pending });
+  late.tick();
+  assert.equal(late.newCards(), 1, 'judged when it loaded');
+
+  // A second scan completion must not stack a second listener; stopping removes it.
+  late.page.send({ action: 'startObserving' });
+  assert.equal(late.page.listenerCount('load'), 1);
+  late.page.send({ action: 'stopObserving' });
+  assert.equal(late.page.listenerCount('load'), 0);
 });
 
 test('(d) a background rescan hides the overlay only for its screenshot; the previous boxes show until the new result', async () => {

@@ -22,10 +22,20 @@ test('the setting is stored under one key, read as on only when exactly true, an
   assert.match(options, /lookalikeToggle\.checked = reduceLookalikes === true/);
   const background = stripDevBlocks(read('background.js'), 'background.js');
   assert.match(background, /\.reduceLookalikes === true/);
-  // Both scan paths search through searchBoth, which applies the penalty to the normal and the raw search.
+  // Both scan paths search through searchBoth, which hands the setting to searchPair (lib/search.js) for the normal and the raw search.
   assert.equal(background.match(/await searchBoth\(embedding\)/g).length, 2);
-  assert.equal(background.match(/\{ penalty \}\)/g).length, 1);
-  assert.equal(background.match(/\{ penalty, raw: true \}\)/g).length, 1);
+  assert.equal(background.match(/searchPair\(embedding, _meta, \{ penalty: await lookalikePenaltyInUse\(\) \}\)/g).length, 1);
+  const search = read(path.join('lib', 'search.js'));
+  assert.equal(search.match(/\{ penalty \}\)/g).length, 1);
+  assert.equal(search.match(/\{ penalty, raw: true \}\)/g).length, 1);
+  // The saved-example margin gets the true raw top, not the first (rank-ordered) hit's score.
+  assert.equal(background.match(/await withReferenceHit\([^\n]*, rawTop/g).length, 2);
+  assert.doesNotMatch(background, /withReferenceHit\([^\n]*rawHits\[0\]/);
+  // The card-back check, the Japanese check and seen.catalogTop also read the true raw top, never rawHits[0].
+  assert.doesNotMatch(read('background.js'), /rawHits\[0\]\?\.score/);
+  assert.equal(background.match(/isCardBack\(embedding, rawTop\)/g).length, 2);
+  assert.equal(background.match(/bestEn: rawTop/g).length, 2);
+  assert.match(background, /seen\.catalogTop = rawHits\.length \? rawTop : null;/);
 });
 
 test('the penalty file is a local asset of the extension, never a download', () => {

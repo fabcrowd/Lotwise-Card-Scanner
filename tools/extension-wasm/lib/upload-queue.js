@@ -3,8 +3,8 @@
 export const BATCH_SIZE = 20;
 // Below the relay's 1 MiB body cap (MAX_BODY_BYTES in tools/relay/src/handler.js), which answers 413 above it.
 export const BATCH_BYTE_BUDGET = 1_000_000;
-// The relay refuses a `day` more than 2 days from its date (MAX_DAY_SKEW_MS in tools/relay/src/validate.js).
-const MAX_DAY_AGE_MS = 2 * 86400000;
+// The relay refuses a `day` more than 2 days from its date, past or future (MAX_DAY_SKEW_MS in tools/relay/src/validate.js).
+const MAX_DAY_SKEW_MS = 2 * 86400000;
 const EMPTY_BODY_BYTES = new TextEncoder().encode(JSON.stringify({ v: 1, contributions: [] })).length;
 const itemBytes = (item) => new TextEncoder().encode(JSON.stringify(item)).length;
 const BASE_DELAY_MS = 60 * 1000;
@@ -35,8 +35,8 @@ export function createUploader({ store, relayUrl, fetchFn = (...args) => fetch(.
       const peeked = await store.peek(BATCH_SIZE);
       if (peeked.length === 0) return dropped ? { sent, left: 0, dropped } : { sent, left: 0 };
       // Items the relay can never accept would take the rest of their batch down with them.
-      const oldestDay = Date.parse(`${new Date(now()).toISOString().slice(0, 10)}T00:00:00Z`) - MAX_DAY_AGE_MS;
-      const hopeless = peeked.filter((row) => Date.parse(`${row.item.day}T00:00:00Z`) < oldestDay
+      const today = Date.parse(`${new Date(now()).toISOString().slice(0, 10)}T00:00:00Z`);
+      const hopeless = peeked.filter((row) => Math.abs(Date.parse(`${row.item.day}T00:00:00Z`) - today) > MAX_DAY_SKEW_MS
         || EMPTY_BODY_BYTES + itemBytes(row.item) > BATCH_BYTE_BUDGET);
       if (hopeless.length > 0) {
         await store.remove(hopeless.map((row) => row.seq));

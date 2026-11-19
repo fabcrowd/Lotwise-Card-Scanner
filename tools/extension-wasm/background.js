@@ -12,7 +12,7 @@ try {
 }
 
 import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset, pruneOldCaches } from "./lib/setup.js";
-import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
+import { loadDetector, detectCards } from "./lib/detect.js";
 import { acceptWholePhoto, displayedRegion, dropEdgeFragments, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { GALLERY_BUDGET_MS, MIN_GALLERY_SIDE, galleryPhotos, mergeAcrossPhotos } from "./lib/gallery.js";
@@ -20,12 +20,14 @@ import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, 
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard, warpQuad }       from "./lib/rectify.js";
 import { CORNER_MIN_CONF, cornerModelReady, loadCornerModel, predictCorners, validQuad } from "./lib/corners.js";
-import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
+import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, searchPair, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
 import { isTooSmallBox, smallPhotoCounts, tooSmallCard, canFrameTooSmall, keepTooSmall } from "./lib/tiny-card.js";
 import {
   acceptDrawnSender, correctionSource, drawnCardEntry, examGroupAllowed, examHoldAllowed, normalizeDrawnMessage, viewportRectToBitmapBox, viewportToPhotoBox, isSamePage,
 } from "./lib/draw-box.js";
 import { loadLot, saveLot } from "./lib/lot-session.js";
+import { saveDrawState, loadDrawState, saveHeldScan, loadHeldScan, clearHeldScan, pickRestored, settleRestore } from "./lib/worker-state.js";
+import { RELEASE_PAGE_URL, SELF_UPDATE_KEY, availableUpdate, checkForRelease, clearsUpdatedNote, compareVersions, decideSelfUpdate, guardWithReload, hasStoredSessionWork, isInstallerCopy, isNewerVersion, isUsableManifest, manualCheckAllowed, parseVersion, releaseCheckDue, settleAfterReload, waitSettled, workerIsIdle, FLUSH_WAIT_MAX_MS } from "./lib/self-update.js";
 import { acceptPageSender, removalStored, removeFromLot, scanMatches } from "./lib/overlay-remove.js";
 import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
@@ -66,6 +68,7 @@ import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
 import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
 import { chooseFallbackTab, isOwnPage, isTargetTopFrame } from "./lib/page-target.js";
+import { CARD_DATA_NOTE_KEY, dismissedNote, nextCardDataNote } from "./lib/card-data-note.js";
 import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner, readSourceCorner } from "./lib/ocr.js";
 import { choiceFromCorner, cornerRects, parseCornerText } from "./lib/corner-read.js";
@@ -87,6 +90,9 @@ import {
 } from "./lib/condition-pricing.js";
 
 // ─── state ───────────────────────────────────────────────────────────────────
+
+// The lowered detector floor for small, compressed listing photos and tiles (the default is 0.55).
+const LOW_CONF_THRESHOLD = 0.12;
 
 let _ready            = false;
 let _meta             = null;
@@ -128,7 +134,8 @@ const _uploader = createUploader({
   },
 });
 const _sharing = createSharing({ storage: local, store: _shareStore, uploader: _uploader, relayUrl: RELAY_URL });
-_sharing.enabled().then((on) => on && _uploader.flush()).catch((err) => console.error("[share] startup upload failed:", err?.message || err));
+// Kept so the self-update waits for it: a reload between the batch being posted and removed would send it twice.
+const _startupFlush = _sharing.enabled().then((on) => on && _uploader.flush()).catch((err) => console.error("[share] startup upload failed:", err?.message || err));
 
 // The key moves out of sync storage the first time the worker starts after the update.
 getPptKey().catch(() => {});
@@ -172,6 +179,7 @@ const _scannerWindow = createScannerOpener({
 const openOrFocusScanner = (targetTab, beforeCreate, onCreateFailed) => _scannerWindow.open(targetTab, beforeCreate, onCreateFailed);
 
 chrome.action.onClicked.addListener(async (clickedTab) => {
+  _activitySinceStart = true; // set before any await: the self-update check counts a clicked worker as busy
   // The tab the icon was clicked on is the one activeTab was granted for. Asking the browser for "the
   // current tab" instead could return the scanner window if that was the last thing focused.
   const activeTab = clickedTab ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
@@ -431,14 +439,68 @@ async function numberReaderReady() {
 const OWN_PAGE_ONLY = new Set([
   "checkReady", "startSetup", "detect", "priceCard", "scanPage", "scanState", "awaitScan",
   "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard", "setOverlayShown", "drawBox", "cancelDraw",
+  "selfUpdateState", "selfUpdateRestart", "selfUpdateSettings", "selfUpdateCheckNow", "selfUpdateDismiss", "selfUpdateOpenRelease",
+  "cardDataNote", "cardDataNoteDismiss",
 ]);
 
+// Messages that read or change what the worker keeps in session storage wait until a restarted worker has read it back.
+const NEEDS_RESTORED_STATE = new Set(["scanState", "awaitScan", "clearPageOverlay", "cancelDraw", "drawnBox", "overlayRemove"]);
+let _stateRestored = false;
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  _activitySinceStart = true; // any message means someone is using the extension: the self-update will not reload under them
+  if (_stateRestored || !NEEDS_RESTORED_STATE.has(msg.action)) return handleMessage(msg, sender, sendResponse);
+  _workerStateRestored.then(() => handleMessage(msg, sender, sendResponse));
+  return true;
+});
+
+function handleMessage(msg, sender, sendResponse) {
   if (OWN_PAGE_ONLY.has(msg.action) && !isOwnPage(sender, chrome.runtime.id, chrome.runtime.getURL(""))) {
     sendResponse({ error: "Not allowed." });
     return false;
   }
   switch (msg.action) {
+    case "selfUpdateState":
+      selfUpdateState().then(sendResponse);
+      return true;
+
+    case "selfUpdateRestart":
+      selfUpdateRestart().then(sendResponse);
+      return true;
+
+    case "selfUpdateSettings":
+      selfUpdateSettings().then(sendResponse);
+      return true;
+
+    case "selfUpdateCheckNow":
+      selfUpdateCheckNow().then(sendResponse);
+      return true;
+
+    case "selfUpdateDismiss":
+      selfUpdateDismiss(msg.version).then(sendResponse);
+      return true;
+
+    case "selfUpdateOpenRelease":
+      selfUpdateOpenRelease().then(sendResponse);
+      return true;
+
+    case "cardDataNote":
+      local.get(CARD_DATA_NOTE_KEY).then((note) => sendResponse({ ok: true, note: note ?? null }), () => sendResponse({ ok: true, note: null }));
+      return true;
+
+    case "cardDataNoteDismiss":
+      // On the applyBundle chain: a newer note being stored by applyBundleOnce is never overwritten by this read-and-write.
+      _applying = _applying.then(async () => {
+        try {
+          const next = dismissedNote(await local.get(CARD_DATA_NOTE_KEY));
+          if (next) await local.set(CARD_DATA_NOTE_KEY, next);
+          sendResponse({ ok: true });
+        } catch {
+          sendResponse({ ok: false });
+        }
+      });
+      return true;
+
     case "checkReady":
       // The service worker starts blank after Chrome suspends it. Models stay
       // in the cache, so a later visit should come back ready without another download.
@@ -481,7 +543,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case "clearPageOverlay":
-      _held = null; // a cleared lot must not come back from the held scan
+      _setHeld(null); // a cleared lot must not come back from the held scan
+      clearHeldScan(chrome.storage.session);
       relayToTab({ action: "relayClear" });
       sendResponse({ ok: true });
       return false;
@@ -534,7 +597,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "drawnBox":
       // From the top frame of the tab that started draw mode only, once: the box the user drew, over a photo of that tab.
       if (acceptDrawnSender(_drawTabId, sender)) {
-        _drawTabId = null;
+        _setDrawTabId(null);
         handleDrawnBox(msg, sender.tab);
       }
       return false;
@@ -583,7 +646,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Corrections, references, and search: the extension's own pages only (checked in the handler).
       if (Object.hasOwn(_ownPageActions, msg.action)) return handleOwnPageMessage(msg, sender, sendResponse);
   }
-});
+}
 
 async function handleOverlayRemove(index, tab, scanId) {
   const open = await chrome.runtime.getContexts({ contextTypes: ["TAB"], documentUrls: [chrome.runtime.getURL("popup.html")] });
@@ -607,7 +670,7 @@ async function handleOverlayRemove(index, tab, scanId) {
   let heldChanged = false;
   if (_held?.data && isSamePage(_held.url, tab.url) && scanMatches(scanId, _held.data.scanId)) {
     const held = removeFromLot(_held.data, index);
-    if (held) { _held.data = held; heldChanged = true; }
+    if (held) { _held.data = held; heldChanged = true; saveHeldScan(chrome.storage.session, _held); }
   }
   return removalStored({ savedChanged: Boolean(next), heldChanged });
 }
@@ -644,16 +707,24 @@ function sendRescanResult(data) {
 // The newest scan the popup asked for, kept in memory so a window closed mid-scan (or just after it) loses nothing:
 // the reopened popup asks scanState, then awaitScan, and gets the result or the wait for it.
 let _held = null;
+// Set once anything assigns _held (even to null): the restore at worker start then leaves it alone.
+let _heldTouched = false;
+function _setHeld(held) {
+  _held = held;
+  _heldTouched = true;
+}
 
 function runHeldScan(sendResponse, era) {
   const held = { running: true, startedAt: Date.now(), progress: null, data: null, url: null, finishedAt: null, waiters: [] };
-  _held = held;
+  _setHeld(held);
+  clearHeldScan(chrome.storage.session); // the older result is replaced; a worker stopped mid-scan must not bring it back
   handleScanPage(async (data) => {
     held.running = false;
     held.finishedAt = Date.now();
     held.data = data && !data.error ? data : null;
     if (held.data?.targetTabId != null) held.url = (await chrome.tabs.get(held.data.targetTabId).catch(() => null))?.url ?? null;
     if (held.data) { held.data = { ...held.data, tabUrl: held.url }; data = held.data; }
+    if (_held === held) saveHeldScan(chrome.storage.session, held);
     const reply = { data: held.data, url: held.url, finishedAt: held.finishedAt, error: data?.error };
     try { sendResponse(data); } catch { /* the popup is gone: the held copy is what the next one reads */ }
     for (const waiter of held.waiters.splice(0)) { try { waiter(reply); } catch { /* closed too */ } }
@@ -1011,14 +1082,7 @@ async function handleScanPage(sendResponse, era) {
                 }
                 photoBitmap = await createImageBitmap(bitmap, sx, sy, sw, sh);
               }
-              const previousThreshold = getConfThreshold();
-              setConfThreshold(0.12);
-              let detectedBoxes;
-              try {
-                detectedBoxes = await detectCards(photoBitmap);
-              } finally {
-                setConfThreshold(previousThreshold);
-              }
+              const detectedBoxes = await detectCards(photoBitmap, LOW_CONF_THRESHOLD);
               const imageW = photoBitmap.width;
               const imageH = photoBitmap.height;
               const shaped = filterPhotoDetections(detectedBoxes, imageW, imageH);
@@ -1394,10 +1458,240 @@ let _drawEra = null;
 // The tab draw mode is on, until it sends its one box or is cancelled; a drawnBox from anywhere else is ignored.
 let _drawTabId = null;
 
+// Draw mode (the tab and the era) survives the worker's idle stop: the page keeps its draw bar, and its box must still be accepted.
+let _drawTouched = false; // set once anything assigns the draw tab (even null): the restore then leaves it alone
+function _setDrawTabId(tabId) {
+  _drawTabId = tabId;
+  _drawTouched = true;
+  saveDrawState(chrome.storage.session, tabId === null ? null : { tabId, eraId: _drawEra?.id ?? null });
+}
+
 function cancelDrawBox() {
   const tabId = _drawTabId;
-  _drawTabId = null;
+  _setDrawTabId(null);
   if (tabId !== null) sendToTab(chrome, tabId, { action: "cancelDraw" }).catch(() => {});
+}
+
+// Read back what a stopped worker kept. State set since the worker started (to anything, null included) wins over the
+// stored value. This promise always resolves, so the messages waiting on it are always answered.
+const _workerStateRestored = (async () => {
+  await settleRestore(async () => {
+    const draw = await loadDrawState(chrome.storage.session);
+    const held = await loadHeldScan(chrome.storage.session);
+    if (!_drawTouched && draw) _drawEra = eraById(draw.eraId);
+    _drawTabId = pickRestored(_drawTouched, _drawTabId, draw?.tabId ?? null);
+    const stored = held ? { running: false, startedAt: held.finishedAt, progress: null, data: held.data, url: held.url, finishedAt: held.finishedAt, waiters: [] } : null;
+    _held = pickRestored(_heldTouched, _held, stored);
+  });
+  _stateRestored = true;
+})();
+
+// ─── self-update: an installed copy restarts itself onto newer files (rules in lib/self-update.js) ───
+// Inert unless this is the installer's copy (its fixed extension id). Any failure reading the disk means "nothing newer".
+
+// Set by the icon click handler and by every runtime message: someone is using the extension, so the worker is not idle.
+// A worker woken only by a tab event or the browser starting leaves it false.
+let _activitySinceStart = false;
+
+async function readDiskManifest() {
+  try {
+    const res = await fetch(chrome.runtime.getURL("manifest.json"), { cache: "no-store" });
+    if (!res.ok) return null;
+    const manifest = await res.json();
+    if (!isUsableManifest(manifest)) return null;
+    const worker = await fetch(chrome.runtime.getURL(manifest.background.service_worker), { cache: "no-store" });
+    await worker.body?.cancel().catch(() => {});
+    return worker.ok ? manifest : null;
+  } catch {
+    return null; // the installer may be swapping the folder right now
+  }
+}
+
+// Nothing open, running or stored that a reload would lose (session storage is cleared by a reload).
+async function selfUpdateIdle() {
+  await restorePopupWinId();
+  // Any open page of this extension (scanner, Settings, anything else); the worker's own context is not one.
+  const open = await chrome.runtime.getContexts({ contextTypes: ["TAB", "POPUP", "SIDE_PANEL", "OFFSCREEN_DOCUMENT", "DEVELOPER_TOOLS"] }).catch(() => null);
+  return workerIsIdle({
+    activity: _activitySinceStart,
+    openContextCount: open ? open.length : null,
+    popupWinId: _popupWinId,
+    scanRunning: Boolean(_held?.running),
+    drawActive: _drawTabId !== null,
+    storedWork: await hasStoredSessionWork(chrome.storage.session),
+  });
+}
+
+// The guard goes through the merge helper, so fields a release check saved in the meantime are kept.
+// An automatic reload looks at the activity flag once more, synchronously, after the guard is written: a click or message
+// that landed during the storage wait was not seen by the idle check. It then does not reload and takes the guard back, so
+// the scanner shows the normal "Restart now" banner (a kept guard would read as "a reload to this version failed").
+async function reloadSelf(from, to, reopen, automatic = false) {
+  await saveSelfUpdateFields(guardWithReload({}, { from, to, at: Date.now(), reopen }));
+  if (automatic && _activitySinceStart) {
+    await saveSelfUpdateFields({ reload: undefined, lastReloadAt: undefined });
+    return;
+  }
+  chrome.runtime.reload();
+}
+
+// After a reload that was asked for with `reopen`: the scanner window comes back on the active tab of the last focused normal window.
+async function reopenScannerAfterUpdate() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true, windowType: "normal" }).catch(() => []);
+  if (!tab || _isInternalUrl(tab.url)) return;
+  await openOrFocusScanner(tab);
+}
+
+async function selfUpdateAtStart() {
+  if (!isInstallerCopy(chrome.runtime.id)) return;
+  try {
+    await _workerStateRestored;
+    const running = chrome.runtime.getManifest().version;
+    let guard = (await local.get(SELF_UPDATE_KEY)) ?? null;
+    const settled = settleAfterReload(guard, running);
+    if (settled.succeeded) {
+      guard = settled.guard;
+      await local.set(SELF_UPDATE_KEY, guard);
+      if (settled.reopen) await reopenScannerAfterUpdate().catch((err) => console.warn("[BG] reopening the scanner failed:", err?.message || err));
+    }
+    const disk = await readDiskManifest();
+    const idle = disk ? await selfUpdateIdle() : false;
+    if (decideSelfUpdate({ runningVersion: running, diskManifest: disk, idle, guard, now: Date.now() }) === "reload") {
+      // The upload flush has its own network limits. A click or message may arrive during the waits: look again before reloading.
+      // A flush that has not settled in FLUSH_WAIT_MAX_MS counts as not idle: no reload this time, and the banner is not held up.
+      const flushed = await waitSettled(_startupFlush, FLUSH_WAIT_MAX_MS);
+      if (flushed && await selfUpdateIdle()) await reloadSelf(running, disk.version, false, true);
+    }
+  } catch (err) {
+    console.warn("[BG] self-update check failed:", err?.message || err);
+  }
+}
+const _selfUpdateStarted = selfUpdateAtStart();
+
+// The scanner window asks for this when it opens. It never starts a reload itself.
+// It answers from what is stored; a release check that is due runs after the answer and shows at the next opening.
+async function selfUpdateState() {
+  const none = { diskVersion: null, updatedTo: null, reloadFailed: false, latestVersion: null };
+  if (!isInstallerCopy(chrome.runtime.id)) return none;
+  try {
+    await _selfUpdateStarted;
+    const running = chrome.runtime.getManifest().version;
+    const guard = (await local.get(SELF_UPDATE_KEY)) ?? null;
+    const disk = await readDiskManifest();
+    const diskVersion = disk && isNewerVersion(disk.version, running) ? disk.version : null;
+    const updatedTo = typeof guard?.updatedTo === "string" ? guard.updatedTo : null;
+    if (clearsUpdatedNote(updatedTo, diskVersion)) await saveSelfUpdateFields({ updatedTo: undefined }); // the note shows once, and only when the scanner will show it
+    if (releaseCheckDue(guard?.lastCheckAt, Date.now())) runReleaseCheck().catch(() => {});
+    const latestVersion = availableUpdate({ latestVersion: guard?.latestVersion, runningVersion: running, diskVersion: disk?.version ?? null, dismissedVersion: guard?.dismissedVersion });
+    return { diskVersion, updatedTo, reloadFailed: diskVersion !== null && compareVersions(guard?.reload?.to, diskVersion) === 0, latestVersion };
+  } catch {
+    return none;
+  }
+}
+
+// Stores just these fields in the record, on top of what is stored now (the check, a dismissal and the reload guard share it).
+async function saveSelfUpdateFields(fields) {
+  const current = (await local.get(SELF_UPDATE_KEY)) ?? {};
+  await local.set(SELF_UPDATE_KEY, { ...current, ...fields });
+}
+
+// One release check at a time; a second caller gets the one in flight.
+let _releaseCheck = null;
+function runReleaseCheck() {
+  _releaseCheck ??= (async () => {
+    try {
+      const guard = (await local.get(SELF_UPDATE_KEY)) ?? {};
+      return await checkForRelease({ guard, fetchFn: (url, init) => fetch(url, init), now: () => Date.now(), save: saveSelfUpdateFields });
+    } catch {
+      return { ok: false, guard: {} };
+    } finally {
+      _releaseCheck = null;
+    }
+  })();
+  return _releaseCheck;
+}
+
+// The Settings page's view: read-only (it must not use up the "updated" note), and no check is started.
+async function selfUpdateSettings() {
+  if (!isInstallerCopy(chrome.runtime.id)) return { installer: false };
+  try {
+    await _selfUpdateStarted;
+    const running = chrome.runtime.getManifest().version;
+    const guard = (await local.get(SELF_UPDATE_KEY)) ?? null;
+    const disk = await readDiskManifest();
+    return {
+      installer: true,
+      runningVersion: running,
+      latestVersion: availableUpdate({ latestVersion: guard?.latestVersion, runningVersion: running, diskVersion: disk?.version ?? null, dismissedVersion: null }),
+      lastCheckedAt: Number.isFinite(guard?.lastCheckAt) ? guard.lastCheckAt : null,
+      lastCheckOk: typeof guard?.lastCheckOk === "boolean" ? guard.lastCheckOk : null,
+    };
+  } catch {
+    return { installer: false };
+  }
+}
+
+// The Settings page's "Check now": runs a check unless one ran within the last minute (then the stored result is answered).
+async function selfUpdateCheckNow() {
+  const failed = { ok: false, latestVersion: null, checkedAt: null };
+  if (!isInstallerCopy(chrome.runtime.id)) return failed;
+  try {
+    await _selfUpdateStarted;
+    const running = chrome.runtime.getManifest().version;
+    let guard = (await local.get(SELF_UPDATE_KEY)) ?? {};
+    let ok = guard.lastCheckOk === true;
+    if (manualCheckAllowed(guard.lastCheckAt, Date.now())) {
+      const result = await runReleaseCheck();
+      ok = result.ok;
+      guard = result.guard;
+    }
+    const disk = await readDiskManifest();
+    return {
+      ok,
+      latestVersion: availableUpdate({ latestVersion: guard.latestVersion, runningVersion: running, diskVersion: disk?.version ?? null, dismissedVersion: null }),
+      checkedAt: Number.isFinite(guard.lastCheckAt) ? guard.lastCheckAt : null,
+    };
+  } catch {
+    return failed;
+  }
+}
+
+// "Not now" in the scanner: that version is not offered there again (a newer one is).
+async function selfUpdateDismiss(version) {
+  if (!isInstallerCopy(chrome.runtime.id) || parseVersion(version) === null) return { ok: false };
+  try {
+    await saveSelfUpdateFields({ dismissedVersion: version });
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// "Get the update": the page opened is the fixed release page; the message carries no address.
+async function selfUpdateOpenRelease() {
+  if (!isInstallerCopy(chrome.runtime.id)) return { ok: false };
+  try {
+    await chrome.tabs.create({ url: RELEASE_PAGE_URL });
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// The scanner's Restart button. Checks everything again; the scanner window is reopened after the reload.
+async function selfUpdateRestart() {
+  if (!isInstallerCopy(chrome.runtime.id)) return { ok: false };
+  try {
+    await _selfUpdateStarted;
+    const running = chrome.runtime.getManifest().version;
+    const guard = (await local.get(SELF_UPDATE_KEY)) ?? null;
+    const disk = await readDiskManifest();
+    if (!disk || !isNewerVersion(disk.version, running) || compareVersions(guard?.reload?.to, disk.version) === 0) return { ok: false };
+    await reloadSelf(running, disk.version, true);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
 }
 
 async function startDrawBox(msg) {
@@ -1410,13 +1704,13 @@ async function startDrawBox(msg) {
     }
     if (!tab) return { error: "No scannable tab. Open a webpage first." };
     _drawEra = eraById(msg.era);
-    _drawTabId = tab.id;
+    _setDrawTabId(tab.id);
     await sendToTab(chrome, tab.id, { action: "startDraw" });
     // The page may be in another window than the popup: bring it forward so the user can draw on it.
     chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     return { ok: true };
   } catch (err) {
-    _drawTabId = null;
+    _setDrawTabId(null);
     console.error("[BG] draw mode failed:", err?.message || err);
     return { error: "Lotwise cannot draw on this tab." };
   }
@@ -2012,6 +2306,15 @@ async function applyBundleOnce() {
   console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }), "| card check:", _photoCheck ? (stored?.check ? "bundle" : "packaged") : "off");
   if (adapter) console.log("[BG] photo adapter in use: rank", adapter.rank, "sha", stored.manifest.assets.adapter.sha256.slice(0, 8), "seq", stored.manifest.seq);
   else console.log("[BG] photo adapter not in use:", stored ? "the bundle has none" : "no bundle stored yet");
+  if (stored) {
+    try {
+      const prev = await local.get(CARD_DATA_NOTE_KEY);
+      const note = nextCardDataNote(prev, { seq: stored?.manifest?.seq, cards: merged?.meta, now: Date.now() });
+      if (note) await local.set(CARD_DATA_NOTE_KEY, note);
+    } catch (err) {
+      console.error("[BG] card data note not stored:", err?.message || err);
+    }
+  }
 }
 
 // At most one check a day (lib/bundle.js); nothing about the user is sent.
@@ -2108,10 +2411,7 @@ async function withReferenceHit(embedding, hits, rawTop = hits[0]?.score ?? 0, h
 // The normal (adapted, when a photo adapter is live) hits, and the raw ones the gate also scores. They are the
 // same array when no adapter is live.
 async function searchBoth(embedding) {
-  const penalty = await lookalikePenaltyInUse();
-  const hits = physicalHits(searchCatalog(embedding, 20, { penalty }), _meta);
-  const rawHits = adapterActive() ? physicalHits(searchCatalog(embedding, 20, { penalty, raw: true }), _meta) : hits;
-  return { hits, rawHits };
+  return searchPair(embedding, _meta, { penalty: await lookalikePenaltyInUse() });
 }
 
 async function embedCrop(cropDataUrl) {
@@ -2196,17 +2496,17 @@ async function handleDetect(imageB64, sendResponse) {
     for (const { box, score } of rawBoxes) {
       const cardCanvas = await cardCanvasFor(bitmap, box);
       const embedding  = await embedSerial(cardCanvas);
-      const { hits: catalogHits, rawHits } = await searchBoth(embedding);
-      if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
+      const { hits: catalogHits, rawHits, rawTop } = await searchBoth(embedding);
+      if (isCardBack(embedding, rawTop)) {
         cards.push({ box, score, identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null });
         continue;
       }
-      const japanese = japaneseRead(await activeJapaneseCatalog(), embedding, { bestEn: rawHits[0]?.score ?? 0, height: box[3] - box[1] });
+      const japanese = japaneseRead(await activeJapaneseCatalog(), embedding, { bestEn: rawTop, height: box[3] - box[1] });
       if (japanese) {
         cards.push({ box, score, ...japanese });
         continue;
       }
-      const { hits }   = await withReferenceHit(embedding, catalogHits, rawHits[0]?.score ?? 0);
+      const { hits }   = await withReferenceHit(embedding, catalogHits, rawTop);
       const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, rawHits, _meta);
       const priceData  = abstain ? null : await getPrice(identity);
       const market_price  = priceData?.price  ?? null;
@@ -2599,21 +2899,15 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
 /** Card boxes from running the detector over overlapping tiles of a photo (2x2 and 3x3), in photo pixels. */
 async function detectTiled(bitmap) {
   const tiles = [];
-  const previousThreshold = getConfThreshold();
-  setConfThreshold(0.12);
-  try {
-    for (const n of [2, 3]) {
-      for (const rect of tileRects(bitmap.width, bitmap.height, n)) {
-        const piece = await createImageBitmap(bitmap, rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
-        try {
-          tiles.push({ rect, detections: await detectCards(piece) });
-        } finally {
-          piece.close();
-        }
+  for (const n of [2, 3]) {
+    for (const rect of tileRects(bitmap.width, bitmap.height, n)) {
+      const piece = await createImageBitmap(bitmap, rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
+      try {
+        tiles.push({ rect, detections: await detectCards(piece, LOW_CONF_THRESHOLD) });
+      } finally {
+        piece.close();
       }
     }
-  } finally {
-    setConfThreshold(previousThreshold);
   }
   return mergeTileDetections(tiles);
 }
@@ -2681,14 +2975,14 @@ async function confirmContext(cardCanvas, capHeight) {
 
 async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = sourceHeight) {
   const embedding = await embedSerial(cardCanvas);
-  const { hits: catalogHits, rawHits } = await searchBoth(embedding);
-  seen.catalogTop = rawHits[0]?.score ?? null;
-  if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
+  const { hits: catalogHits, rawHits, rawTop } = await searchBoth(embedding);
+  seen.catalogTop = rawHits.length ? rawTop : null;
+  if (isCardBack(embedding, rawTop)) {
     return { identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null, price_grid: null };
   }
   // A card that resembles a Japanese card more than any English one is asked about with Japanese candidates first. It is
   // never confirmed here, so the saved-correction memory, the number reader and the title read are skipped for it.
-  const japanese = japaneseRead(await activeJapaneseCatalog(), embedding, { bestEn: rawHits[0]?.score ?? 0, height: sourceHeight });
+  const japanese = japaneseRead(await activeJapaneseCatalog(), embedding, { bestEn: rawTop, height: sourceHeight });
   if (japanese) {
     seen.ranked = rankedIds(catalogHits);
     return { ...japanese, nearest: closestIds(catalogHits), ranked: seen.ranked };
@@ -2696,7 +2990,7 @@ async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = so
   // The user said when these cards are from: the name, the set choices and the closest cards offered all come from that era's rows,
   // so a modern card that outscores every printing from the era can neither name the card nor be suggested for it.
   const inEraHits = era ? eraHits(embedding, _meta, era) : null;
-  const { hits, referencedId, memory, skip } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0, capHeight);
+  const { hits, referencedId, memory, skip } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawTop, capHeight);
   seen.referencedId = referencedId;
   seen.skippedBefore = Boolean(skip);
   seen.memory = memory;

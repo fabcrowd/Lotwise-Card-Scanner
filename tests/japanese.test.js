@@ -363,7 +363,7 @@ test('the Japanese catalog loads from the setting, expecting the recognizer and 
 test('a scan and a detect read call japaneseRead after the card-back check and before the English reads', () => {
   const scan = background.slice(background.indexOf('async function recognizeWith'));
   assert.ok(scan.indexOf('isCardBack(') < scan.indexOf('japaneseRead(') && scan.indexOf('japaneseRead(') < scan.indexOf('withReferenceHit('));
-  assert.match(scan, /japaneseRead\(await activeJapaneseCatalog\(\), embedding, \{ bestEn: rawHits\[0\]\?\.score \?\? 0, height: sourceHeight \}\)/);
+  assert.match(scan, /japaneseRead\(await activeJapaneseCatalog\(\), embedding, \{ bestEn: rawTop, height: sourceHeight \}\)/);
   const detect = background.slice(background.indexOf('async function handleDetect'));
   assert.ok(detect.indexOf('isCardBack(') < detect.indexOf('japaneseRead(') && detect.indexOf('japaneseRead(') < detect.indexOf('withReferenceHit('));
   assert.match(detect, /height: box\[3\] - box\[1\]/);

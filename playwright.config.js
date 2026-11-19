@@ -13,12 +13,12 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/draw-box.spec.js', '**/overlay-remove.spec.js', '**/check-live.spec.js', '**/japanese-cards.spec.js'],
+      testIgnore: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/draw-box.spec.js', '**/overlay-remove.spec.js', '**/worker-restart.spec.js', '**/self-update.spec.js', '**/check-live.spec.js', '**/japanese-cards.spec.js'],
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'extension',
-      testMatch: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/extension-wasm-popup.spec.js', '**/draw-box.spec.js', '**/overlay-remove.spec.js', '**/check-live.spec.js', '**/japanese-cards.spec.js'],
+      testMatch: ['**/extension-chrome.spec.js', '**/extension-visual.spec.js', '**/extension-wasm-popup.spec.js', '**/draw-box.spec.js', '**/overlay-remove.spec.js', '**/worker-restart.spec.js', '**/self-update.spec.js', '**/check-live.spec.js', '**/japanese-cards.spec.js'],
       timeout: 180_000,
       use: {
         headless: false,

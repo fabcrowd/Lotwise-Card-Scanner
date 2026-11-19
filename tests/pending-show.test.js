@@ -89,7 +89,7 @@ test('the toolbar button and a page-card click share one open-or-focus function;
   assert.equal((src('lib/scanner-window.js').match(/windows\.create\(/g) || []).length, 1, 'one place opens the scanner window');
   assert.match(bg, /createScannerOpener\(\{[^]{0,200}windows: chrome\.windows/);
   assert.match(bg, /const openOrFocusScanner = /);
-  assert.match(bg, /chrome\.action\.onClicked\.addListener\([^)]*\)\s*=>\s*\{[\s\S]{0,400}openOrFocusScanner\(/);
+  assert.match(bg, /chrome\.action\.onClicked\.addListener\([^)]*\)\s*=>\s*\{[\s\S]{0,600}openOrFocusScanner\(/);
   assert.match(bg, /case "overlayPick":[\s\S]{0,900}openOrFocusScanner\(/);
 });
 

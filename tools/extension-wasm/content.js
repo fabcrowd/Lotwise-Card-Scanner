@@ -440,13 +440,22 @@
     return keys;
   }
 
+  function _scheduleNewCardCheck() {
+    clearTimeout(_observerTimer);
+    _observerTimer = setTimeout(_checkNewCardSrcs, 500);
+  }
+
+  // An image added before its picture arrived (or given its src later) changes nothing in the DOM when it finishes,
+  // so the mutation observer never sees it again. Picture loads do not bubble: one capturing listener catches them all.
+  function _onPictureLoad(event) {
+    if (event.target?.tagName === 'IMG') _scheduleNewCardCheck();
+  }
+
   function startObserving() {
     _baselineSrcs = _loadedPictureKeys(); // re-baseline on every scan completion
     if (_observer) return;          // only wire up the observer once
-    _observer = new MutationObserver(() => {
-      clearTimeout(_observerTimer);
-      _observerTimer = setTimeout(_checkNewCardSrcs, 500);
-    });
+    window.addEventListener('load', _onPictureLoad, true);
+    _observer = new MutationObserver(_scheduleNewCardCheck);
     _observer.observe(document.body || document.documentElement, {
       childList: true,
       subtree:   true,
@@ -454,6 +463,7 @@
   }
 
   function stopObserving() {
+    window.removeEventListener('load', _onPictureLoad, true);
     if (_observer) {
       _observer.disconnect();
       _observer = null;

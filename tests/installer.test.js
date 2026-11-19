@@ -826,6 +826,18 @@ test('the build script gives both quiet commands the AppLaunched command, so /Q 
   assert.ok(!/QuietInstCmd=(""|<None>)?'/.test(build), 'an empty quiet command makes /Q fail with Error creating process <<None>>');
 });
 
+// A text pin (the build script cannot be run to the end without IExpress): the version file for the release is written
+// from the same $Version the exe is named with, as UTF-8 without a BOM, after the exe is in place.
+test('the build script writes dist\\lotwise-version.json from the exe version, without a BOM, and names the two release files', () => {
+  const build = readFileSync(path.join(repoRoot, 'scripts', 'build-installer.ps1'), 'utf8');
+  assert.ok(build.includes("Join-Path $RepoRoot 'dist\\lotwise-version.json'"));
+  assert.ok(build.includes(`('{"product":"Lotwise","version":"' + $Version + '"}')`));
+  assert.ok(build.includes('(New-Object System.Text.UTF8Encoding($false))'));
+  assert.ok(build.indexOf('lotwise-version.json') > build.indexOf("Move-Item -LiteralPath $Exe -Destination $Output"), 'written after the exe is built');
+  assert.ok(build.includes("'dist\\Lotwise-Setup-' + $Version + '.exe'"), 'the exe is named with the same $Version');
+  assert.match(build, /Write-Output "Release files for the GitHub release tagged installer: \$Output and \$VersionFile"/);
+});
+
 // The build script runs top to bottom, so these cases run a copy of it inside a throwaway repo layout.
 function withBuildRepo(run) {
   const base = mkdtempSync(path.join(tmpdir(), 'lotwise build '));

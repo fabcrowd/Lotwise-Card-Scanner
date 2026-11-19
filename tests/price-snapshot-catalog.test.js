@@ -69,14 +69,14 @@ test('bad byCatalog and stamped entries are dropped, never fatal; an oversized s
   assert.throws(() => parseSnapshot(JSON.stringify({ v: 1, prices: {}, byCatalog: {} })), /no date/);
 });
 
-test('byCatalog fills the missing Reverse Holofoil price of an ex12 card, with the snapshot\'s date', () => {
+test('byCatalog fills the missing Reverse Holofoil price of an ex12 card; a grid with its own priced printing keeps its own date', () => {
   const snapshot = parseSnapshot(FIXTURE);
   const filled = applyCatalogPrices(applySnapshot(tcgdexHoloOnly(), snapshot), snapshot, AERO_LM);
   assert.equal(filled.variants.reverseHolofoil.market, 162.49);
   assert.equal(filled.variants.reverseHolofoil.conditions.NM, 162.49);
   assert.equal(filled.variants.reverseHolofoil.conditions.LP, null);
   assert.equal(filled.variants.holofoil.market, 75.2, 'a TCGdex printing is not replaced by byCatalog');
-  assert.equal(filled.updatedAt, UPDATED);
+  assert.equal(filled.updatedAt, tcgdexHoloOnly().updatedAt, 'the grid keeps its own older date, not the snapshot\'s');
   assert.equal(filled.spreadRatio, 162.49 / 75.2);
   assert.equal(filled.source, 'tcgdex');
   // No TCGdex grid at all: the card gets its grid from byCatalog.
@@ -104,10 +104,33 @@ test('byCatalog leaves every other card, a richer grid and an undated snapshot a
 
 test('a byCatalog price from an old snapshot is stale, like any snapshot price', () => {
   const old = parseSnapshot(JSON.stringify({ ...JSON.parse(FIXTURE), updatedAt: '2026-09-01T00:00:00Z' }));
-  const filled = applyCatalogPrices(tcgdexHoloOnly(), old, AERO_LM);
+  const filled = applyCatalogPrices(null, old, AERO_LM);
   assert.equal(filled.updatedAt, '2026-09-01T00:00:00Z');
   assert.equal(isGridStale(filled, NOW), true);
-  assert.equal(isGridStale(applyCatalogPrices(tcgdexHoloOnly(), parseSnapshot(FIXTURE), AERO_LM), NOW), false);
+  assert.equal(isGridStale(applyCatalogPrices(null, parseSnapshot(FIXTURE), AERO_LM), NOW), false);
+});
+
+test('applyCatalogPrices dates the grid like applySnapshot: its own date with its own priced printing, else the snapshot\'s', () => {
+  const snapshot = parseSnapshot(FIXTURE);
+  const own = tcgdexHoloOnly().updatedAt;
+  // Own priced printing and a valid own date: the older TCGdex date stays, so the added price does not look fresh.
+  const kept = applyCatalogPrices(tcgdexHoloOnly(), snapshot, AERO_LM);
+  assert.equal(kept.variants.reverseHolofoil.market, 162.49);
+  assert.equal(kept.updatedAt, own);
+  // A newer own date is kept too.
+  const newer = { ...tcgdexHoloOnly(), updatedAt: '2026-10-30T00:00:00Z' };
+  assert.equal(applyCatalogPrices(newer, snapshot, AERO_LM).updatedAt, '2026-10-30T00:00:00Z');
+  // No grid: the snapshot's date.
+  assert.equal(applyCatalogPrices(null, snapshot, AERO_LM).updatedAt, UPDATED);
+  // No priced printing of its own (market 0 or absent): the snapshot's date.
+  const unpriced = { ...tcgdexHoloOnly(), variants: { holofoil: { productId: 83468, market: 0, conditions: { NM: null } } } };
+  assert.equal(applyCatalogPrices(unpriced, snapshot, AERO_LM).updatedAt, UPDATED);
+  const empty = { ...tcgdexHoloOnly(), variants: {} };
+  assert.equal(applyCatalogPrices(empty, snapshot, AERO_LM).updatedAt, UPDATED);
+  // No valid own date: the snapshot's date.
+  for (const bad of [undefined, null, '', 'yesterday']) {
+    assert.equal(applyCatalogPrices({ ...tcgdexHoloOnly(), updatedAt: bad }, snapshot, AERO_LM).updatedAt, UPDATED, String(bad));
+  }
 });
 
 test('an ex12 stamped card now confirms with the byCatalog Reverse Holofoil price', async () => {

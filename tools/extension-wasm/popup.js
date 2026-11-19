@@ -1,6 +1,7 @@
 import { truncationNote } from "./lib/page-scan.js";
 import { confTier, detectedVariant, editionNote, explainScanError, isSetConfirmed, lotValue, modelFileLabel, printingNote, quotedPrice, needsPrinting, fromSeveralPhotos, photoLabel, scanStatus, scanSummary, setRangeSpan, setRangeNote, sourceFooter, splitByRecognition, swapVersion, confirmGuess, readFromSmallCrop, lotCounts, lotEstimate, sureNote, formatUsd, chosenPrintingHasNoPrice, isIdentified, isStale, isSettledRow, staleDays, suggestedVariant, setRangeOf, needsEdition, editionVariant, LOT_EDITIONS } from "./lib/card-display.js";
 import { TOO_SMALL_ROW_TEXT } from "./lib/tiny-card.js";
+import { cardDataNoteText } from "./lib/card-data-note.js";
 import { DRAW_HINT_TEXT, drawnIndices, isSameLot, placeDrawnCard, replacedKind, restoredLotTabId } from "./lib/draw-box.js";
 import { withBoxKind } from "./lib/share-rows.js";
 // dev-only:start
@@ -9,6 +10,7 @@ import { drawnKind } from "./lib/drawn-examples-store.js";
 import { ERAS, eraById } from "./lib/era.js";
 import { downloadSizeText, missingAssets } from "./lib/setup.js";
 import { cropThumb, escHtml, guessOf, guessWithWhy, matchesLabel, renderPickList, renderUnrecognisedGroup, setMenuCorrection, thumbUrl } from "./lib/card-picker.js";
+import { AUTO_PRICE_RETRY_MS, retryAnswerLands, retryKey, wantsAutoRetry } from "./lib/price-retry.js";
 import { ALL_PRICED_TEXT, allPriced, doubleCheckText, pickPrintingHeading, pricedHeading, bulkPairs, bulkRememberedPairs, candidateView, candidatesOfCard, chooseState, confirmLabel, overlayStateOf, renderCandidateCards, renderChooseGroup, renderRemoveButton, renderSkipButton, renderSkippedGroup, renderSkippedRow } from "./lib/choose-flow.js";
 import { clearLot, loadLot, saveLot } from "./lib/lot-session.js";
 import { leftOutLabel, putBackCard, removeCard, removedCount, skipCard, skippedCount } from "./lib/skip.js";
@@ -1171,8 +1173,45 @@ function resetResults() {
 
 // The list is rebuilt on every pick and price update: an open hover preview re-checks what is under the pointer.
 function renderResults() {
-  try { renderResultsList(); } finally { applyPageLinked(); loupe?.refresh(); updateScanLabel(); }
+  try { renderResultsList(); } finally { applyPageLinked(); loupe?.refresh(); updateScanLabel(); scheduleAutoPriceRetries(); }
 }
+
+// A card the scan itself confirmed, whose price failed in the scan's own batch pricing, is asked for its price once more by
+// itself, AUTO_PRICE_RETRY_MS later. The retry goes through pickSet with no picked card, so it fetches the price only and
+// confirms nothing for the user and keeps the row's own identity. A row the user has started a lookup on (a pick, the set
+// menu or a version swap) never gets one, and a removed or skipped row neither. It waits while a picker or search is open.
+// An answer that arrives after the row changed card, was removed or skipped is dropped (retryAnswerLands).
+const _autoRetryTimers = new Map(); // retry key -> timer
+const _autoRetried = new Set();     // retry keys that already had their one retry
+const _userLookupRows = new Set();  // "scanId:idx" of rows the user started a lookup on in that scan
+const _rowKey = (scanId, idx) => `${scanId}:${idx}`;
+const _retryable = (card, scanId, idx) => wantsAutoRetry(card) && !_userLookupRows.has(_rowKey(scanId, idx));
+// The user started a lookup or swapped the version on this row: it gets no automatic retry for the rest of this scan, and one waiting is dropped.
+function markUserLookupRow(scanId, idx) {
+  _userLookupRows.add(_rowKey(scanId, idx));
+  const prefix = `${_rowKey(scanId, idx)}:`;
+  for (const [key, timer] of _autoRetryTimers) if (key.startsWith(prefix)) { clearTimeout(timer); _autoRetryTimers.delete(key); }
+}
+function scheduleAutoPriceRetries() {
+  const scan = _lastResult;
+  scan?.cards?.forEach((card, idx) => {
+    if (!_retryable(card, scan.scanId, idx)) return;
+    const id = card.identity.id;
+    const key = retryKey(scan.scanId, idx, id);
+    if (_autoRetried.has(key) || _autoRetryTimers.has(key)) return;
+    _autoRetryTimers.set(key, setTimeout(() => {
+      _autoRetryTimers.delete(key);
+      // A picker or search box is open: starting now would rebuild the list under the user's hands. The retry is not used up;
+      // the next render schedules it again.
+      if (_picker.size) return;
+      _autoRetried.add(key);
+      const now = _lastResult?.cards?.[idx];
+      if (_lastResult?.scanId !== scan.scanId || !_retryable(now, scan.scanId, idx) || now.identity.id !== id) return;
+      pickSet(idx, id, null, { auto: true });
+    }, AUTO_PRICE_RETRY_MS));
+  });
+}
+window.addEventListener("pagehide", () => { _autoRetryTimers.forEach(clearTimeout); _autoRetryTimers.clear(); });
 
 function renderResultsList() {
   const cards = _lastResult?.cards || [];
@@ -1959,6 +1998,7 @@ function onStripPick(idx, button) {
     saveSetCorrection(idx, value, "set-menu");
     pickSet(idx, value);
   } else if (kind === "version") {
+    markUserLookupRow(_lastResult.scanId, idx); // the user's own change of card: no automatic retry on this row any more
     const swapped = swapVersion(card, value);
     const swappedId = swapped.identity?.id;
     // A version printed in several sets has no id yet: the set pick that follows saves it.
@@ -2197,6 +2237,10 @@ function replaceCard(idx, next, { keepVariant = false } = {}) {
   // Focus on another row's Confirm button (moved there after a confirm) stays on that button through the re-render.
   const keptConfirm = document.activeElement?.matches?.("[data-confirm-best]") && Number(document.activeElement.dataset.idx) !== idx
     ? Number(document.activeElement.dataset.idx) : null;
+  // A search box the user is typing in keeps focus and caret through the re-render (the input is re-created).
+  const typing = document.activeElement?.matches?.(".picker-input") && resultsEl.contains(document.activeElement)
+    ? { row: document.activeElement.dataset.idx, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd, dir: document.activeElement.selectionDirection }
+    : null;
   const cards = _lastResult.cards.map((card, i) => (i === idx ? next : card));
   _lastResult = { ..._lastResult, cards };
   refreshStatus();
@@ -2207,7 +2251,11 @@ function replaceCard(idx, next, { keepVariant = false } = {}) {
     seedVariant(next, idx);
   }
   renderResults();
-  if (hadFocus && !resultsEl.contains(document.activeElement)) {
+  const search = typing ? resultsEl.querySelector(`.picker-input[data-idx="${typing.row}"]`) : null;
+  if (search) {
+    search.focus({ preventScroll: true });
+    search.setSelectionRange(typing.start, typing.end, typing.dir || "none");
+  } else if (hadFocus && !resultsEl.contains(document.activeElement)) {
     const kept = keptConfirm === null ? null : resultsEl.querySelector(`.choose-row[data-idx="${keptConfirm}"] [data-confirm-best]`);
     if (kept) kept.focus(); else focusOpener(idx, null, strip);
   }
@@ -2216,10 +2264,12 @@ function replaceCard(idx, next, { keepVariant = false } = {}) {
 }
 
 // picked is the catalog row the user chose from candidates or search; null when the set menu was used.
-async function pickSet(idx, id, picked = null) {
+// auto: the automatic retry of a failed lookup; it only fetches the price of a card the scan confirmed and never sets a confirmation, abstain, confidence or bestGuess.
+async function pickSet(idx, id, picked = null, { auto = false } = {}) {
   const scan = _lastResult;
   const card = scan?.cards?.[idx];
   if (!card) return;
+  if (!auto) markUserLookupRow(scan.scanId, idx);
   const token = ++_pickSeq;
   _pickToken.set(idx, token);
   // A new scan replaced the results, or the user picked again, while this price was loading.
@@ -2235,7 +2285,7 @@ async function pickSet(idx, id, picked = null) {
     replaceCard(idx, { ...card, ...unpriced, identity: picked, setChoices: [], setConfirmed: false, bestGuess: undefined, pricing: true });
     showMessage(`Getting price for ${label}…`);
   } else {
-    replaceCard(idx, { ...card, bestGuess: undefined, pricing: true, priceError: null });
+    replaceCard(idx, { ...card, ...(auto ? {} : { bestGuess: undefined }), pricing: true, priceError: null });
   }
   let resp;
   try {
@@ -2246,6 +2296,12 @@ async function pickSet(idx, id, picked = null) {
   }
   if (stale()) return;
   const current = _lastResult.cards[idx];
+  if (auto && !retryAnswerLands(current, id, _userLookupRows.has(_rowKey(scan.scanId, idx)))) {
+    // The row changed while the retry loaded (another version, removed, skipped, or a lookup of the user's): the answer is dropped.
+    // Only the pricing mark the retry set is undone, and only on a row still holding this card; a swapped row came with its own.
+    if (current?.identity?.id === id && current.pricing === true) replaceCard(idx, { ...current, pricing: false, priceError: card.priceError });
+    return;
+  }
   if (!resp || resp.error) {
     const error = resp?.error || "Couldn't get a price. Try again.";
     replaceCard(idx, { ...current, ...unpriced, pricing: false, priceError: error });
@@ -2253,12 +2309,13 @@ async function pickSet(idx, id, picked = null) {
     return;
   }
   const { market_price, price_variant, price_grid } = resp;
+  // The automatic retry keeps the row's own identity: the scan's batch pricing only ever filled in prices.
+  const identity = auto && !picked ? current.identity : resp.identity;
   replaceCard(idx, {
     ...current,
-    identity: resp.identity,
-    ...stampedPrices({ ...current, identity: resp.identity }, { market_price, price_variant, price_grid }),
-    setConfirmed: true,
-    userConfirmed: true,
+    identity,
+    ...stampedPrices({ ...current, identity }, { market_price, price_variant, price_grid }),
+    ...(auto && !picked ? {} : { setConfirmed: true, userConfirmed: true }),
     // A card the scanner gave up on is still a card the user named.
     ...(picked ? { abstain: false, confidence: 1 } : {}),
     pricing: false,
@@ -2585,7 +2642,81 @@ loupe = createLoupe({
   reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
 });
 
+/* ─── Update notice (installer copy only: the background answers "nothing" in every other build) ─── */
+
+const updateNotice = document.getElementById("update-notice");
+const updateText = document.getElementById("update-text");
+const updateAction = document.getElementById("update-action");
+const updateSkip = document.getElementById("update-skip");
+
+function showUpdateNotice(text, buttonLabel, onClick, skipLabel, onSkip) {
+  updateText.textContent = text;
+  updateAction.hidden = !buttonLabel;
+  updateAction.textContent = buttonLabel || "";
+  updateAction.onclick = onClick || null;
+  updateSkip.hidden = !skipLabel;
+  updateSkip.textContent = skipLabel || "";
+  updateSkip.onclick = onSkip || null;
+  updateNotice.hidden = false;
+}
+
+async function showSelfUpdateNotice() {
+  const state = await chrome.runtime.sendMessage({ action: "selfUpdateState" }).catch(() => null);
+  if (!state) return;
+  if (state.diskVersion) {
+    if (state.reloadFailed) {
+      showUpdateNotice(`Lotwise ${state.diskVersion} is installed but could not start by itself. Open chrome://extensions and click the reload arrow on Lotwise.`);
+    } else {
+      showUpdateNotice(
+        `Lotwise ${state.diskVersion} is installed. Restart Lotwise to finish updating. Restarting clears the current scan and your saved lots.`,
+        "Restart now",
+        async () => {
+          updateAction.disabled = true;
+          const reply = await chrome.runtime.sendMessage({ action: "selfUpdateRestart" }).catch(() => null);
+          if (reply?.ok === false) updateAction.disabled = false; // nothing was restarted: the button stays usable
+        },
+      );
+    }
+  } else if (state.updatedTo) {
+    showUpdateNotice(`Lotwise was updated to ${state.updatedTo}.`, "Dismiss", () => { updateNotice.hidden = true; });
+  } else if (state.latestVersion) {
+    const version = state.latestVersion;
+    showUpdateNotice(
+      `Lotwise ${version} is available.`,
+      "Get the update",
+      () => { chrome.runtime.sendMessage({ action: "selfUpdateOpenRelease" }).catch(() => {}); },
+      "Not now",
+      () => {
+        updateNotice.hidden = true;
+        chrome.runtime.sendMessage({ action: "selfUpdateDismiss", version }).catch(() => {});
+      },
+    );
+  }
+}
+
 /* ─── Init ─── */
+
+showSelfUpdateNotice().catch(() => {});
+
+/* ─── Card data note: new catalog cards arrived with the daily data bundle ─── */
+
+const carddataNotice = document.getElementById("carddata-notice");
+const carddataText = document.getElementById("carddata-text");
+const carddataOk = document.getElementById("carddata-ok");
+
+async function showCardDataNote() {
+  const reply = await chrome.runtime.sendMessage({ action: "cardDataNote" }).catch(() => null);
+  const text = cardDataNoteText(reply?.note);
+  if (!text) return;
+  carddataText.textContent = text;
+  carddataOk.onclick = () => {
+    carddataNotice.hidden = true;
+    chrome.runtime.sendMessage({ action: "cardDataNoteDismiss" }).catch(() => {});
+  };
+  carddataNotice.hidden = false;
+}
+
+showCardDataNote().catch(() => {});
 
 (async () => {
   // A click on a page card may have opened this window. The record is taken now, so its 10 s age check runs at start-up

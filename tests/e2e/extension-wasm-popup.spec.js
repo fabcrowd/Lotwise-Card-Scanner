@@ -3577,6 +3577,192 @@ test.describe('Consumer extension popup', () => {
       : prev(msg));
   }, id);
 
+  // Scans for the automatic-retry tests: the batch price of the card at index 0 failed, as the scan reports it (priceError).
+  const FAILED_BATCH = "Couldn't get a price. Try again.";
+  const retryUrl = (name) => `http://127.0.0.1:8765/auto-retry-${name}`;
+  const retryCleanup = async (page) => {
+    await page.evaluate(() => chrome.storage.session.remove('lotSessions'));
+    await page.close();
+  };
+
+  test('a card the scan confirmed whose batch price failed is priced by itself about 5 s later, and is not marked as confirmed by the user', async () => {
+    const page = await popupWithChoose(() => ({
+      cards: [{ identity: { id: 'a-1', name: 'Pidgey', set: 'Jungle', setCode: 'base2', number: '57' }, confidence: 0.95, abstain: false, market_price: null,
+        priceError: "Couldn't get a price. Try again.", box: [0, 0, 1, 1] }],
+      priced: { 'a-1': { identity: { id: 'a-1', name: 'Pidgey', set: 'Jungle', setCode: 'base2', number: '57' }, market_price: 3, price_variant: 'normal',
+        price_grid: { source: 'pokemontcg', variants: { normal: { market: 3, conditions: { NM: 3 } } } } } },
+    }), { ok: true }, { tabUrl: retryUrl('scan-confirmed') });
+    try {
+      const price = page.locator('.card-row[data-idx="0"] .card-price');
+      await expect(price).toHaveText('—');
+      await expect(price).toHaveAttribute('title', FAILED_BATCH);
+      expect(await page.evaluate(() => window.__priceCalls.filter((id) => id === 'a-1').length)).toBe(0);
+      // No click from here on: the retry fetches the price by itself.
+      await expect(price).toHaveText('$3.00', { timeout: 15000 });
+      expect(await page.evaluate(() => window.__priceCalls.filter((id) => id === 'a-1').length)).toBe(1);
+      // Nothing was confirmed for the user: no saved correction, and the saved row carries no userConfirmed flag.
+      expect(await page.evaluate(() => window.__sent)).toEqual([]);
+      await expect.poll(() => page.evaluate(async () => JSON.stringify((await chrome.storage.session.get('lotSessions')).lotSessions || {})), { timeout: 10000 })
+        .toContain('"market_price":3');
+      const saved = await page.evaluate(async () => JSON.stringify((await chrome.storage.session.get('lotSessions')).lotSessions || {}));
+      expect(saved).not.toContain('"userConfirmed":true');
+      expect(saved).not.toContain('"setConfirmed":true');
+    } finally {
+      await retryCleanup(page);
+    }
+  });
+
+  test('a low-certainty guess whose batch price failed stays unconfirmed and unpriced, and is not retried by itself', async () => {
+    const page = await popupWithChoose((crop, arts) => ({
+      cards: [{ identity: { id: 'a-1', name: 'Pidgey', set: 'Jungle', setCode: 'base2', number: '57' }, abstain: false, unsure: true, lowCertainty: true, confidence: 0.3,
+        market_price: null, priceError: "Couldn't get a price. Try again.", candidates: [{ id: 'a-1', name: 'Pidgey', set: 'Jungle', setCode: 'base2', number: '57', imageUrl: arts[0] }],
+        crop, box: [0, 0, 1, 1] }],
+      priced: { 'a-1': { identity: { id: 'a-1', name: 'Pidgey', set: 'Jungle', setCode: 'base2', number: '57' }, market_price: 3, price_variant: 'normal',
+        price_grid: { source: 'pokemontcg', variants: { normal: { market: 3, conditions: { NM: 3 } } } } } },
+    }), { ok: true }, { tabUrl: retryUrl('guess') });
+    try {
+      await expect(page.locator('.choose-toggle')).toHaveText('To confirm (1)');
+      const callsAfterScan = await page.evaluate(() => window.__priceCalls.length);
+      await page.waitForTimeout(7000);
+      // Still a question for the user: in Choose, no row confirmed, no correction saved, and no price request after the scan.
+      await expect(page.locator('.choose-toggle')).toHaveText('To confirm (1)');
+      await expect(page.locator('.choose-row')).toHaveCount(1);
+      await expect(page.locator('.choose-row .card-name')).toHaveText('Card 1');
+      expect(await page.evaluate(() => window.__sent)).toEqual([]);
+      expect(await page.evaluate(() => window.__priceCalls.length)).toBe(callsAfterScan);
+    } finally {
+      await retryCleanup(page);
+    }
+  });
+
+  test('a user pick whose price lookup fails shows its error and is not retried by itself', async () => {
+    const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: retryUrl('own-page'), autoScan: false });
+    try {
+      await expect(page.locator('.card-row')).toHaveCount(0);
+      await page.evaluate(() => { const b = document.getElementById('btn-scan'); b.disabled = false; b.click(); });
+      await expect(page.locator('.choose-toggle')).toHaveText('To confirm (4)');
+      await page.evaluate(() => {
+        const prev = chrome.runtime.sendMessage;
+        window.__lookups = 0;
+        chrome.runtime.sendMessage = (msg) => {
+          if (msg?.action !== 'priceCard' || msg.id !== 'a-1') return prev(msg);
+          window.__lookups += 1;
+          return Promise.resolve({ error: "Couldn't get a price. Try again." });
+        };
+      });
+      const before = await page.evaluate(() => window.__lookups);
+      await page.locator('.choose-row[data-idx="1"] .pick-choice[data-pick="a-1"]').click();
+      const price = page.locator('.card-row[data-idx="1"] .card-price');
+      await expect(price).toHaveText('—');
+      await expect(price).toHaveAttribute('title', "Couldn't get a price. Try again.");
+      const afterPick = await page.evaluate(() => window.__lookups);
+      expect(afterPick).toBe(before + 1);
+      await page.waitForTimeout(7000);
+      expect(await page.evaluate(() => window.__lookups)).toBe(afterPick);
+      await expect(price).toHaveText('—');
+    } finally {
+      await retryCleanup(page);
+    }
+  });
+
+  // Row 0: confirmed by the scan, its batch price failed, one other version on offer. Row 1: a card to choose, for a search box.
+  const retryTwoRows = (crop, arts) => {
+    const grid = (nm) => ({ source: 'pokemontcg', variants: { normal: { market: nm, conditions: { NM: nm } } } });
+    const pidgey = { id: 'a-1', name: 'Pidgey', set: 'Jungle', setCode: 'base2', number: '57', imageUrl: arts[0] };
+    const pidgeotto = { id: 'a-2', name: 'Pidgeotto', set: 'Jungle', setCode: 'base2', number: '22', imageUrl: arts[1], market_price: 6, price_variant: 'normal', price_grid: grid(6), setChoices: [] };
+    const rattata = { id: 'b-2', name: 'Rattata', set: 'Base Set', setCode: 'base1', number: '61', imageUrl: arts[2] };
+    return {
+      cards: [
+        { identity: pidgey, confidence: 0.95, abstain: false, market_price: null, priceError: "Couldn't get a price. Try again.", versionChoices: [pidgeotto], box: [0, 0, 1, 1] },
+        { identity: null, confidence: 0.3, abstain: true, candidates: [rattata], crop, box: [0, 0, 1, 1] },
+      ],
+      priced: { 'a-1': { identity: pidgey, market_price: 3, price_variant: 'normal', price_grid: grid(3) } },
+    };
+  };
+  // Answers the retry's price request for a-1 only when the test releases it, and counts the requests.
+  const holdRetryPrice = (page) => page.evaluate(() => {
+    const prev = chrome.runtime.sendMessage;
+    window.__held = 0;
+    chrome.runtime.sendMessage = (msg) => {
+      if (msg?.action !== 'priceCard' || msg.id !== 'a-1') return prev(msg);
+      window.__held += 1;
+      return new Promise((resolve) => {
+        window.__release = () => resolve({ identity: { id: 'a-1', name: 'Pidgey', set: 'Jungle', setCode: 'base2', number: '57' }, market_price: 3, price_variant: 'normal',
+          price_grid: { source: 'pokemontcg', variants: { normal: { market: 3, conditions: { NM: 3 } } } } });
+      });
+    };
+  });
+
+  test('a retry answer that lands after the user swapped the version is dropped: the row keeps the swapped version and its price', async () => {
+    const page = await popupWithChoose(retryTwoRows, { ok: true }, { tabUrl: retryUrl('swap') });
+    try {
+      await holdRetryPrice(page);
+      await expect.poll(() => page.evaluate(() => window.__held), { timeout: 12000 }).toBe(1);
+      await expandRow(page, 0);
+      await page.locator('.card-row[data-idx="0"]').getByRole('radiogroup', { name: 'Choose the version' }).getByRole('radio', { name: /Pidgeotto/ }).click();
+      const row = page.locator('.card-row[data-idx="0"]');
+      await expect(row.locator('.card-name')).toContainText('Pidgeotto');
+      await expect(row.locator('.card-price')).toHaveText('$6.00');
+      await page.evaluate(() => window.__release());
+      await page.waitForTimeout(500);
+      await expect(row.locator('.card-name')).toContainText('Pidgeotto');
+      await expect(row.locator('.card-price')).toHaveText('$6.00');
+      await expect(page.locator('#results .card-price', { hasText: '…' })).toHaveCount(0);
+      // The swapped row is a user lookup row: no second retry either.
+      await page.waitForTimeout(6500);
+      expect(await page.evaluate(() => window.__held)).toBe(1);
+    } finally {
+      await retryCleanup(page);
+    }
+  });
+
+  test('no retry starts while a search box is open; it runs once after the search closes', async () => {
+    const page = await popupWithChoose(retryTwoRows, { ok: true }, { tabUrl: retryUrl('search-open') });
+    try {
+      await holdRetryPrice(page);
+      const search = page.locator('.choose-row[data-idx="1"]');
+      await search.locator('[data-open-search]').click();
+      await search.locator('.picker-input').fill('rai');
+      await page.waitForTimeout(7000);
+      expect(await page.evaluate(() => window.__held)).toBe(0);
+      await expect(search.locator('.picker-input')).toHaveValue('rai');
+      await search.locator('[data-close-search]').click();
+      await expect.poll(() => page.evaluate(() => window.__held), { timeout: 12000 }).toBe(1);
+      await page.evaluate(() => window.__release());
+      await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$3.00');
+      await page.waitForTimeout(6500);
+      expect(await page.evaluate(() => window.__held)).toBe(1);
+    } finally {
+      await retryCleanup(page);
+    }
+  });
+
+  test('a search opened while the retry is loading keeps its focus, text and caret when the answer lands, and typing goes on', async () => {
+    const page = await popupWithChoose(retryTwoRows, { ok: true }, { tabUrl: retryUrl('search-during') });
+    try {
+      await holdRetryPrice(page);
+      await expect.poll(() => page.evaluate(() => window.__held), { timeout: 12000 }).toBe(1);
+      const search = page.locator('.choose-row[data-idx="1"]');
+      await search.locator('[data-open-search]').click();
+      await search.locator('.picker-input').fill('rai');
+      await search.locator('.picker-input').focus();
+      // The caret sits between "r" and "ai".
+      await page.evaluate(() => document.querySelector('.choose-row[data-idx="1"] .picker-input').setSelectionRange(1, 1));
+      await page.evaluate(() => window.__release());
+      await expect(page.locator('.card-row[data-idx="0"] .card-price')).toHaveText('$3.00');
+      const after = await page.evaluate(() => {
+        const input = document.querySelector('.choose-row[data-idx="1"] .picker-input');
+        return { exists: Boolean(input), value: input?.value ?? null, focused: Boolean(input) && document.activeElement === input,
+          start: input?.selectionStart ?? null, end: input?.selectionEnd ?? null };
+      });
+      expect(after).toEqual({ exists: true, value: 'rai', focused: true, start: 1, end: 1 });
+      await page.keyboard.type('x');
+      await expect(search.locator('.picker-input')).toHaveValue('rxai');
+    } finally {
+      await retryCleanup(page);
+    }
+  });
+
   test('11.6 review: a price still loading when the lot is cleared is asked for again by Undo, and lands', async () => {
     const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: LOT_URL });
     await expect(page.locator('.choose-toggle')).toHaveText('To confirm (4)');
@@ -3741,6 +3927,104 @@ test.describe('Consumer extension popup', () => {
     await page.close();
   });
 
+  // ─── box signals: what the scanner window tells the background when a box is drawn, removed or put back ───
+
+  test.describe('box signals sent by the scanner window', () => {
+    const boxUrl = (n) => `http://127.0.0.1:8765/lot-box-signal-${n}`;
+    const DRAWN = { crop: 'data:image/jpeg;base64,DRAWNCROP', share: { rows: ['drawn-share-row'] } };
+    const drawnMsg = (tabUrl) => ({
+      action: 'drawnCard', tabUrl, srcWidth: 10, srcHeight: 10,
+      card: { identity: { id: 'd-1', name: 'Drawn', set: 'Base', setCode: 'base1', number: '1' }, confidence: 0.9, abstain: false, box: [0, 0, 1, 1], drawn: true, ...DRAWN },
+    });
+
+    // Records every shareBoxSignal the popup sends (the popup sends them whether or not sharing is on).
+    async function recordBoxSignals(page) {
+      await page.evaluate(() => {
+        const inner = chrome.runtime.sendMessage;
+        window.__box = [];
+        chrome.runtime.sendMessage = async (msg) => {
+          if (msg?.action === 'shareBoxSignal') { window.__box.push(msg); return { ok: true }; }
+          return inner(msg);
+        };
+      });
+    }
+    const boxSignals = (page) => page.evaluate(() => window.__box);
+    const clearLot = (page) => page.evaluate(() => chrome.storage.session.remove('lotSessions'));
+
+    test('removing a scanned card sends one removed signal with its scan and index, then Put back sends one put-back', async () => {
+      const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: boxUrl(1) });
+      await recordBoxSignals(page);
+      await expandRow(page, 0);
+      await page.locator('.card-row[data-idx="0"] [data-remove-card]').click();
+      await expect(page.locator('#msg-bar .toast-action')).toHaveCount(1);
+      expect(await boxSignals(page)).toEqual([{ action: 'shareBoxSignal', source: 'removed', scanId: 'c', index: 0 }]);
+      await page.locator('#msg-bar .toast-action').click();
+      await expect(page.locator('.card-row[data-idx="0"]')).toBeVisible();
+      expect(await boxSignals(page)).toEqual([
+        { action: 'shareBoxSignal', source: 'removed', scanId: 'c', index: 0 },
+        { action: 'shareBoxSignal', source: 'put-back', scanId: 'c', index: 0 },
+      ]);
+      await clearLot(page);
+      await page.close();
+    });
+
+    test('skipping a card and putting it back sends no box signal', async () => {
+      const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: boxUrl(2) });
+      await recordBoxSignals(page);
+      await page.locator('.choose-row[data-idx="1"] [data-skip-card]').click();
+      await page.locator('.skipped-toggle').click();
+      await page.locator('.skipped-row[data-idx="1"] [data-put-back]').click();
+      await expect(page.locator('#msg-bar')).toHaveText('Put back. 4 to confirm.');
+      // The skip and the un-skip did reach the background, as their own messages.
+      expect(await page.evaluate(() => window.__sent.map((m) => [m.action, m.index]))).toEqual([['saveSkip', 1], ['unskip', 1]]);
+      expect(await boxSignals(page)).toEqual([]);
+      await clearLot(page);
+      await page.close();
+    });
+
+    test('a drawn card added to the scan on screen sends one drawn signal with the scan, its placed index and its crop and share', async () => {
+      const url = boxUrl(3);
+      const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: url });
+      await expect(toConfirmOf(page)).toHaveText('To confirm (4)');
+      await waitSaved(page, (st) => st?.cards?.length === 6); // the popup learns which page the list is about when it saves
+      await recordBoxSignals(page);
+      await bgSays(drawnMsg(url));
+      await expect(page.locator('#msg-bar')).toContainText('Box 7 added');
+      expect(await boxSignals(page)).toEqual([{ action: 'shareBoxSignal', source: 'drawn', scanId: 'c', index: 6, drawn: true, ...DRAWN }]);
+      await clearLot(page);
+      await page.close();
+    });
+
+    test('a drawn card with no scan on screen sends one drawn signal with no scan and index 0', async () => {
+      const url = boxUrl(4);
+      const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: url, autoScan: false });
+      await expect(page.locator('.card-row')).toHaveCount(0);
+      await recordBoxSignals(page);
+      await bgSays(drawnMsg(url));
+      await expect(page.locator('.card-row .card-name', { hasText: 'Drawn' })).toHaveCount(1);
+      expect(await boxSignals(page)).toEqual([{ action: 'shareBoxSignal', source: 'drawn', scanId: null, index: 0, drawn: true, ...DRAWN }]);
+      await clearLot(page);
+      await page.close();
+    });
+
+    test('removing a drawn card sends a removed signal that carries its crop and share', async () => {
+      const url = boxUrl(5);
+      const page = await popupWithChoose(chooseScan, { ok: true }, { tabUrl: url, autoScan: false });
+      await recordBoxSignals(page);
+      await bgSays(drawnMsg(url));
+      await expect(page.locator('.card-row[data-idx="0"] .card-name')).toContainText('Drawn');
+      await expandRow(page, 0);
+      await page.locator('.card-row[data-idx="0"] [data-remove-card]').click();
+      await expect(page.locator('#msg-bar .toast-action')).toHaveCount(1);
+      expect(await boxSignals(page)).toEqual([
+        { action: 'shareBoxSignal', source: 'drawn', scanId: null, index: 0, drawn: true, ...DRAWN },
+        { action: 'shareBoxSignal', source: 'removed', scanId: null, index: 0, drawn: true, ...DRAWN },
+      ]);
+      await clearLot(page);
+      await page.close();
+    });
+  });
+
   test('Confirm in the review panel still confirms when a row changed after the panel opened', async () => {
     const page = await popupWithChoose(chooseScan);
     await expect(page.locator('.choose-toggle')).toHaveText('To confirm (4)');
@@ -3772,5 +4056,54 @@ test.describe('Consumer extension popup', () => {
     await expect(again.locator('.card-row[data-idx="1"] .card-price')).toHaveText('$2.00–$10.00');
     await again.evaluate(() => chrome.storage.session.remove('lotSessions'));
     await again.close();
+  });
+
+  // ─── card data note: the line shown when a new data bundle brought new catalog cards ───
+
+  test.describe('card data note', () => {
+    async function openWithNote(note) {
+      const page = await context.newPage();
+      await page.goto(`chrome-extension://${extensionId}/popup.html`);
+      await page.evaluate((value) => (value === null
+        ? chrome.storage.local.remove('cardDataNote')
+        : chrome.storage.local.set({ cardDataNote: value })), note);
+      await page.reload();
+      await page.addStyleTag({ content: '#setup-overlay { display: none !important; }' });
+      return page;
+    }
+    const stored = (page) => page.evaluate(async () => (await chrome.storage.local.get('cardDataNote')).cardDataNote ?? null);
+
+    test('a fresh note is shown, and OK hides it and stores it as dismissed', async () => {
+      const page = await openWithNote({ seq: 5, count: 499, added: 499, sets: ['A', 'B', 'C'], at: Date.now(), dismissed: false });
+      try {
+        const notice = page.locator('#carddata-notice');
+        await expect(notice).toBeVisible();
+        await expect(page.locator('#carddata-text')).toHaveText('Card data updated: 499 new cards from the newest sets can now be recognized. Sets include A, B and C.');
+        await page.locator('#carddata-ok').click();
+        await expect(notice).toBeHidden();
+        await expect.poll(async () => (await stored(page))?.dismissed).toBe(true);
+        expect((await stored(page)).count).toBe(499);
+        await page.reload();
+        await expect(page.locator('#update-notice')).toBeHidden();
+        await expect(notice).toBeHidden();
+      } finally {
+        await page.evaluate(() => chrome.storage.local.remove('cardDataNote'));
+        await page.close();
+      }
+    });
+
+    test('a dismissed note, or none, leaves the block hidden', async () => {
+      for (const note of [{ seq: 5, count: 499, added: 0, sets: [], at: Date.now(), dismissed: true }, null]) {
+        const page = await openWithNote(note);
+        try {
+          // The popup asked for the note on load; give that answer time to arrive before judging "still hidden".
+          await page.evaluate(() => chrome.runtime.sendMessage({ action: 'cardDataNote' }));
+          await expect(page.locator('#carddata-notice')).toBeHidden();
+        } finally {
+          await page.evaluate(() => chrome.storage.local.remove('cardDataNote'));
+          await page.close();
+        }
+      }
+    });
   });
 });

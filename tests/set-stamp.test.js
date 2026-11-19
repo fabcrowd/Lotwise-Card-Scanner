@@ -205,6 +205,8 @@ test('the scanner settles stamps through applySetStamp and the popup shows the m
   const popup = readFileSync(new URL('../tools/extension-wasm/popup.js', import.meta.url), 'utf8');
   assert.match(popup, /stampFinishNote\(card\)/);
   // A pick re-prices the row through the same rule, and the note shows even with no finish to choose.
-  assert.match(popup, /\.\.\.stampedPrices\(\{ \.\.\.current, identity: resp\.identity \}, \{ market_price, price_variant, price_grid \}\)/);
+  assert.match(popup, /\.\.\.stampedPrices\(\{ \.\.\.current, identity \}, \{ market_price, price_variant, price_grid \}\)/);
+  // A user's pick (not the automatic retry) prices with the answer's identity; only the automatic retry keeps the row's own.
+  assert.match(popup, /const identity = auto && !picked \? current\.identity : resp\.identity;/);
   assert.match(popup, /if \(!chips\.length\) return stampOnly/);
 });

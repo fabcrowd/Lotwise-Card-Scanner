@@ -24,6 +24,8 @@ const ASCII_AT = {
   5489: "{", 5493: "j", 6624: " ",
 };
 
+// A card's number line is short; skipping longer lines keeps the slash-space replace cheap.
+const MAX_SPACED_SLASH_LINE = 200;
 const NUMBER = /([A-Z]{0,4})(\d{1,3})\/([A-Z]{0,4})(\d{2,3})/;
 const MAX_SET_TOTAL = 400;       // a larger printed total is a misread
 const SIZE_MIN = 0.95;           // catalog count vs printed total; secret rares push it up
@@ -188,7 +190,11 @@ export function parseCardNumber(lines) {
     .replace(/[Oo](?=[\d/])|(?<=[\d/])[Oo]/g, "0")
     .replace(/[Il|](?=[\d/])|(?<=[\d/])[Il|]/g, "1"));
   for (const fixed of fixedLines) {
-    const tokens = fixed.split(/\s+/).filter(Boolean);
+    // OCR often spaces the slash ("057 / 191"); read it as one token.
+    const spaced = fixed.length > MAX_SPACED_SLASH_LINE
+      ? fixed
+      : fixed.replace(/([a-z]*\d+)\s*\/\s*(?=[a-z]*\d)/gi, "$1/");
+    const tokens = spaced.split(/\s+/).filter(Boolean);
     for (const token of [...tokens, fixed.replace(/\s+/g, "")]) {
       const read = readNumberToken(token);
       if (read) return read;
