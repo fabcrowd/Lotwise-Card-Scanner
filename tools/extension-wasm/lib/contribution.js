@@ -6,6 +6,7 @@ import { ASSETS } from "./setup.js";
 import { EMBEDDING_VERSION } from "./embed.js";
 import { confTier } from "./card-display.js";
 import { splitOf } from "./photo-id.js";
+import { isJaId } from "./japanese.js";
 
 export const MAX_CARDS = 30;
 export const MAX_CROP_CHARS = 40000;
@@ -64,7 +65,8 @@ export function normalizeBox([x1, y1, x2, y2], width, height) {
 
 /** What the scanner said about a card row. */
 export function scannerOf(card) {
-  const cardId = card?.identity?.id ?? null;
+  // A Japanese card is never shared as a card answer; box rows (drawn, removed, put back) are still sent without a card id.
+  const cardId = isJaId(card?.identity?.id) ? null : card?.identity?.id ?? null;
   const confidence = Number.isFinite(card?.confidence) ? Math.min(1, Math.max(0, card.confidence)) : 0;
   return { cardId, confidence, stripe: cardId && !card?.abstain ? confTier(confidence) : "none" };
 }

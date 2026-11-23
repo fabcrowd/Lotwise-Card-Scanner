@@ -131,7 +131,7 @@ test.describe('Draw a box', () => {
     const r = cardRect(i);
     const drawn = { x1: r.x1 + 3, y1: r.y1 + 3, x2: r.x2 - 3, y2: r.y2 - 3 };
     await popup.locator('#btn-draw').click();
-    await page.waitForFunction(() => [...document.querySelectorAll('div')].some((d) => d.textContent === 'Drag a box around the card. Esc to cancel.'), null, { timeout: 10_000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('span')].some((d) => d.textContent === 'Drag a box around the card. Esc to cancel.'), null, { timeout: 10_000 });
     if (i === 0) await shot(page, 'during-draw.png');
     await page.mouse.move(drawn.x1, drawn.y1);
     await page.mouse.down();
@@ -206,11 +206,48 @@ test.describe('Draw a box', () => {
     await openPopup();
     await page.bringToFront();
     await popup.locator('#btn-draw').click();
-    const hint = () => page.evaluate(() => [...document.querySelectorAll('div')].some((d) => d.textContent === 'Drag a box around the card. Esc to cancel.'));
-    await page.waitForFunction(() => [...document.querySelectorAll('div')].some((d) => d.textContent === 'Drag a box around the card. Esc to cancel.'));
+    const hint = () => page.evaluate(() => [...document.querySelectorAll('span')].some((d) => d.textContent === 'Drag a box around the card. Esc to cancel.'));
+    await page.waitForFunction(() => [...document.querySelectorAll('span')].some((d) => d.textContent === 'Drag a box around the card. Esc to cancel.'));
     await page.keyboard.press('Escape');
     expect(await hint()).toBe(false);
+    await expect(popup.locator('#btn-draw')).toHaveAttribute('aria-pressed', 'false');
     await shot(page, 'esc-after.png');
+    await popup.close();
+    await page.close();
+  });
+
+  // Section 10: a plain click keeps draw mode, the hint bar's Cancel button leaves it, and the header crosshair is a toggle.
+  test('10: a click without a drag keeps draw mode; Cancel and the pressed crosshair leave it', async () => {
+    test.skip(Boolean(skip), skip);
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${HTTP_PORT}/lot`, { waitUntil: 'load' });
+    await openPopup();
+    await page.bringToFront();
+    const draw = popup.locator('#btn-draw');
+    const hintIs = (text) => page.evaluate((t) => [...document.querySelectorAll('span')].some((s) => s.textContent === t), text);
+    const cancelCount = () => page.evaluate(() => [...document.querySelectorAll('button')].filter((b) => b.textContent === 'Cancel').length);
+    await expect(draw).toHaveAttribute('aria-pressed', 'false');
+
+    await draw.click();
+    await expect(draw).toHaveAttribute('aria-pressed', 'true');
+    await page.waitForFunction(() => [...document.querySelectorAll('span')].some((s) => s.textContent === 'Drag a box around the card. Esc to cancel.'));
+    await page.mouse.click(600, 400); // a click, no drag: draw mode stays, the hint says what to do
+    await expect.poll(() => hintIs('Drag a box around the card.')).toBe(true);
+    expect(await cancelCount()).toBe(1);
+    await expect(draw).toHaveAttribute('aria-pressed', 'true');
+    await shot(page, 'click-keeps-draw.png');
+
+    const cancel = page.locator('button', { hasText: 'Cancel' });
+    await cancel.click(); // the hint bar's Cancel button
+    await expect.poll(cancelCount).toBe(0);
+    await expect(draw).toHaveAttribute('aria-pressed', 'false');
+
+    await draw.click();
+    await expect(draw).toHaveAttribute('aria-pressed', 'true');
+    await page.waitForFunction(() => document.querySelectorAll('button').length > 0 && [...document.querySelectorAll('button')].some((b) => b.textContent === 'Cancel'));
+    await draw.click(); // pressing the crosshair again cancels
+    await expect(draw).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(cancelCount).toBe(0);
     await popup.close();
     await page.close();
   });

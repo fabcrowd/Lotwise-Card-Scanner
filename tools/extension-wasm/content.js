@@ -17,13 +17,20 @@
   let _following   = false;
   // Scan index of the card the popup is asking about; its box is outlined until the pointer leaves that row.
   let _highlight   = null;
-  // Card frames drawn in the last pass (viewport rects). Every card has a small tag; its full label shows only while the pointer is on it; the
+  // Card frames drawn in the last pass (viewport rects). Every card has a small price chip; its name card shows only while the pointer is on it; the
   // canvas never takes the pointer, so that is a hit test against these on the page's own mousemove.
   let _targets     = [];
   let _hover       = null; // { target: index into _targets, index: scan index, rect: label rect }
   let _mouse       = null;
-  let _clickable   = []; // drawn tags and the full-size pill a click can land on: { rect, index } or { rect, url }
+  let _clickable   = []; // drawn chips, name cards, X and the full-size pill a click can land on: { rect, index }, { rect, remove } or { rect, fullSize: true }
   let _fullSize    = null; // { url } of a larger photo the scan could not read, offered on the page
+  let _sentHover   = null; // the card index the popup was last told the pointer is on (null: none)
+  let _cursorSaved = null; // { value }: the page root's own cursor, kept while the overlay makes it a pointer
+  let _closeHot    = false; // the pointer is on the hovered card's X
+  let _legendOpen  = false; // the first-scan legend is on screen (11.3)
+  let _legendAsked = false; // the stored "seen" answer was asked for: once per page
+  let _legendInside = false; // the legend was last drawn inside the photo, so a card hover or a timer closes it
+  let _legendTimer = 0;
 
   // The page elements (and their rects) of the last findCards, so a box can be pinned to the picture it came from.
   // Rects are in document coordinates so anchors from several scrolled screens can be matched at once.
@@ -107,6 +114,20 @@
     window.addEventListener('mousemove', onMouseMove, { passive: true });
     window.addEventListener('mouseout', onMouseOut, { passive: true });
     window.addEventListener('click', onClick, true);
+    window.addEventListener('pagehide', onLeavePage);
+    window.addEventListener('visibilitychange', onVisibility); // fires on document and bubbles to window
+  }
+
+  // The page is going away or hidden: the popup must not keep a card ringed for a pointer that can no longer move.
+  function onLeavePage() {
+    _mouse = null;
+    _hover = null;
+    _closeHot = false;
+    finishPass();
+  }
+
+  function onVisibility() {
+    if (document.visibilityState === 'hidden') onLeavePage();
   }
 
   function unfollowPage() {
@@ -117,11 +138,51 @@
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseout', onMouseOut);
     window.removeEventListener('click', onClick, true);
+    window.removeEventListener('pagehide', onLeavePage);
+    window.removeEventListener('visibilitychange', onVisibility);
     _clickable = [];
     _mouse = null;
     _hover = null;
     if (_raf) window.cancelAnimationFrame(_raf);
     _raf = 0;
+    finishPass();
+    _sentHover = null; // a later overlay sends its first hover, whatever the last one ended on
+  }
+
+  // What a pass leaves outside the canvas: the popup hears which card is hovered (only when that changes), and the page root
+  // cursor is a pointer exactly while the pointer is on something a click takes. The canvas never takes the pointer, so the
+  // cursor goes on the root and the page's own value comes back after.
+  function reportHover() {
+    const index = _hover ? _hover.index : null;
+    if (index === _sentHover) return;
+    _sentHover = index;
+    try {
+      chrome.runtime.sendMessage({ action: 'overlayHover', index }).catch(() => {});
+    } catch {
+      // The extension was reloaded under this page: nothing is listening any more.
+    }
+  }
+
+  function setPagePointer(on) {
+    const root = document.documentElement;
+    if (!root || !root.style) return;
+    if (on && _cursorSaved === null) {
+      _cursorSaved = { value: root.style.cursor || '' };
+      root.style.cursor = 'pointer';
+    } else if (!on && _cursorSaved !== null) {
+      root.style.cursor = _cursorSaved.value;
+      _cursorSaved = null;
+    }
+  }
+
+  function updateCursor() {
+    const over = Boolean(_shown && _mouse) && _clickable.some((c) => inRect(c.rect, _mouse) && (!c.photo || photoOnTop(c.photo, _mouse)));
+    setPagePointer(over);
+  }
+
+  function finishPass() {
+    reportHover();
+    updateCursor();
   }
 
   // Frames to keep redrawing after the layout changed: a site may size its photo from script a frame or more after
@@ -206,14 +267,64 @@
 
   function onMouseMove(e) {
     _mouse = { x: e.clientX, y: e.clientY };
-    if (hoveredTarget(_targets, _hover, _mouse) !== (_hover?.target ?? null)) scheduleDraw();
+    const closeHot = Boolean(_hover?.close) && inRect(_hover.close, _mouse);
+    if (hoveredTarget(_targets, _hover, _mouse) !== (_hover?.target ?? null) || closeHot !== _closeHot) scheduleDraw();
+    updateCursor();
   }
 
   // No relatedTarget: the pointer left the window, so no later mousemove will close the panel.
   function onMouseOut(e) {
     if (e.relatedTarget) return;
     _mouse = null;
+    updateCursor();
     if (_hover) scheduleDraw();
+  }
+
+  // True unless something that is not the photo (site UI: a menu, a sticky bar) is painted over it at this point. The overlay's
+  // own canvas is skipped; with no answer from the page the photo counts as topmost. A card pinned to the document has no photo.
+  // Site UI is an element unrelated to the photo that is interactive or has text of its own; a transparent, text-free layer
+  // (a zoom or lightbox hit area, an empty link) belongs to the photo, and so does anything that holds it, through shadow roots too.
+  const INTERACTIVE_TAGS = new Set(['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']);
+  const INTERACTIVE_ROLES = new Set(['button', 'menu', 'menuitem', 'dialog', 'alertdialog', 'listbox', 'option', 'tab', 'slider', 'combobox']);
+
+  function relatedToPhoto(el, top) {
+    if (top === el || el.contains?.(top) || top.contains?.(el)) return true;
+    for (let node = el; node; node = node.parentElement || node.getRootNode?.()?.host) if (node === top) return true;
+    return false;
+  }
+
+  // Text of its own, found by a walk that stops at the first visible text or after TEXT_PROBE_CAP text nodes, so a big
+  // unrelated container costs a bounded amount on every mousemove (past the cap it counts as text-free).
+  const TEXT_PROBE_CAP = 200;
+
+  // Text inside these is code or hidden markup, never something a person reads.
+  const HIDDEN_TEXT_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
+
+  function hasVisibleText(node) {
+    if (typeof document.createTreeWalker !== 'function') return String(node.textContent || '').trim() !== '';
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let seen = 0; seen < TEXT_PROBE_CAP; seen++) {
+      const text = walker.nextNode();
+      if (!text) return false;
+      if (HIDDEN_TEXT_TAGS.has(String(text.parentElement?.tagName || '').toUpperCase())) continue;
+      if (String(text.nodeValue || '').trim() !== '') return true;
+    }
+    return false;
+  }
+
+  function isSiteUi(node) {
+    const tag = String(node.tagName || '').toUpperCase();
+    const hasText = hasVisibleText(node);
+    const editable = node.getAttribute?.('contenteditable');
+    return hasText || INTERACTIVE_TAGS.has(tag)
+      || (editable != null && editable !== 'false')
+      || INTERACTIVE_ROLES.has(String(node.getAttribute?.('role') || '').toLowerCase());
+  }
+
+  function photoOnTop(el, point) {
+    if (!el || !point || typeof document.elementsFromPoint !== 'function') return true;
+    const top = document.elementsFromPoint(point.x, point.y).find((node) => node !== canvas);
+    return !top || relatedToPhoto(el, top) || !isSiteUi(top);
   }
 
   function inRect(rect, point) {
@@ -234,6 +345,7 @@
     targets.forEach((t, i) => {
       for (const r of [t.rect, t.tag]) {
         if (!inRect(r, point)) continue;
+        if (r === t.rect && !photoOnTop(t.el, point)) continue;
         const area = r.w * r.h;
         if (area < bestArea) { best = i; bestArea = area; }
       }
@@ -288,11 +400,13 @@
   function clearOverlay() {
     stopObserving();
     unfollowPage();
+    _sentHover = null; // unfollowPage returns early when the page was not followed
     unwatchAnchors();
     _settleFrames = 0;
     _placed = [];
     _highlight = null;
     _fullSize = null;
+    closeLegend();
     if (!canvas) return;
     canvas.remove();
     canvas = null;
@@ -326,13 +440,22 @@
     return keys;
   }
 
+  function _scheduleNewCardCheck() {
+    clearTimeout(_observerTimer);
+    _observerTimer = setTimeout(_checkNewCardSrcs, 500);
+  }
+
+  // An image added before its picture arrived (or given its src later) changes nothing in the DOM when it finishes,
+  // so the mutation observer never sees it again. Picture loads do not bubble: one capturing listener catches them all.
+  function _onPictureLoad(event) {
+    if (event.target?.tagName === 'IMG') _scheduleNewCardCheck();
+  }
+
   function startObserving() {
     _baselineSrcs = _loadedPictureKeys(); // re-baseline on every scan completion
     if (_observer) return;          // only wire up the observer once
-    _observer = new MutationObserver(() => {
-      clearTimeout(_observerTimer);
-      _observerTimer = setTimeout(_checkNewCardSrcs, 500);
-    });
+    window.addEventListener('load', _onPictureLoad, true);
+    _observer = new MutationObserver(_scheduleNewCardCheck);
     _observer.observe(document.body || document.documentElement, {
       childList: true,
       subtree:   true,
@@ -340,6 +463,7 @@
   }
 
   function stopObserving() {
+    window.removeEventListener('load', _onPictureLoad, true);
     if (_observer) {
       _observer.disconnect();
       _observer = null;
@@ -617,11 +741,12 @@
       _targets = [];
       _clickable = [];
       _hover = null;
+      finishPass();
       return;
     }
 
     const previous = _hover;
-    // The hovered card's tag is not drawn while its label is open, so its last spot is kept for the hit test.
+    // Each card's chip may sit outside the card, so its last spot is kept: the hit test runs before the chips are placed.
     const lastTags = new Map(_targets.filter((t) => t.tag).map((t) => [t.index, t.tag]));
     _targets = [];
     for (const p of _placed) {
@@ -633,61 +758,80 @@
       const seen = { x1: Math.max(sx1, clip.x1), y1: Math.max(sy1, clip.y1), x2: Math.min(sx2, clip.x2), y2: Math.min(sy2, clip.y2) };
       if (seen.x2 <= seen.x1 || seen.y2 <= seen.y1) continue;
       const card = p.card;
-      const state = cardState(card);
-      const color = STATE_COLORS[state];
-      ctx.save();
-      clipTo(clip);
-      if (p.index === _highlight) drawHighlight(sx1, sy1, sx2, sy2);
-      drawFrame(sx1, sy1, sx2, sy2, color, state === 'none');
-      ctx.restore();
-      _targets.push({ rect: { x: seen.x1, y: seen.y1, w: seen.x2 - seen.x1, h: seen.y2 - seen.y1 }, tag: lastTags.get(p.index), box, clip, card, color, index: p.index });
+      _targets.push({ rect: { x: seen.x1, y: seen.y1, w: seen.x2 - seen.x1, h: seen.y2 - seen.y1 }, tag: lastTags.get(p.index), box, clip, card, color: STATE_COLORS[cardState(card)], index: p.index, el: p.el });
     }
 
     const kept = previous ? { target: _targets.findIndex((t) => t.index === previous.index), rect: previous.rect, close: previous.close } : null;
     const hit = hoveredTarget(_targets, kept, _mouse);
-    // Every card carries a small tag (name and number, price): placed where it overlaps no other tag, else left to hover.
+    for (const [i, t] of _targets.entries()) {
+      ctx.save();
+      clipTo(t.clip);
+      if (t.index === _highlight) drawHighlight(...t.box);
+      // The hovered card, and the one the popup points at, get a full outline.
+      drawFrame(...t.box, t.color, cardState(t.card), i === hit || t.index === _highlight);
+      ctx.restore();
+    }
+
+    // Every card carries a small price chip: placed where it overlaps no other chip, else left to hover.
     const taken = [];
     _clickable = [];
     const pill = _fullSize ? drawFullSizePill(_targets) : null;
     if (pill) {
       taken.push(pill);
-      _clickable.push({ rect: pill, url: _fullSize.url });
+      _clickable.push({ rect: pill, fullSize: true });
+    }
+    if (_targets.length) maybeOpenLegend();
+    // A legend that sits inside the photo gives way to the first card hover.
+    if (_legendOpen && _legendInside && hit !== null) closeLegend();
+    const legend = _legendOpen && _targets.length ? drawLegend(_targets, pill) : null;
+    if (legend) {
+      taken.push(legend.rect);
+      _legendInside = legend.where === 'inside';
+      if (_legendInside) armLegendAutoClose();
     }
     for (const [i, t] of _targets.entries()) {
-      if (i === hit || t.index === _highlight) continue;
       ctx.save();
       clipTo(t.clip);
-      const rect = drawTag(t.box, t.card, taken, _targets.filter((u) => u !== t).map((u) => u.box), t.clip, t.index);
+      const chip = drawChip(t, taken);
       ctx.restore();
-      t.tag = rect || undefined;
-      if (rect) {
-        taken.push(rect);
-        if (cardState(t.card) !== 'identified') _clickable.push({ rect, index: t.index });
+      t.tag = chip ? chip.rect : undefined;
+      if (chip) {
+        taken.push(chip.rect);
+        // An identified card's chip takes a click only while the card is hovered (a click opens the card in the scanner).
+        if (cardState(t.card) !== 'identified' || i === hit) _clickable.push({ rect: chip.hit, index: t.index });
       }
     }
 
-    // The full label is drawn last so it sits over neighbouring cards: the hovered card, and the one the popup points at.
+    // The name card is drawn last so it sits over neighbouring cards: the hovered card, and the one the popup points at.
     _hover = null;
     for (const [i, t] of _targets.entries()) {
       if (i !== hit && t.index !== _highlight) continue;
       ctx.save();
-      // The full label may be wider than a small card, but stays on the visible photo (never over a bar above it).
+      // The name card may be wider than a small card, but stays on the visible photo (never over a bar above it).
       clipTo(t.clip);
-      const rect = drawLabel(t.box, t.card, t.color, t.clip);
+      const rect = drawLabel(t.box, t.card, t.color, t.clip, t.tag);
       ctx.restore();
-      if (rect && cardState(t.card) !== 'identified') _clickable.push({ rect, index: t.index });
+      if (rect && (cardState(t.card) !== 'identified' || i === hit)) _clickable.push({ rect, index: t.index });
       if (i !== hit) continue;
-      // The X is drawn after the label so it sits on top, and pushed last so it wins the click.
+      // The hovered card's whole visible box opens it in the scanner; first in the list so the pill, chips and X win over it.
+      _clickable.unshift({ rect: t.rect, index: t.index, photo: t.el });
+      // The X is drawn after the name card so it sits on top, and pushed last so it wins the click.
       const close = closeButtonRect(t.box, t.clip);
+      _closeHot = false;
       if (close) {
+        _closeHot = inRect(close, _mouse);
         ctx.save();
         clipTo(t.clip);
-        drawCloseButton(close);
+        drawCloseButton(close, _closeHot);
         ctx.restore();
         _clickable.push({ rect: close, remove: t.index });
       }
-      _hover = { target: i, index: t.index, rect, close };
+      _hover = { target: i, index: t.index, rect: rect?.hit ?? rect, close };
     }
+    if (!_hover) _closeHot = false;
+    // Last, so the legend's X wins a click over anything it overlaps.
+    if (legend) _clickable.push({ rect: chipHit(legend.close), legendClose: true });
+    finishPass();
   }
 
   // The X on a hovered card: removes it from the scan and the total. Centred on the box's top-right corner, pulled in
@@ -702,11 +846,19 @@
     return { x: cx - CLOSE_R, y: cy - CLOSE_R, w: 2 * CLOSE_R, h: 2 * CLOSE_R };
   }
 
-  function drawCloseButton(rect) {
+  // `hot`: the pointer is on the X, so a ring outside it shows it takes the click.
+  function drawCloseButton(rect, hot = false) {
     ctx.save();
+    if (hot) {
+      ctx.strokeStyle = HIGHLIGHT_COLOR;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.roundRect(rect.x - 3, rect.y - 3, rect.w + 6, rect.h + 6, CLOSE_R + 3);
+      ctx.stroke();
+    }
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = 6;
-    ctx.fillStyle = 'rgba(12,14,20,0.92)';
+    ctx.fillStyle = 'rgba(25,23,41,0.96)';
     ctx.beginPath();
     ctx.roundRect(rect.x, rect.y, rect.w, rect.h, CLOSE_R);
     ctx.fill();
@@ -734,16 +886,16 @@
     // Never over a bar above the photos.
     const floor = Math.max(4, Math.min(...onPage.map((t) => t.clip.y1)) + 4);
     ctx.save();
-    ctx.font = `700 14px ${LABEL_FONT}`;
+    ctx.font = `700 13px ${LABEL_FONT}`;
     const w = Math.ceil(ctx.measureText(PILL_TEXT).width) + 24;
     const h = 28;
     const x = Math.max(4, Math.min(left + (right - left - w) / 2, viewW() - w - 4));
     const y = Math.max(floor, Math.min(top - h - 6 < floor ? top + 4 : top - h - 6, viewH() - h - 4));
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = 8;
-    ctx.fillStyle = '#6366f1';
+    ctx.fillStyle = '#5B3FE6';
     ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 14);
+    ctx.roundRect(x, y, w, h, 10);
     ctx.fill();
     ctx.shadowColor = 'transparent';
     ctx.fillStyle = '#ffffff';
@@ -753,41 +905,227 @@
     return { x, y, w, h };
   }
 
-  // A click on a guess or question tag opens its pick list in the scanner; on the pill, the full-size photo.
-  // Only clicks inside a drawn tag are taken; everything else reaches the page as before.
+  // The first-scan legend (11.3): a small pill above the photo that names the colors once, then is remembered as seen in
+  // chrome.storage.local and never comes back. Its X closes it. A page where the extension has no storage never shows it.
+  const LEGEND_KEY = 'overlayLegendSeen';
+  // `state` names the color in STATE_TEXT, which is defined further down and read only when the legend is laid out.
+  const LEGEND_KEYS = [
+    { text: 'Green: priced', state: 'identified' },
+    { text: 'Amber: pick the card', state: 'choose' },
+    { text: 'Blue: pick a version', state: 'printing' },
+    { text: 'Grey: not read.', state: 'none' },
+  ];
+  const LEGEND_TAIL = 'Hover a card for its name, click it to open it.';
+  const LEGEND_SEP = ' · ';
+  const LEGEND_INK = '#EFEEF8';
+  const LEGEND_PAD_X = 12;
+  const LEGEND_PAD_Y = 8;
+  const LEGEND_LINE_H = 20;
+  const LEGEND_CLOSE = 20;
+  const LEGEND_GAP = 8; // between the text and the close box
+  const LEGEND_EDGE = 6; // right of the close box
+
+  // Greedy wrap of a sentence into lines no wider than `room`.
+  function wrapWords(text, room, measure) {
+    const lines = [];
+    let line = '';
+    for (const word of text.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && measure(next) > room) { lines.push(line); line = word; } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  /**
+   * The legend as laid out for a page `maxW` wide: { w, h, lines, close }. Each line is a row of { text, color, x } parts (x from the
+   * pill's left edge); the colored keys wrap onto more rows on a narrow page, and so does the closing sentence. `close` is the
+   * X box at the pill's right, which the text never reaches. measure(text) is a width in CSS px at the legend font.
+   */
+  function legendLayout(measure, maxW) {
+    const room = Math.max(0, maxW - LEGEND_PAD_X - LEGEND_GAP - LEGEND_CLOSE - LEGEND_EDGE);
+    const sepW = measure(LEGEND_SEP);
+    const rows = [];
+    let row = null;
+    let used = 0;
+    for (const key of LEGEND_KEYS) {
+      const width = measure(key.text);
+      if (row && used + sepW + width > room) row = null;
+      if (!row) { row = []; rows.push(row); used = 0; }
+      if (row.length) { row.push({ text: LEGEND_SEP, color: LEGEND_INK, x: used }); used += sepW; }
+      row.push({ text: key.text, color: STATE_TEXT[key.state], x: used });
+      used += width;
+    }
+    const tail = measure(LEGEND_TAIL) <= room ? [LEGEND_TAIL] : wrapWords(LEGEND_TAIL, room, measure);
+    for (const text of tail) rows.push([{ text, color: LEGEND_INK, x: 0 }]);
+    const contentW = Math.max(...rows.map((r) => r.at(-1).x + measure(r.at(-1).text)));
+    const w = LEGEND_PAD_X + contentW + LEGEND_GAP + LEGEND_CLOSE + LEGEND_EDGE;
+    const lines = rows.map((r) => r.map((p) => ({ ...p, x: LEGEND_PAD_X + p.x })));
+    return { w, h: rows.length * LEGEND_LINE_H + LEGEND_PAD_Y * 2, lines, close: { x: w - LEGEND_EDGE - LEGEND_CLOSE, y: LEGEND_PAD_Y, w: LEGEND_CLOSE, h: LEGEND_CLOSE } };
+  }
+
+  // Asks the stored answer once; on a first scan the legend opens and is marked seen straight away (it is shown once, not until read).
+  function maybeOpenLegend() {
+    if (_legendAsked) return;
+    _legendAsked = true;
+    let read;
+    try { read = chrome.storage.local.get(LEGEND_KEY); } catch { return; }
+    Promise.resolve(read).then((stored) => {
+      if (stored?.[LEGEND_KEY] === true) return;
+      _legendOpen = true;
+      try { chrome.storage.local.set({ [LEGEND_KEY]: true }); } catch { /* it may show once more on the next page */ }
+      scheduleDraw();
+    }).catch(() => {});
+  }
+
+  const LEGEND_MARGIN = 4; // from the viewport's edges
+  const LEGEND_OFFSET = 6; // between the legend and the photo's edge
+  const LEGEND_AUTOCLOSE_MS = 8000;
+
+  /**
+   * Where the legend goes for a photo (its visible rect, { x1, y1, x2, y2 }) in a viewport { w, h }: above the photo's top edge
+   * when that fits on the page, else below its bottom edge, else inside it near the top, where it must close itself so it never
+   * blocks a card. `avoidTop` is the top of something already above the photo (the full-size pill); `avoidBottom` its bottom.
+   * Returns { x, y, where }, x centering the legend on the photo and kept on the page.
+   */
+  function legendPlacement(size, photo, view, avoidTop = Infinity, avoidBottom = -Infinity) {
+    const x = Math.max(LEGEND_MARGIN, Math.min(photo.x1 + (photo.x2 - photo.x1 - size.w) / 2, view.w - size.w - LEGEND_MARGIN));
+    const above = Math.min(photo.y1, avoidTop) - size.h - LEGEND_OFFSET;
+    if (above >= LEGEND_MARGIN) return { x, y: above, where: 'above' };
+    const below = photo.y2 + LEGEND_OFFSET;
+    if (below + size.h <= view.h - LEGEND_MARGIN) return { x, y: below, where: 'below' };
+    return { x, y: Math.max(LEGEND_MARGIN, photo.y1 + LEGEND_MARGIN, avoidBottom + LEGEND_MARGIN), where: 'inside' };
+  }
+
+  /** Draws the legend outside the photo when there is room (see legendPlacement); returns { rect, close, where } or null. */
+  function drawLegend(targets, pill) {
+    const photo = {
+      x1: Math.min(...targets.map((t) => t.clip.x1)),
+      y1: Math.min(...targets.map((t) => t.clip.y1)),
+      x2: Math.max(...targets.map((t) => t.clip.x2)),
+      y2: Math.max(...targets.map((t) => t.clip.y2)),
+    };
+    ctx.save();
+    ctx.font = `600 13px ${LABEL_FONT}`;
+    const layout = legendLayout((text) => ctx.measureText(text).width, viewW() - 8);
+    const { x, y, where } = legendPlacement(layout, photo, { w: viewW(), h: viewH() }, pill ? pill.y : Infinity, pill ? pill.y + pill.h : -Infinity);
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = SLAB_FILL;
+    ctx.beginPath();
+    ctx.roundRect(x, y, layout.w, layout.h, 10);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    layout.lines.forEach((parts, row) => {
+      for (const part of parts) {
+        ctx.fillStyle = part.color;
+        ctx.fillText(part.text, x + part.x, y + LEGEND_PAD_Y + row * LEGEND_LINE_H + LEGEND_LINE_H / 2 + 1);
+      }
+    });
+    const close = { x: x + layout.close.x, y: y + layout.close.y, w: layout.close.w, h: layout.close.h };
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `700 15px ${LABEL_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('×', close.x + close.w / 2, close.y + close.h / 2 + 0.5);
+    ctx.restore();
+    return { rect: { x, y, w: layout.w, h: layout.h }, close, where };
+  }
+
+  // A legend that had to go inside the photo closes itself after 8 s, or on the first card hover: it must never block a card.
+  function closeLegend() {
+    _legendOpen = false;
+    _legendInside = false;
+    if (_legendTimer && typeof window.clearTimeout === 'function') window.clearTimeout(_legendTimer);
+    _legendTimer = 0;
+  }
+  function armLegendAutoClose() {
+    if (_legendTimer || typeof window.setTimeout !== 'function') return;
+    _legendTimer = window.setTimeout(() => { _legendTimer = 0; closeLegend(); _drawOverlay(); }, LEGEND_AUTOCLOSE_MS);
+  }
+
+  // A click on the hovered card (its box, name card or chip) opens it in the scanner; on the pill, the full-size photo.
+  // A Choose or printing chip takes a click even when not hovered. Everything else reaches the page as before.
   // A page script can dispatch a click at the overlay; only a real user click (isTrusted) is taken.
   function acceptClick(e) {
     return e?.isTrusted === true;
   }
 
+  // The scan the shown overlay was drawn from; the X sends it back so the background removes the card of that scan.
+  let _overlayScanId = null;
+
+  // Follows isSamePage in lib/draw-box.js, except that a query-only change still counts as the lot's page, because
+  // single-page sites change the query during normal use. This script is injected as a classic script and cannot
+  // import it; tests/overlay-toggle.test.js feeds both the same cases.
+  function isLotPage(lotUrl) {
+    try {
+      const lot = new URL(String(lotUrl));
+      const here = new URL(String(location.href));
+      return lot.origin === here.origin && lot.pathname === here.pathname;
+    } catch {
+      return false;
+    }
+  }
+
+  // After the extension is updated or reloaded under an open page this script is orphaned: chrome.runtime has no id.
+  function extensionAlive() {
+    try {
+      return Boolean(chrome.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  // Sends to the extension; null when it is gone (the overlay then removes itself and the page keeps its click).
+  function sendToExtension(message) {
+    try {
+      return chrome.runtime.sendMessage(message);
+    } catch {
+      clearOverlay();
+      return null;
+    }
+  }
+
   function onClick(e) {
+    if (_draw) return; // draw mode owns every click while it is on
     if (!acceptClick(e)) return;
+    if (!extensionAlive()) { clearOverlay(); return; }
+    // A modified or non-primary click is the page's own (new tab, context menu ...).
+    if (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey || (e.button ?? 0) !== 0) return;
     const point = { x: e.clientX, y: e.clientY };
     const hit = [..._clickable].reverse().find((c) => inRect(c.rect, point));
     if (!hit) return;
+    // The box hit area is the card's photo: site UI painted over it keeps its own click.
+    if (hit.photo && !photoOnTop(hit.photo, point)) return;
+    if (hit.legendClose) { e.preventDefault(); e.stopPropagation(); closeLegend(); _drawOverlay(); return; }
+    const removing = Number.isInteger(hit.remove);
+    // The scanner does what its own "Open full-size photo" button does: site access, a new tab, then a scan.
+    const sent = sendToExtension(hit.fullSize
+      ? { action: 'overlayFullSize' }
+      : removing
+        ? { action: 'overlayRemove', index: hit.remove, ...(_overlayScanId ? { scanId: _overlayScanId } : {}) }
+        : { action: 'overlayPick', index: hit.index });
+    if (!sent) return; // the extension is gone: the page keeps its click
     e.preventDefault();
     e.stopPropagation();
-    if (hit.url) { window.open(hit.url, '_blank', 'noopener'); return; }
-    if (Number.isInteger(hit.remove)) {
-      // The box goes only once the removal is stored (the scanner or the background says so); until then it stays.
-      const index = hit.remove;
-      chrome.runtime.sendMessage({ action: 'overlayRemove', index }).then((reply) => {
-        if (reply?.ok !== true) return;
-        _placed = _placed.filter((p) => p.index !== index);
-        if (_highlight === index) _highlight = null;
-        _hover = null;
-        _drawOverlay();
-      }).catch(() => {});
-      return;
-    }
-    chrome.runtime.sendMessage({ action: 'overlayPick', index: hit.index }).catch(() => {});
+    if (!removing) { sent.catch(() => {}); return; }
+    // The box goes only once the removal is stored (the scanner or the background says so); until then it stays.
+    const index = hit.remove;
+    sent.then((reply) => {
+      if (reply?.ok !== true) return;
+      _placed = _placed.filter((p) => p.index !== index);
+      if (_highlight === index) _highlight = null;
+      _hover = null;
+      _drawOverlay();
+    }).catch(() => {});
   }
 
-  const HIGHLIGHT_COLOR = '#6366f1';
+  const HIGHLIGHT_COLOR = '#5B3FE6';
 
   function drawHighlight(x1, y1, x2, y2) {
     ctx.save();
-    ctx.fillStyle = 'rgba(99,102,241,0.18)';
+    ctx.fillStyle = 'rgba(91,63,230,0.18)';
     ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
     ctx.strokeStyle = HIGHLIGHT_COLOR;
     ctx.lineWidth = 4;
@@ -797,29 +1135,72 @@
     ctx.restore();
   }
 
-  // A whole outline in the card's state colour over a dark edge, so it shows on light and dark photos alike.
-  function drawFrame(x1, y1, x2, y2, color, dashed) {
+  // Viewfinder corner brackets: arms 18 px long, or 22% of the shorter side on a small card.
+  const BRACKET_ARM_MAX = 18;
+  const BRACKET_ARM_SHARE = 0.22;
+  const BRACKET_W = 3;
+  function bracketArm(w, h) {
+    return Math.max(0, Math.min(BRACKET_ARM_MAX, BRACKET_ARM_SHARE * Math.min(w, h)));
+  }
+
+  // The card's mark: four L-shaped brackets in the state colour over a dark under-stroke (so they show on light and dark
+  // photos), and a 1 px outline at 35% opacity where boxes are close together. A card back / not recognised has a dashed
+  // outline, a skipped card none. `open` (hovered, or the popup points at it) adds a full 2 px outline with a soft glow.
+  function drawFrame(x1, y1, x2, y2, color, state, open) {
     const w = x2 - x1;
     const h = y2 - y1;
     const r = Math.min(8, w / 10, h / 10);
-    if (dashed) ctx.setLineDash([6, 4]);
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.roundRect(x1, y1, w, h, r);
-    ctx.stroke();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(x1, y1, w, h, r);
-    ctx.stroke();
+    if (state !== 'skipped') {
+      ctx.save();
+      if (state === 'none') ctx.setLineDash([6, 4]);
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x1, y1, w, h, r);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+    if (open) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.roundRect(x1, y1, w, h, r);
+      ctx.stroke();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+    const arm = bracketArm(w, h);
+    const corners = [[x1, y1, 1, 1], [x2, y1, -1, 1], [x2, y2, -1, -1], [x1, y2, 1, -1]];
+    const armRects = (pad) => {
+      ctx.beginPath();
+      for (const [cx, cy, dx, dy] of corners) {
+        ctx.rect(Math.min(cx, cx + dx * arm) - pad, Math.min(cy, cy + dy * BRACKET_W) - pad, arm + 2 * pad, BRACKET_W + 2 * pad);
+        ctx.rect(Math.min(cx, cx + dx * BRACKET_W) - pad, Math.min(cy, cy + dy * arm) - pad, BRACKET_W + 2 * pad, arm + 2 * pad);
+      }
+    };
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    armRects(1);
+    ctx.fill();
+    ctx.fillStyle = color;
+    armRects(0);
+    ctx.fill();
+    ctx.restore();
   }
 
   // What a card's frame and tag say: identified (green), identified with its printing to pick (blue), choose (amber:
   // the user picks the card, no name or price shown), card back (grey, dashed). The popup sends its own verdict
   // (display.state) so the page and the list agree; a relay straight from the background falls back to the card's own fields.
   const STATE_COLORS = { identified: '#10b981', printing: '#3b82f6', choose: '#f59e0b', none: '#9ca3af', skipped: '#9ca3af' };
-  const STATE_TEXT = { identified: '#6ee7b7', printing: '#93c5fd', choose: '#fcd34d', none: '#d1d5db', skipped: '#d1d5db' };
+  // The state's text colour on the dark chip and name card (the popup's dark-scheme --ok, --info, --ask, --ink-2).
+  const STATE_TEXT = { identified: '#3DD9A0', printing: '#7FB0FF', choose: '#FBBF24', none: '#C3C1D9', skipped: '#C3C1D9' };
 
   function cardState(card) {
     const state = card?.display?.state;
@@ -834,38 +1215,6 @@
     if (!guess?.name) return '';
     if (guess.price == null) return guess.kind === 'none' ? `${guess.name}? no price` : `${guess.name}?`;
     return guess.stale ? `${guess.name}? old price` : `${guess.name}? ~${money(guess.price)}`;
-  }
-
-  /**
-   * A tag's lines: the name with its number, then the price (a range while the printing is open) or what to do.
-   * `marker` is the card's row number in the scanner (scan index + 1), shown when not even a name stub fits.
-   */
-  function tagText(card, index) {
-    const marker = Number.isInteger(index) ? String(index + 1) : '';
-    return { ...tagLines(card), marker };
-  }
-
-  function tagLines(card) {
-    const state = cardState(card);
-    if (state === 'none' && card.tooSmall === true) return { state, lines: ['Too small'], short: '?' };
-    if (state === 'none') return { state, lines: ['Not recognised', 'Turn it over'], short: '?' };
-    if (state === 'skipped') return { state, lines: ['Skipped'], short: 'Skipped' };
-    if (state === 'choose') {
-      const guess = guessLine(card.display?.guess);
-      const ask = card.display?.highValue ? 'High value, double-check' : 'Tap to choose';
-      return guess
-        ? { state, lines: [guess, ask], short: guess, guessName: card.display.guess.name }
-        : { state, lines: ['Choose', ask], short: 'Choose' };
-    }
-    const { name, price, caveat } = labelText(card);
-    const number = card.display?.number || card.identity?.number || '';
-    const title = number ? `${name} #${number}` : name;
-    const priced = price && price !== '—' ? price : '';
-    if (state === 'printing') {
-      const note = caveat && priced ? `Set not sure · ${priced}` : priced ? `${priced} · pick printing` : 'Pick printing';
-      return { state, lines: [title, note], short: priced || name, name, title, price: priced, note, highValue: card.display?.highValue === true };
-    }
-    return { state, lines: [title, priced || '—'], short: priced || name, name, title, price: priced, highValue: card.display?.highValue === true };
   }
 
   // A price is never cut mid-number: the whole of it, or "from" its lower bound, or nothing.
@@ -886,162 +1235,150 @@
     return text.replace('…', '').replace(/\s/g, '').length >= MIN_STUB_LETTERS ? text : '';
   }
 
-  // A tag always says which card it is: a name stub, or with no room for one, the card's row number; never a bare price.
-  function nameOrMarker(name, marker, maxPx, measure) {
-    return fitName(name, maxPx, measure) || (marker && measure(marker) <= maxPx ? marker : '');
-  }
-
-  /** The rows a tag prints: the Choose ask collapses to "Choose" when it does not fit; a small tag shows the name, then price. */
-  function tagRows(tag, twoLines, textMax, measure) {
-    const { state, lines, short, marker } = tag;
+  /**
+   * What a card's resting chip says, as { state, marks, text }: the price alone, marked by its state. Identified: the price,
+   * or a dash for none or an old one. Printing to pick: the range with one dollar sign. Choose: the best match's price
+   * marked unconfirmed ("? ~$0.74"), or "Pick"; never an unmarked figure. High value puts a "!" first. Not recognised
+   * or too small: "?" alone. Skipped: null (no chip).
+   */
+  function chipSpec(card) {
+    const state = cardState(card);
+    if (state === 'skipped') return null;
+    if (state === 'none') return { state, marks: [], text: '?' };
+    const high = card.display?.highValue === true;
     if (state === 'choose') {
-      const first = measure(short) <= textMax ? short
-        : tag.guessName ? nameOrMarker(`${tag.guessName}?`, marker, textMax, measure)
-        : fitText(short, textMax, measure);
-      return (twoLines && first && measure(lines[1]) <= textMax ? [first, lines[1]] : [first]).filter(Boolean);
+      const guess = card.display?.guess;
+      const priced = guess?.price != null && guess.stale !== true;
+      // A price makes it "? ~$0.74"; with none the chip says what to do, "Pick", never a bare "?" (that is the grey not-read card).
+      return priced ? { state, marks: high ? ['!', '?'] : ['?'], text: `~${money(guess.price)}` } : { state, marks: high ? ['!'] : [], text: 'Pick' };
     }
-    if (state === 'skipped') return [fitText(short, textMax, measure)].filter(Boolean);
-    if (state === 'none') return (twoLines ? lines : [short]).map((t) => fitText(t, textMax, measure)).filter(Boolean);
-    const { name, title, price } = tag;
-    if (twoLines) {
-      const first = nameOrMarker(title, marker, textMax, measure);
-      if (!first) return [];
-      const pickNote = state === 'printing' ? tag.note : '';
-      const flagged = tag.highValue && price ? `${price} · High value, double-check` : '';
-      const second = flagged && measure(flagged) <= textMax ? flagged
-        : pickNote && measure(pickNote) <= textMax ? pickNote
-        : fitPrice(price, textMax, measure) || (state === 'printing' && measure('Pick printing') <= textMax ? 'Pick printing' : '');
-      return [first, second].filter(Boolean);
-    }
-    const both = price ? `${name} ${price}` : name;
-    if (measure(both) <= textMax) return [both];
-    return [nameOrMarker(name, marker, textMax, measure)].filter(Boolean);
+    const { price } = labelText(card);
+    return { state, marks: high ? ['!'] : [], text: /^\$/.test(price) ? price.replace(/–\$/g, '–') : '—' };
   }
 
-  // Tag size follows the card: 13 px text on a 60 px card up to 16 px; a short card gets one line.
-  const TAG_MIN_W = 36;
-  function tagLayout(boxW, boxH) {
-    const px = Math.max(13, Math.min(16, Math.round(boxW / 8)));
-    return { px, lines: boxW >= 80 && boxH >= 4 * px + 20 ? 2 : 1, maxWidth: Math.max(0, boxW - 4) };
+  const CHIP_H = 22;
+  const CHIP_RAIL = 3;
+  const CHIP_PAD = 7;
+  const CHIP_EDGE = 4; // from the card's edges, and the room the chip must leave inside the card's visible width
+  const CHIP_DOT = 10;
+  const CHIP_HIT = 28;
+  const CHIP_FONT_PX = 13;
+
+  /**
+   * The chip as laid out for a card whose visible part is `visibleW` wide: the whole chip, a range as "from $x" when
+   * that is what fits, else a dot in the state colour. A chip fits inside the card's visible width minus 8 px; nothing is
+   * ever cut. measure(text) is a width in CSS px at the chip font. Null for a card with no chip.
+   * parts: the marks, then the text, each at x from the chip's left edge.
+   */
+  function chipLayout(card, visibleW, measure) {
+    const spec = chipSpec(card);
+    if (!spec) return null;
+    const maxW = visibleW - 2 * CHIP_EDGE;
+    const gap = measure(' ');
+    const build = (text) => {
+      const parts = [];
+      let x = CHIP_RAIL + CHIP_PAD;
+      for (const mark of spec.marks) {
+        parts.push({ text: mark, x, mark: true });
+        x += measure(mark) + gap;
+      }
+      if (text) {
+        parts.push({ text, x, mark: false });
+        x += measure(text);
+      } else if (parts.length) {
+        x -= gap;
+      }
+      return { parts, w: x + CHIP_PAD };
+    };
+    const chip = (built) => ({ kind: 'chip', state: spec.state, w: built.w, h: CHIP_H, parts: built.parts });
+    const full = build(spec.text);
+    if (full.w <= maxW) return chip(full);
+    const room = maxW - (full.w - measure(spec.text));
+    const from = fitPrice(spec.text, room, measure);
+    if (from) return chip(build(from));
+    return { kind: 'dot', state: spec.state, w: CHIP_DOT, h: CHIP_DOT };
   }
 
   function overlaps(a, b) {
     return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   }
 
-  // A neighbour's top edge is where its art starts and its own tag sits: a tag never covers that band.
-  const TAG_TOP_BAND = 24;
-
-  function onNeighbour(rect, other, topOnly) {
-    const band = { x: other[0], y: other[1], w: other[2] - other[0], h: topOnly ? Math.min(TAG_TOP_BAND, other[3] - other[1]) : other[3] - other[1] };
-    return overlaps(rect, band);
-  }
-
   /**
-   * Where a tag goes: inside the top of its card, inside the bottom, just above, just below; the first free spot.
-   * A spot on another tag is never taken. A spot on a neighbouring card (others: the other cards' boxes) is skipped
-   * too, or, when relaxed, only a spot on a neighbour's top edge is.
+   * Where a chip goes: inside the card's bottom-right corner, else inside its top-right, else just below it, else just
+   * above it; the first spot that is on the visible photo (view: { x, y, w, h }, the clip) and on no other chip. Null when
+   * none is free: the chip is left to hover.
    */
-  function placeTag(box, w, h, taken, view, others = [], relaxed = false) {
-    // relaxed: false = clear of every neighbour; true = clear of neighbours' top edges; null = neighbours ignored.
-    // view: the area a tag must stay in (the photo's visible rect), at view.x/view.y (0 when absent).
-    const [x1, y1, , y2] = box;
+  function placeChip(box, w, h, taken, view) {
     const vx = view.x || 0;
     const vy = view.y || 0;
-    const x = Math.max(vx + 2, Math.min(x1 + 2, vx + view.w - w - 2));
-    // Inside the top and bottom of the part of the box that shows: a box under a site header keeps its tag.
-    const top = Math.max(y1, vy) + 2;
-    const bottom = Math.min(y2, vy + view.h) - h - 2;
-    for (const y of [top, bottom, y1 - h - 2, y2 + 2]) {
-      if (y < vy + 2 || y + h > vy + view.h - 2) continue;
-      const rect = { x, y, w, h };
+    const left = Math.max(box[0], vx);
+    const right = Math.min(box[2], vx + view.w);
+    const top = Math.max(box[1], vy);
+    const bottom = Math.min(box[3], vy + view.h);
+    const x = right - CHIP_EDGE - w;
+    const spots = [
+      { x, y: bottom - CHIP_EDGE - h, inside: true },
+      { x, y: top + CHIP_EDGE, inside: true },
+      { x, y: box[3] + 2 },
+      { x, y: box[1] - h - 2 },
+    ];
+    for (const spot of spots) {
+      if (spot.inside && (spot.x < left || spot.y < top || spot.y + h > bottom)) continue;
+      if (spot.x < vx || spot.y < vy || spot.x + w > vx + view.w || spot.y + h > vy + view.h) continue;
+      const rect = { x: spot.x, y: spot.y, w, h };
       if (taken.some((other) => overlaps(other, rect))) continue;
-      if (relaxed !== null && others.some((other) => onNeighbour(rect, other, relaxed))) continue;
       return rect;
     }
     return null;
   }
 
-  /**
-   * Tries each size (full first, then shorter) on no neighbour at all, then on no neighbour's top edge, and last,
-   * so a card whose box overlaps its neighbours' keeps a tag, anywhere clear of other tags.
-   * Returns { rect, size: index into sizes } or null, so a crowded photo shrinks a tag before it covers a card.
-   */
-  function placeTagLadder(box, sizes, taken, view, others = []) {
-    for (const relaxed of [false, true, null]) {
-      for (const [size, { w, h }] of sizes.entries()) {
-        const rect = placeTag(box, w, h, taken, view, others, relaxed);
-        if (rect) return { rect, size };
-      }
-    }
-    return null;
+  /** The click area of a drawn chip: the chip, padded to at least 28 px tall (and 28 wide, for a dot). */
+  function chipHit(rect) {
+    const w = Math.max(rect.w, CHIP_HIT);
+    const h = Math.max(rect.h, CHIP_HIT);
+    return { x: rect.x - (w - rect.w) / 2, y: rect.y - (h - rect.h) / 2, w, h };
   }
 
-  function drawTag(box, card, taken, others = [], clip = { x1: 0, y1: 0, x2: viewW(), y2: viewH() }, index) {
-    const layout = tagLayout(box[2] - box[0], box[3] - box[1]);
-    if (layout.maxWidth < TAG_MIN_W) return null;
-    const tag = tagText(card, index);
-    const { state } = tag;
-    const PAD_X = 7;
-    const PAD_Y = 4;
-    const ACCENT_W = 4;
-    const GAP = 2;
-    const textMax = Math.max(0, layout.maxWidth - ACCENT_W - PAD_X * 2);
-    ctx.font = `800 ${layout.px}px ${LABEL_FONT}`;
-    // The tag as laid out for the card, and, on a tall card, its one-line form (the "Choose" short tag) for a crowded photo.
-    const build = (twoLines) => {
-      const texts = tagRows(tag, twoLines, textMax, (t) => ctx.measureText(t).width);
-      const rows = texts.map((text, i) => ({
-        text,
-        font: `${texts.length === 2 && i === 0 ? 700 : 800} ${layout.px}px ${LABEL_FONT}`,
-        color: texts.length === 2 && i === 0 ? '#f3f4f8' : STATE_TEXT[state],
-      }));
-      let widest = 0;
-      for (const row of rows) {
-        ctx.font = row.font;
-        widest = Math.max(widest, ctx.measureText(row.text).width);
-      }
-      if (!rows.some((row) => row.text)) return null;
-      return { rows, w: Math.min(Math.ceil(widest) + ACCENT_W + PAD_X * 2, layout.maxWidth), h: PAD_Y * 2 + rows.length * layout.px + GAP * (rows.length - 1) };
-    };
-    const full = build(layout.lines === 2);
-    if (!full) return null;
-    const short = layout.lines === 2 ? build(false) : null;
-    const variants = short && short.h < full.h ? [full, short] : [full];
-    const fit = placeTagLadder(box, variants, taken, { x: clip.x1, y: clip.y1, w: clip.x2 - clip.x1, h: clip.y2 - clip.y1 }, others);
-    if (!fit) return null;
-    const { rows, w, h } = variants[fit.size];
-    const rect = fit.rect;
-    // A soft shadow and a thin state-coloured outline keep the tag readable on a busy photo.
-    ctx.shadowColor = 'rgba(0,0,0,0.6)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetY = 1;
-    ctx.fillStyle = 'rgba(12,14,20,0.92)';
-    ctx.beginPath();
-    ctx.roundRect(rect.x, rect.y, w, h, 5);
-    ctx.fill();
-    ctx.shadowColor = 'transparent';
-    ctx.strokeStyle = STATE_COLORS[state];
-    ctx.globalAlpha = 0.7;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(rect.x + 0.5, rect.y + 0.5, w - 1, h - 1, 5);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = STATE_COLORS[state];
-    ctx.beginPath();
-    ctx.roundRect(rect.x, rect.y, ACCENT_W, h, [5, 0, 0, 5]);
-    ctx.fill();
-    ctx.textBaseline = 'top';
-    let cy = rect.y + PAD_Y;
-    for (const row of rows) {
-      ctx.font = row.font;
-      ctx.fillStyle = row.color;
-      ctx.fillText(row.text, rect.x + ACCENT_W + PAD_X, cy);
-      cy += layout.px + GAP;
+  const chipFont = () => `700 ${CHIP_FONT_PX}px ${LABEL_FONT}`;
+  const SLAB_FILL = 'rgba(25,23,41,0.94)';
+  const HIGH_VALUE_COLOR = '#FBBF24';
+
+  /** Draws a card's chip (or dot) and returns { rect, hit }, or null when it has none or no spot is free. */
+  function drawChip(target, taken) {
+    ctx.font = chipFont();
+    const layout = chipLayout(target.card, target.rect.w, (text) => ctx.measureText(text).width);
+    if (!layout) return null;
+    const { clip, box } = target;
+    const rect = placeChip(box, layout.w, layout.h, taken, { x: clip.x1, y: clip.y1, w: clip.x2 - clip.x1, h: clip.y2 - clip.y1 });
+    if (!rect) return null;
+    const color = STATE_COLORS[layout.state];
+    if (layout.kind === 'dot') {
+      ctx.fillStyle = SLAB_FILL;
+      ctx.beginPath();
+      ctx.roundRect(rect.x - 1, rect.y - 1, rect.w + 2, rect.h + 2, (rect.w + 2) / 2);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(rect.x, rect.y, rect.w, rect.h, rect.w / 2);
+      ctx.fill();
+      return { rect, hit: chipHit(rect) };
     }
-    return rect;
+    ctx.fillStyle = SLAB_FILL;
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 6);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, CHIP_RAIL, rect.h, [6, 0, 0, 6]);
+    ctx.fill();
+    ctx.font = chipFont();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    for (const part of layout.parts) {
+      ctx.fillStyle = part.mark ? (part.text === '!' ? HIGH_VALUE_COLOR : color) : STATE_TEXT[layout.state];
+      ctx.fillText(part.text, rect.x + part.x, rect.y + rect.h / 2 + 1);
+    }
+    return { rect, hit: chipHit(rect) };
   }
 
   const money = (n) => '$' + Number(n).toFixed(2);
@@ -1051,7 +1388,7 @@
     if (cardState(card) === 'skipped') return { name: 'Skipped', price: 'Not priced. Put it back in the scanner to price it', muted: true };
     if (cardState(card) === 'choose') {
       const guess = guessLine(card.display?.guess);
-      const ask = card.display?.highValue ? 'High value, double-check. Tap to pick it in the scanner' : 'Tap to pick it in the scanner';
+      const ask = card.display?.highValue ? 'High value · check the match. Click to pick it in the scanner' : 'Click to pick it in the scanner';
       return { name: guess || 'Choose a card', price: ask, muted: true };
     }
     if (card.tooSmall === true) return { name: 'Too small', price: 'Too small to read. Open the full-size photo.', muted: true };
@@ -1064,7 +1401,7 @@
     // The caveat travels with the range: a set that is not sure is never shown as a plain price.
     if (note.includes('$')) {
       const range = note.slice(note.indexOf('$'));
-      return { name: card.identity.name, price: range, ...(/set not sure/i.test(note) ? { caveat: 'set not sure' } : {}) };
+      return { name: card.identity.name, price: range, ...(/several versions/i.test(note) ? { caveat: 'Pick a version' } : {}) };
     }
     const values = Object.values(card.price_grid?.variants || {})
       .map((v) => v?.market)
@@ -1075,22 +1412,31 @@
   }
 
   const LABEL_FONT  = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+  // No web fonts in the content script (they would need a web-accessible resource): the display stack is system fonts.
+  const NAME_FONT   = '"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif';
   const LABEL_PAD_X = 10;
   const LABEL_PAD_Y = 7;
   const LABEL_ACCENT_W = 3;
   const LABEL_GAP = 3;
   const LABEL_MARGIN = 4;
+  const LABEL_OFFSET = 4; // between the name card and the card it names
 
   /**
-   * The label a hovered card opens: its whole name, then its whole price or what to do, at the top of its frame. It
-   * may be wider than the card, but stays inside `clip` (the photo's visible rect) and the viewport; text is cut only
-   * where that rect is narrower than it. measure(text, font) gives a width in CSS px.
+   * The name card a hovered card opens: its whole name (then " #number" in a second colour), then its whole price or what
+   * to do. It sits just outside the card: above its top edge, left-aligned with it, when that fits inside `clip` (the
+   * photo's visible rect); else just below its bottom edge; else inside the card at the bottom. It may be wider than the
+   * card, but stays inside `clip` and the viewport; text is cut only where that rect is narrower than it.
+   * measure(text, font) gives a width in CSS px. `hit` is the rect that keeps the card hovered: the name card plus the
+   * gap to the card, so the pointer can travel between them.
    */
-  function labelLayout(box, card, clip, measure) {
+  function labelLayout(box, card, clip, measure, avoid = null) {
     const { name, price: rawPrice, caveat, muted } = labelText(card);
     const price = caveat && rawPrice ? `${caveat} · ${rawPrice}` : rawPrice;
+    const state = cardState(card);
+    const number = (state === 'identified' || state === 'printing') && card.identity?.name && !card.abstain && card.tooSmall !== true
+      ? card.display?.number || card.identity.number || '' : '';
     const NAME_PX = 15;
-    const PRICE_PX = muted ? 12 : 17;
+    const PRICE_PX = muted ? 13 : 17;
     const x1 = Math.max(clip.x1, 0);
     const y1 = Math.max(clip.y1, 0);
     const x2 = Math.min(clip.x2, viewW());
@@ -1098,50 +1444,75 @@
     const maxW = Math.max(0, x2 - x1 - LABEL_MARGIN * 2);
     const textMax = Math.max(0, maxW - LABEL_ACCENT_W - LABEL_PAD_X * 2);
     const lines = [
-      { text: name, font: `600 ${NAME_PX}px ${LABEL_FONT}`, px: NAME_PX, color: '#f3f4f8' },
-      { text: price || '—', font: `700 ${PRICE_PX}px ${LABEL_FONT}`, px: PRICE_PX, color: muted ? '#a3a9bf' : '#34d399' },
+      { text: name, font: `650 ${NAME_PX}px ${NAME_FONT}`, px: NAME_PX, color: '#EFEEF8' },
+      { text: price || '—', font: `700 ${PRICE_PX}px ${LABEL_FONT}`, px: PRICE_PX, color: STATE_TEXT[state] },
     ];
+    // The number keeps its room while the name is cut for it; a card too narrow for both shows the name only.
+    const suffix = number ? ` #${number}` : '';
+    const suffixW = suffix ? measure(suffix, lines[0].font) : 0;
+    const MIN_NAME_PX = 40;
+    if (suffix && textMax - suffixW >= MIN_NAME_PX) lines[0].suffix = suffix;
     let widest = 0;
     for (const l of lines) {
-      l.text = fitText(l.text, textMax, (t) => measure(t, l.font));
-      widest = Math.max(widest, measure(l.text, l.font));
+      const room = l.suffix ? textMax - suffixW : textMax;
+      l.text = fitText(l.text, room, (t) => measure(t, l.font));
+      widest = Math.max(widest, measure(l.text, l.font) + (l.suffix ? suffixW : 0));
     }
     const w = Math.min(Math.ceil(widest) + LABEL_ACCENT_W + LABEL_PAD_X * 2, maxW);
     const h = LABEL_PAD_Y * 2 + lines.reduce((sum, l) => sum + l.px, 0) + LABEL_GAP * (lines.length - 1);
-    const x = Math.max(x1 + LABEL_MARGIN, Math.min(box[0] + 4, x2 - w - LABEL_MARGIN));
-    const y = Math.max(y1 + LABEL_MARGIN, Math.min(box[1] + 4, y2 - h - LABEL_MARGIN));
-    return { lines, x, y, w, h };
+    const x = Math.max(x1 + LABEL_MARGIN, Math.min(box[0], x2 - w - LABEL_MARGIN));
+    const aboveY = box[1] - LABEL_OFFSET - h;
+    const belowY = box[3] + LABEL_OFFSET;
+    if (aboveY >= y1) return { lines, x, y: aboveY, w, h, side: 'above', hit: { x, y: aboveY, w, h: box[1] - aboveY } };
+    if (belowY + h <= y2) return { lines, x, y: belowY, w, h, side: 'below', hit: { x, y: box[3], w, h: belowY + h - box[3] } };
+    // Inside the card: at the bottom-left, clear of the card's chip (which stays); if the name card is too wide for that, just above the chip row.
+    let y = Math.max(y1 + LABEL_MARGIN, Math.min(Math.min(box[3], y2) - h - LABEL_MARGIN, y2 - h - LABEL_MARGIN));
+    if (avoid && overlaps({ x, y, w, h }, avoid)) y = Math.max(y1 + LABEL_MARGIN, avoid.y - h - 2);
+    return { lines, x, y, w, h, side: 'inside', hit: { x, y, w, h } };
   }
 
-  /** Draws a hovered card's label (see labelLayout); returns its rect. */
-  function drawLabel(box, card, accentColor, clip) {
-    const { lines, x, y, w, h } = labelLayout(box, card, clip, (t, font) => {
+  /** Draws a hovered card's name card (see labelLayout); returns its rect, with the hover area as `hit`. */
+  function drawLabel(box, card, accentColor, clip, avoid) {
+    const { lines, x, y, w, h, hit } = labelLayout(box, card, clip, (t, font) => {
       ctx.font = font;
       return ctx.measureText(t).width;
-    });
+    }, avoid);
 
-    ctx.shadowColor = 'rgba(0,0,0,0.55)';
-    ctx.shadowBlur = 10;
-    ctx.shadowOffsetY = 2;
-    ctx.fillStyle = 'rgba(12,14,20,0.96)';
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 6;
+    ctx.fillStyle = 'rgba(25,23,41,0.96)';
     ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 6);
+    ctx.roundRect(x, y, w, h, 10);
     ctx.fill();
     ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 9.5);
+    ctx.stroke();
     ctx.fillStyle = accentColor;
     ctx.beginPath();
-    ctx.roundRect(x, y, LABEL_ACCENT_W, h, [6, 0, 0, 6]);
+    ctx.roundRect(x, y, LABEL_ACCENT_W, h, [10, 0, 0, 10]);
     ctx.fill();
 
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     let cy = y + LABEL_PAD_Y;
+    const tx = x + LABEL_ACCENT_W + LABEL_PAD_X;
     for (const l of lines) {
       ctx.font = l.font;
       ctx.fillStyle = l.color;
-      ctx.fillText(l.text, x + LABEL_ACCENT_W + LABEL_PAD_X, cy);
+      ctx.fillText(l.text, tx, cy);
+      if (l.suffix) {
+        ctx.fillStyle = '#C3C1D9';
+        ctx.fillText(l.suffix, tx + ctx.measureText(l.text).width, cy);
+      }
       cy += l.px + LABEL_GAP;
     }
-    return { x, y, w, h };
+    return { x, y, w, h, hit };
   }
 
   function fitText(text, maxPx, measure) {
@@ -1819,17 +2190,18 @@
   }
 
   // ─── Draw a box ───────────────────────────────────────────────────────────
-  // The user drags a rectangle around a card the scan missed. One box per activation; Esc, or a click without a drag,
-  // cancels. Everything it adds (a full-viewport veil, a hint bar, the rubber band) and every listener goes on exit,
+  // The user drags a rectangle around a card the scan missed. One box per activation; Esc or the hint bar's Cancel button
+  // cancels, and a click without a drag only repeats the hint. Everything it adds (a full-viewport veil, a hint bar, the rubber band) and every listener goes on exit,
   // so outside draw mode the page's own clicks are never touched. The rectangle must lie mostly over one visible
   // photo; the photo's data is collected by the same finder the scan uses and sent to the background with the rectangle.
   const DRAW_HINT = 'Drag a box around the card. Esc to cancel.';
+  const DRAW_CLICK_HINT = 'Drag a box around the card.';
   const DRAW_NOT_PHOTO = 'Draw over a photo.';
   const DRAW_MIN_SIDE = 12;     // CSS px: a smaller rectangle is ignored
-  const DRAW_CLICK_SLOP = 3;    // CSS px: a press and release this close together is a click, which cancels
+  const DRAW_CLICK_SLOP = 3;    // CSS px: a press and release this close together is a click, which only repeats the hint
   const DRAW_MIN_COVER = 0.5;   // share of the drawn area that must lie over the photo
   const DRAW_Z = '2147483647';
-  let _draw = null;             // { veil, hint, band, start, off } while draw mode is on
+  let _draw = null;             // { veil, bar, hint, cancel, band, start, off } while draw mode is on
 
   // The photo the drawn rectangle [x1, y1, x2, y2] (viewport CSS px) is mostly over: the one with the largest visible
   // overlap, and only when that is at least DRAW_MIN_COVER of the drawn area. Null otherwise.
@@ -1873,12 +2245,15 @@
 
   function setDrawHint(text) { if (_draw) _draw.hint.textContent = text; }
 
-  function stopDraw() {
+  // `notify`: the user (Esc, Cancel) or the page ended draw mode, so the scanner window's crosshair is told; a finished
+  // drag and a cancel the window asked for need no word.
+  function stopDraw(notify = false) {
     if (!_draw) return;
-    const { veil, hint, band, off } = _draw;
+    const { veil, bar, band, off } = _draw;
     _draw = null;
     off();
-    for (const el of [band, hint, veil]) el.remove();
+    for (const el of [band, bar, veil]) el.remove();
+    if (notify) chrome.runtime.sendMessage({ action: 'drawEnded' }).catch(() => {});
   }
 
   function swallow(e) {
@@ -1892,7 +2267,7 @@
     _draw.start = null;
     _draw.band.style.display = 'none';
     const moved = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
-    if (moved < DRAW_CLICK_SLOP) { stopDraw(); return; }
+    if (moved < DRAW_CLICK_SLOP) { setDrawHint(DRAW_CLICK_HINT); return; }
     const drawn = [Math.min(start.x, end.x), Math.min(start.y, end.y), Math.max(start.x, end.x), Math.max(start.y, end.y)];
     if (drawn[2] - drawn[0] < DRAW_MIN_SIDE || drawn[3] - drawn[1] < DRAW_MIN_SIDE) return;
     const photo = pickDrawTarget(drawn, collectDrawPhotos());
@@ -1910,15 +2285,31 @@
     if (_draw) return;
     const veil = drawEl('div', { position: 'fixed', left: '0', top: '0', width: '100vw', height: '100vh', cursor: 'crosshair', zIndex: DRAW_Z, background: 'rgba(0,0,0,0.04)' });
     const band = drawEl('div', { position: 'fixed', display: 'none', border: '1.5px solid #6366f1', background: 'rgba(99,102,241,0.15)', zIndex: DRAW_Z, pointerEvents: 'none', boxSizing: 'border-box' });
-    const hint = drawEl('div', {
+    const bar = drawEl('div', {
       position: 'fixed', left: '50%', top: '12px', transform: 'translateX(-50%)', zIndex: DRAW_Z, pointerEvents: 'none',
-      font: '600 13px system-ui, sans-serif', color: '#fff', background: 'rgba(17,19,31,0.92)', padding: '6px 12px', borderRadius: '6px',
-    }, DRAW_HINT);
+      display: 'flex', alignItems: 'center', gap: '12px',
+      font: '600 13px system-ui, sans-serif', color: '#fff', background: 'rgba(17,19,31,0.92)', padding: '6px 6px 6px 12px', borderRadius: '6px',
+    });
+    const hint = document.createElement('span');
+    hint.textContent = DRAW_HINT;
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Cancel';
+    Object.assign(cancel.style, {
+      pointerEvents: 'auto', cursor: 'pointer', font: 'inherit', color: '#fff', background: 'rgba(255,255,255,0.16)',
+      border: '1px solid rgba(255,255,255,0.5)', borderRadius: '4px', padding: '2px 10px',
+    });
+    bar.append(hint, cancel);
     const onDown = (e) => {
       swallow(e);
-      if (e.button !== 0) return;
+      if (e.button !== 0 || e.target === cancel) return;
       _draw.start = { x: e.clientX, y: e.clientY };
       setDrawHint(DRAW_HINT);
+    };
+    // The window listeners run first, so the Cancel button's own click is taken here.
+    const onClick = (e) => {
+      swallow(e);
+      if (e.target === cancel) stopDraw(true);
     };
     const onMove = (e) => {
       if (!_draw) return;
@@ -1934,17 +2325,17 @@
       swallow(e);
       if (_draw?.start) finishDraw({ x: e.clientX, y: e.clientY });
     };
-    const onKey = (e) => { if (e.key === 'Escape') { swallow(e); stopDraw(); } };
-    const events = [['mousedown', onDown], ['mousemove', onMove], ['mouseup', onUp], ['click', swallow], ['contextmenu', swallow], ['keydown', onKey]];
+    const onKey = (e) => { if (e.key === 'Escape') { swallow(e); stopDraw(true); } };
+    const events = [['mousedown', onDown], ['mousemove', onMove], ['mouseup', onUp], ['click', onClick], ['contextmenu', swallow], ['keydown', onKey]];
     for (const [type, fn] of events) window.addEventListener(type, fn, true);
     // The page going away or into the background ends draw mode; visibilitychange bubbles from the document to the window.
-    const onLeave = () => stopDraw();
-    const onVisibility = () => { if (document.visibilityState === 'hidden') stopDraw(); };
+    const onLeave = () => stopDraw(true);
+    const onVisibility = () => { if (document.visibilityState === 'hidden') stopDraw(true); };
     window.addEventListener('pagehide', onLeave);
     window.addEventListener('beforeunload', onLeave);
     window.addEventListener('visibilitychange', onVisibility);
     _draw = {
-      veil, hint, band, start: null,
+      veil, bar, hint, cancel, band, start: null,
       off: () => {
         for (const [type, fn] of events) window.removeEventListener(type, fn, true);
         window.removeEventListener('pagehide', onLeave);
@@ -1964,6 +2355,9 @@
       sendResponse({ ok: true });
       return false;
     } else if (msg.action === 'showOverlay') {
+      // A lot's overlay is for the page it was scanned on; on any other page it is not drawn, and one shown there goes.
+      if (typeof msg.pageUrl === 'string' && !isLotPage(msg.pageUrl)) { clearOverlay(); return false; }
+      _overlayScanId = typeof msg.scanId === 'string' ? msg.scanId : null;
       _fullSize = msg.fullSize?.url && /^https?:/.test(msg.fullSize.url) ? { url: msg.fullSize.url } : null;
       if (typeof msg.shown === 'boolean') _shown = msg.shown;
       renderOverlay(msg.cards, msg.srcWidth, msg.srcHeight);
@@ -2020,6 +2414,6 @@
 
   // dev-only:start
   // Exposed for Playwright demo / testing without going through the relay chain
-  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { pickDrawTarget, acceptClick,labelText, tagText, tagRows, fitPrice, fitName, tagLayout, placeTag, placeTagLadder, cardState, fitText, labelLayout, paintedBox, hoveredTarget, closeButtonRect, CLOSE_R, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, hasBlur, decorativeReason, canvasBacking, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
+  window.__cardScanner = { show: renderOverlay, clear: clearOverlay, find: findCardImages, startObserving, stopObserving, pure: { pickDrawTarget, acceptClick, legendLayout, legendPlacement, labelText, chipSpec, chipLayout, placeChip, chipHit, bracketArm, fitPrice, fitName, cardState, fitText, labelLayout, paintedBox, hoveredTarget, closeButtonRect, CLOSE_R, boxToRel, relToBox, boxToDoc, docToBox, pickAnchor, boxInView, hasBlur, decorativeReason, canvasBacking, tidyText, clipBox, isSealedLabel, chainOf, idOf, sourceHints, boundedText, headingBefore, collectHeadings, scrollsHorizontally, collectImageHosts, srcsetUrls } };
   // dev-only:end
 }());

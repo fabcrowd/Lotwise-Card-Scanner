@@ -139,7 +139,9 @@ Rule: every smoke test captures screenshots of the page overlay and of the popup
 ## Nothing goes to the owner before a full smoke and QA pass
 On 2026-10-25 the owner found, from his own screenshots, that overlay boxes do not sit on the cards (boxes stretched outward from the photo centre on a letterboxed Facebook photo) and that slabs are not detected. Our smoke had reported counts and prices only.
 
-Rule: the owner is the client. Before any result, build or 'ready' message goes to him, run the release QA gate in `tasks/todo.md` on real listings found by us (Playwright in his Chrome; never ask him for links), with screenshots checked by the director. Correct identifications with misplaced boxes is a failed release.
+Rule: the owner is the client. Before a build, or anything else he will load or look at in the browser, is presented to him as ready, run the release QA gate in `tasks/todo.md` on real listings found by us (Playwright in his Chrome; never ask him for links), with screenshots checked by the director. Correct identifications with misplaced boxes is a failed release.
+
+Scope (the agent's wording, first added 2026-11-14; on 2026-11-15 the owner approved folding it into the rule above): reports of test runs, study results, reviews and doc changes do not wait for this gate.
 
 ## QA verdicts come from on-screen screenshots, not the overlay canvas
 Gate 3 (2026-10-25) passed the L2 resize check from the extension's canvas dump, which held 3 correct boxes, while the real on-screen screenshot showed no boxes at all (the canvas was not visible after the resize).
@@ -163,3 +165,73 @@ Rule: label on the largest available picture and score on the small served one.
 
 ## Harvest blocks are final (2026-11-08)
 LiveAuctioneers rendered empty in headless Chromium and estatesales.org returned 403 on the first request. Rule: record the block, skip the site, and do not retry headed or otherwise work around it.
+
+## A guard test must be harmless when the guard is missing (2026-11-17)
+A builder wrote a test that ran the real `uninstall.ps1` with `-UninstallKey HKCU:\Software` to prove the script refuses it, and ran it once before the guard existed. The key survived (30 subkeys, `Microsoft` 110, checked read-only afterwards), but a regression would have deleted the user's whole `HKCU\Software`. Other tests passed `C:\` and an `HKLM` key the same way.
+
+Rule: test a refusal by calling the guard function alone (extract it from the script and run only it), never by running the destructive script end to end with a real target. Before adding an end-to-end refusal test, ask what the run writes or deletes if the guard is removed; the answer must be "only the temp folder and the test's own key". Never use a test-name filter as the only thing that keeps a dangerous test from running.
+
+## A gate must replay with the rows it is deciding about (2026-11-17)
+The nightly rule "a night that only adds new cards may ship when the regression score did not drop" compared two replays that never included the new-card rows, so it was true by construction. A cold review found it; the unit tests could not, because they asserted "ships" and the gate could not fail that way.
+
+Rule: when a gate decides whether something ships, feed that thing into the replay ("before" with the live rows, "after" with the candidate's), and write one test where the gate must say no (here: a new row that is the nearest neighbor of another card's regression crop).
+
+## A synthetic comparison of row models needs a real-photo condition (2026-11-17)
+Rows made by the query's own model from the same clean picture scored 98.7% against 81.9% on synthetic reads, and the "large full" guard cell could not fail (the query was the row's own picture). An audit also showed such rows took 4 of 120 control reads. The decision was only safe after a second condition on labelled real boxes, written into the preregistration before any number was computed.
+
+Rule: before choosing which model makes catalog rows, preregister a real-photo condition on reads of other cards (lost, gained, added confident errors) next to the synthetic one, and treat the synthetic gain as an upper bound.
+
+## A copied Chrome profile runs the old service worker (2026-11-17)
+A Playwright spec that copied `.tmp/draw-box/profile` ran a stale extension worker: it had no new code and logged "packaged card check not available". Deleting the whole `Service Worker` folder also deleted the cached models.
+
+Rule: in a copied profile delete `Default/Service Worker/ScriptCache` and `Database`, keep `CacheStorage`, and assert in the spec that the worker logged the line the new build prints.
+
+## IExpress limits (2026-11-17)
+IExpress builds no exe when the `AppLaunched` line is 259 characters or longer, it ignores the program's exit code, and with `NoDefaultCurrentDirectoryInExePath=1` set `cmd.exe /c name.cmd` does not find a file in the current folder.
+
+Rule: keep the launch line short (`cmd.exe /c .\launch.cmd`), put logic in the shipped `.cmd`, and probe only with stub scripts in a temp folder.
+
+## A fallback that prints a friendly line hides a broken command (2026-11-17)
+The nightly workflow ran `gh release download ... || echo "no live bundle yet"`. `gh` refused the command from the first run on (it needs `--pattern` for the latest release), the fallback printed its line, and every run was green. The job never read the live bundle and nobody saw it for a month.
+
+Rule: after a workflow change, read the log of one real run for each `|| echo` fallback line, not only the job result, and pin the command's required flags in `tests/test_workflow.py`.
+
+## Run the built installer once per way it can be started (2026-11-17)
+The installer tests ran `install.ps1` and `launch.cmd` in temp folders, and the exe had only been started the normal way. Its `/Q` switch showed "Error creating process <None>": IExpress runs its own default when a quiet command is empty.
+
+Rule: set `AdminQuietInstCmd` and `UserQuietInstCmd` to the launch command, and before calling an installer done run the built exe once with each switch (none, `/Q`, `/Q:A`).
+
+## Two programs that share a file format need one test that reads both (2026-11-18)
+The relay stamps `received` as a date (`2026-11-18`). The nightly reader required a full timestamp and rejected every contribution file the relay commits. Each side had passing tests, written against its own idea of the format, so the shared-learning loop could not have counted one correction and nothing was red.
+
+Rule: when one program writes what another reads (relay to nightly reader, uploader to relay limits, signer to pack size), pin the contract in a test that imports or reads the other side's real constant or sample, as `tests/share-queue.test.js` now does with the relay's `MAX_BODY_BYTES`. Also check who can send at all: the relay's allowlist holds two extension ids, and an unpacked copy on another PC has a different id.
+
+## A fix that removes a race can uncover a fault the race was hiding (2026-11-18)
+Keeping a fresh scanner-window id (instead of overwriting it with the stored one) made `overlay-remove.spec.js` fail. The old overwrite had been stopping the tab-activated handler by accident. With the id right, the handler made the scanner window's own tab the scan target, because a new tab has no address yet and so was not seen as an extension page.
+
+Rule: when a correct change breaks a browser test, log the values in the failing path before choosing between the change and the test. Do not put the race back.
+
+## A test that needs an empty start must make it so (2026-11-18)
+A new popup test for "no lot yet" passed alone and failed in the full file: the test before it left a saved lot for the same page address in `chrome.storage.session`.
+
+Rule: a popup test that needs no saved lot uses a page address of its own and asserts the empty state first; a test that saves a lot removes `lotSessions` before it closes. Run a new browser test in the full file, not only with `-g`.
+
+## Two states that look the same on screen need a test for each origin (2026-11-19)
+An automatic price retry was written for "a card whose price lookup failed". A row in the Choose state with an identity has two origins: the user picked a card and its lookup failed, or the scanner made an unsure guess and the scan's batch pricing failed. The retry went through `pickSet` with the row's identity as the pick, which sets `setConfirmed` and `userConfirmed`. For the second origin that would have confirmed and priced a card the user never chose. The tests only built the first origin. A cold review caught it before it reached a build the owner uses.
+
+Rule: an automatic action never reuses a path that records a user decision. Give it its own narrow path (here: price only, for a row the scan itself confirmed) and write one test per origin of the state it acts on, built with the real function that produces that state (`asLowCertaintyGuess`), not a hand-made object.
+
+## An answer that arrives late must check the row is still the one it was asked for (2026-11-19)
+The corrected retry was guarded by the scan id and a pick counter. A version swap changes the row's card without touching either, so a retry answer that landed after the swap wrote the old card and its price over the user's choice. The same re-render also took keyboard focus out of an open search box.
+
+Rule: when an async answer lands, compare the row's current card id with the id the request was started for, and drop the answer on a mismatch. Do not rely on a counter that only some edit paths bump. A re-render that the user did not trigger must leave focus and caret where they were; test it by typing one more character after the answer lands.
+
+## State moved to session storage outlives the worker, so give it an age (2026-11-19)
+A finished scan result used to live in the service worker's memory, so it disappeared within minutes. Storing it in `chrome.storage.session` to survive a worker restart also made it survive for the whole browser session: the scanner reopened on the same page hours later would have shown old rows and prices as current.
+
+Rule: when state moves from memory to storage, write down its old lifetime and keep it on purpose (`HELD_SCAN_MAX_AGE_MS`). The restore must also not overwrite a value that was set after the worker started, and must always settle, or every message that waits for it hangs. Test the restore by stopping the real service worker (`tests/e2e/worker-restart.spec.js`), and prove the test fails with the restore switched off.
+
+## Extension session storage is cleared by a reload (2026-11-19)
+`chrome.runtime.reload()` clears `chrome.storage.session`, where the saved lots, the held scan and the draw state live. A self-update that reloads the extension at any time would silently delete the user's lot.
+
+Rule: reload by itself only when nothing is stored that a reload would lose and the scanner window is closed; otherwise show a notice and let the user restart. Chrome also disables an unpacked extension on `runtime.reload()` when Developer mode is off; an unpacked install needs Developer mode on anyway, and a browser test has to switch it on at `chrome://extensions`.

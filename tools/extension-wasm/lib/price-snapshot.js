@@ -94,7 +94,8 @@ export function parseSnapshot(text) {
 
 /**
  * Add the printings an ex10-ex16 card's TCGdex grid lacks (all of them when there is no grid) from the snapshot's
- * `byCatalog`, dated like any snapshot price. A printing TCGdex prices stays; a richer grid (backend, Price Tracker),
+ * `byCatalog`, dated like any snapshot price unless the grid has a priced printing and a valid date of its own (it keeps
+ * that date). A printing TCGdex prices stays; a richer grid (backend, Price Tracker),
  * another card, an undated snapshot or nothing to add returns the grid it was given.
  */
 export function applyCatalogPrices(grid, snapshot, identity) {
@@ -114,7 +115,10 @@ export function applyCatalogPrices(grid, snapshot, identity) {
   }
   if (!added) return grid;
   const base = grid || { source: "snapshot", graded: {}, defaultVariant: null };
-  return { ...base, variants, updatedAt, spreadRatio: spreadOf(variants) };
+  // Like applySnapshot: a printing the grid priced itself keeps the grid's own (older) date, so the added price does not look fresh.
+  const ownPriced = Object.values(grid?.variants || {}).some((variant) => variant?.market > 0);
+  const ownDated = typeof grid?.updatedAt === "string" && Number.isFinite(Date.parse(grid.updatedAt));
+  return { ...base, variants, updatedAt: ownPriced && ownDated ? grid.updatedAt : updatedAt, spreadRatio: spreadOf(variants) };
 }
 
 /**
@@ -127,7 +131,10 @@ export function applySnapshot(grid, snapshot) {
     ? snapshot.updatedAt
     : null;
   if (!updatedAt) return grid;
+  // An older snapshot must not overwrite a fresher price or date the grid with its own older date.
+  if (Date.parse(updatedAt) < Date.parse(grid.updatedAt)) return grid;
   let applied = 0;
+  let keptPriced = 0;
   const variants = {};
   for (const [printing, variant] of Object.entries(grid.variants || {})) {
     const subtype = SUBTYPE[printing];
@@ -135,6 +142,7 @@ export function applySnapshot(grid, snapshot) {
     const market = subtype && product ? roundPrice(product[subtype]) : null;
     if (market == null) {
       variants[printing] = variant;
+      if (variant?.market > 0) keptPriced += 1;
       continue;
     }
     applied += 1;
@@ -145,7 +153,9 @@ export function applySnapshot(grid, snapshot) {
     };
   }
   if (!applied) return grid;
-  return { ...grid, variants, updatedAt, spreadRatio: spreadOf(variants) };
+  // A printing the snapshot did not price keeps its own price, so the grid keeps its own (older) date.
+  const date = keptPriced > 0 && grid.updatedAt ? grid.updatedAt : updatedAt;
+  return { ...grid, variants, updatedAt: date, spreadRatio: spreadOf(variants) };
 }
 
 function chromeStorage() {

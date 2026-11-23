@@ -17,9 +17,33 @@ work. Older dated handoffs are archived history in `docs/archive/`. Cursor conve
 
 ## Working model
 
-Opus (the main session) researches, writes plans and briefs, reviews, verifies and commits. Sonnet subagents (`model: sonnet`) execute the plans: every code and file change, even one-liners. This is a token-saving measure: don't have Opus edit files or Sonnet invent plans. If a Sonnet agent hits a design decision not covered by its brief, it stops and reports instead of choosing.
+The main session runs on Claude Fable 5.2 (`claude --model claude-fable-5-2`) at `high` effort. Use `xhigh` only for one hard, long piece of work where it measurably helps. Don't use `max`. If a session runs on Claude Opus 5.5 instead, start it at `medium` effort, the default on that model, and follow "Working on Claude Opus 5.5" in `~/.claude/CLAUDE.md`. Older notes call the main session "Opus": they mean the main-session role described here, whichever model runs it.
+
+The main session researches, writes plans and briefs, reviews, verifies, and commits when the owner asks. Sonnet subagents (`builder`, `model: sonnet`) execute the plans: every code change, even one-liners. This is a token-saving measure: don't have the main session edit code or Sonnet invent plans. If a Sonnet agent hits a design decision not covered by its brief, it stops and reports instead of choosing. The main session writes its own documents itself: plans, briefs, handoffs, instruction files and memory notes.
 
 Standing owner rule (2026-11-13): do the work through subagents or a dynamic workflow (a script that orchestrates many subagents, https://code.claude.com/docs/en/workflows), whichever makes the work easier to break up. The main session keeps its own work to getting the data and orchestrating. On this PC keep a workflow's concurrent agents low (memory is tight and the owner uses the machine during runs).
+
+When to delegate: each subagent starts cold and reads again what the main session already knows, and subagents are a large share of a session's cost. Start one for a bounded edit, a test or harness run, a search across many files, or the same step over many items. Read a file, run one command or answer from context yourself: that is getting the data. A brief gives the goal, the file allowlist, the commands to run, what is out of scope, and what to report (paths and counts, not file dumps). Every change gets a cold `adversary` review before it is called done.
+
+Ownership: the owner owns this code and wants surgical changes. Fix what is in scope. Report nearby problems instead of refactoring them. Review the diff, not only the builder's summary.
+
+### Approvals
+
+These steps need no approval. Do them without asking:
+- `npm test`, `npm run lint`, single test files, the dist rebuild (`scripts/build-wasm-extension.ps1`, also with `-Store` or `-Sealed`) and Playwright specs.
+- Offline Python scripts in `card-scanner-data` at below-normal priority with 8 threads or fewer.
+- The real-world harness with an explicit dev pages file.
+- Reads and searches, builder edits inside this working tree, and retries of reads, builds and tests.
+
+Ordinary obstacles are not blockers: a timeout, a flaky Playwright port (EADDRINUSE: run the specs one at a time), a busy file, or a process stopped for low memory. Diagnose them and carry on.
+
+These steps wait until the owner asks for that exact step in chat: a commit, a push, a merge to `main`, a push to `card-scanner-data`, a relay deploy, and `node scripts/sealed-score.mjs`. Prepare the change and name the one step you need. A general "go ahead" does not cover them.
+
+Deliberate blockers are the sealed test set, the sets that have been viewed, preregistration before any model or threshold change, and a site that blocks a harvest (see Gotchas and `tasks/lessons.md`). Leave them alone and report what you found. Stop only for one of these or for an owner decision.
+
+### Reports
+
+Write final reports and handoffs for a reader who has not seen your tool calls. Put the result first, in plain full sentences. Then give the commands you ran and their results as evidence. Do not use a label you made up during the work without saying what it is.
 
 ---
 
@@ -43,6 +67,7 @@ Extension (the product), `tools/extension-wasm/`:
 Build and packaging:
 - `scripts/build-wasm-extension.ps1` builds `dist/extension-wasm`, `-wasm-sealed` and `-wasm-store` (plus the store zip); never hand-edit `dist/`.
 - `scripts/lib/store-package.mjs`: the store transform (name, hosts, `STRIP_FILES`); `tools/extension-wasm-sealed/` is the sealed-score variant source.
+- `scripts/build-installer.ps1` builds `dist/Lotwise-Setup-<version>.exe`, a per-user Windows installer made with IExpress that wraps the store package. Its scripts and guide page are in `tools/installer/` (`install.ps1`, `uninstall.ps1`, `guide.html`); `tests/installer.test.js` covers them. Chrome ignores `chrome://` addresses on its command line and loads an unpacked extension only by hand, so the installer copies the files and opens the guide.
 
 Tests:
 - `tests/*.test.js` (Node runner, one file per module). Contract pins: `store-build.test.js`, `store-clean.test.js`, `store-transform.test.js`, `extension-wasm-build.test.js`, `share-rows.test.js`, `share-queue.test.js`, `shared-data-pack.test.js`, `contribution.test.js`, `fusion.test.js`, `confirm-rule.test.js`, `bundle.test.js`, `packaged-check.test.js`, `relay-*.test.js`.
@@ -72,7 +97,7 @@ Data and scratch:
 ## Token discipline
 
 - Find with this map and Glob/Grep first; read only the lines you need. `background.js`, `popup.js` and `content.js` are thousands of lines: Grep for the function, then read a short range.
-- Never open `dist/`, `node_modules/`, `data/`, `tools/vellum-ai/models/`, `.venv*`, model files (`*.bin`, `*.onnx`, `*.npy`, `*.faiss`) or screenshots under `tests/e2e/screenshots/`.
+- Do not read file contents under `dist/`, `node_modules/`, `data/`, `tools/vellum-ai/models/`, `.venv*`, model files (`*.bin`, `*.onnx`, `*.npy`, `*.faiss`) or screenshots under `tests/e2e/screenshots/`: they are generated, binary or large, and reading them spends tokens for nothing. Checking that a path exists is fine, and so is comparing `dist/` to source by timestamp or hash. `data/sealed-test/` is stricter: see Gotchas.
 - Study numbers come from the result files and each study's `README.md` under `card-scanner-data/data/reports/`; never recompute them in the main session.
 - Subagent reports and logs are summarized in a few lines, not pasted. Ask subagents for paths and counts, not file dumps.
 - Run the single relevant test file while working; run the full `npm test` once at the end.

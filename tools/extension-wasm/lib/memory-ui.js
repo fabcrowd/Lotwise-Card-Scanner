@@ -44,7 +44,7 @@ export function correctedMark(guess, pickedId, response) {
 export function whyHtml(card, idx, open) {
   if (!card?.why) return "";
   const text = whyText(card.why, { name: card.identity?.name });
-  const button = `<button type="button" class="link-btn why-btn" data-why data-idx="${idx}" aria-expanded="${open}" aria-controls="why-${idx}">Why this card?</button>`;
+  const button = `<button type="button" class="link-btn why-btn" title="Why this card?" data-why data-idx="${idx}" aria-expanded="${open}" aria-controls="why-${idx}">Why this card?</button>`;
   const panel = open && text ? `<div class="why-pop" id="why-${idx}" role="note">${escHtml(text)}</div>` : "";
   return `<div class="why-row">${button}</div>${panel}`;
 }

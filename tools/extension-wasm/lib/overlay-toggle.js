@@ -22,6 +22,8 @@ export function tabMessageFor(msg) {
     return {
       action: "showOverlay", cards: msg.cards, srcWidth: msg.srcWidth, srcHeight: msg.srcHeight,
       ...(msg.fullSize ? { fullSize: msg.fullSize } : {}),
+      ...(typeof msg.pageUrl === "string" && msg.pageUrl ? { pageUrl: msg.pageUrl } : {}),
+      ...(typeof msg.scanId === "string" && msg.scanId ? { scanId: msg.scanId } : {}),
       ...(typeof msg.shown === "boolean" ? { shown: msg.shown } : {}),
     };
   }

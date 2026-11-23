@@ -104,7 +104,7 @@ async function inject(page, cards, ms = 280) {
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
-test.describe('Visual smoke — Card Scanner popup', () => {
+test.describe('Visual smoke — Lotwise popup', () => {
   let context;
   let EXT_ID;
 
@@ -153,7 +153,7 @@ test.describe('Visual smoke — Card Scanner popup', () => {
     await shot(page, '01-idle');
 
     await expect(page.locator('#cam-placeholder')).toBeVisible();
-    await expect(page.locator('.logo')).toContainText('Card Scanner');
+    await expect(page.locator('.logo')).toContainText('Lotwise');
     await page.close();
   });
 

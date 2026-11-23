@@ -12,7 +12,7 @@ try {
 }
 
 import { checkModelsReady, downloadModels, getAssetBuffer, getAssetJson, getOptionalAsset, pruneOldCaches } from "./lib/setup.js";
-import { loadDetector, detectCards, getConfThreshold, setConfThreshold } from "./lib/detect.js";
+import { loadDetector, detectCards } from "./lib/detect.js";
 import { acceptWholePhoto, displayedRegion, dropEdgeFragments, extendClippedBottom, filterPhotoDetections, imageToViewportTransform, mapPhotoBoxToViewport, mergeTileDetections, planHeroCard, rescaleTransform, tileRects } from "./photo-detection.js";
 import { choosePageFocus, imageKey, isSealedListing, shouldSuppressCards } from "./lib/page-focus.js";
 import { GALLERY_BUDGET_MS, MIN_GALLERY_SIDE, galleryPhotos, mergeAcrossPhotos } from "./lib/gallery.js";
@@ -20,13 +20,15 @@ import { cardRoom, captureWait, claimSlot, coveredByBetterView, createScanGate, 
 import { loadEmbedder, embedCard }    from "./lib/embed.js";
 import { rectifyCard, warpQuad }       from "./lib/rectify.js";
 import { CORNER_MIN_CONF, cornerModelReady, loadCornerModel, predictCorners, validQuad } from "./lib/corners.js";
-import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
+import { adapterActive, catalogRowsWith, configureCatalog, loadCatalog, loadHubPenalty, searchCatalog, searchPair, physicalHits, scoreIndices, eraHits } from "./lib/search.js";
 import { isTooSmallBox, smallPhotoCounts, tooSmallCard, canFrameTooSmall, keepTooSmall } from "./lib/tiny-card.js";
 import {
   acceptDrawnSender, correctionSource, drawnCardEntry, examGroupAllowed, examHoldAllowed, normalizeDrawnMessage, viewportRectToBitmapBox, viewportToPhotoBox, isSamePage,
 } from "./lib/draw-box.js";
 import { loadLot, saveLot } from "./lib/lot-session.js";
-import { acceptPageSender, removalStored, removeFromLot } from "./lib/overlay-remove.js";
+import { saveDrawState, loadDrawState, saveHeldScan, loadHeldScan, clearHeldScan, pickRestored, settleRestore } from "./lib/worker-state.js";
+import { RELEASE_PAGE_URL, SELF_UPDATE_KEY, availableUpdate, checkForRelease, clearsUpdatedNote, compareVersions, decideSelfUpdate, guardWithReload, hasStoredSessionWork, isInstallerCopy, isNewerVersion, isUsableManifest, manualCheckAllowed, parseVersion, releaseCheckDue, settleAfterReload, waitSettled, workerIsIdle, FLUSH_WAIT_MAX_MS } from "./lib/self-update.js";
+import { acceptPageSender, removalStored, removeFromLot, scanMatches } from "./lib/overlay-remove.js";
 import { BELOW_HIGH_CONFIDENCE, SMALL_SOURCE_CONFIDENCE_CAP, CONFIRM_MIN_HEIGHT, capAdapterChange, capHeightFor, capUnconfirmedSet, fuseResults, informationHeight, markChoose, naturalPerFedFor, markRepeatedNames } from "./lib/fusion.js";
 import { setChoices, choiceSummary, versionChoices, choiceName, cardDescribedInText, cardNamedByAttacks, cardNamedInText, descriptionFromCard, attacksFromCard, nameAgrees, nameAlmostAgrees, onlyPromoChoice, extendsTitle, titleVerdict } from "./lib/set-choice.js";
 import { eraById, eraPrintings, inEra } from "./lib/era.js";
@@ -34,11 +36,13 @@ import { applyTitlePrior, pageSetHint } from "./lib/title-prior.js";
 import { setRangeSummary } from "./lib/card-display.js";
 import { applyBatchedPrices as applyBatchedPricesWith, batchPriceCards as batchPriceCardsWith, collectBatchIds, createPriceCache, createRetryLoader } from "./lib/batch-price.js";
 import { looksLikeCard, mergeSourceRead, sourceRefineOrder, tileSource } from "./lib/refine.js";
-import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage, wrongIdOf } from "./lib/card-picker.js";
+import { asLowCertaintyGuess, candidatesFor, closestMatches, correctionRecord, findCards, isUnsure, pageUrlForStorage, titleChoiceIds, wrongIdOf } from "./lib/card-picker.js";
+import { JA_ASSET, chooseCandidates, createJaLoader, gunzip, isJaId, japaneseRead, parseJaCatalog, searchAll } from "./lib/japanese.js";
+import { createJaPriceClient, jaLookup } from "./lib/ja-prices.js";
 import { createCorrectionsStore } from "./lib/corrections-store.js";
 import { applyMemory, correctionsToEmbed, currentReferences, decodeEmbedding, referenceRow, referencesForExport, singleFlight, withEmbeddings } from "./lib/references.js";
 import { CROP_QUALITY, MAX_CROP_CHARS, cropSize, cropTooSmall, modelTags } from "./lib/contribution.js";
-import { agreeWithReference, holdExamPick, storeCorrection } from "./lib/correction-save.js";
+import { agreeWithReference, keepsNoPicture, serializeByScan, settleExamPick, storeCorrection } from "./lib/correction-save.js";
 import { skipDraft, unskipDraft } from "./lib/skip.js";
 import { memoryVerdict, skipVerdict } from "./lib/memory-confirm.js";
 import { referenceBar } from "./lib/reference-bars.js";
@@ -57,11 +61,14 @@ import { DRAWN_KINDS, createDrawnExamplesStore, newExampleId } from "./lib/drawn
 // dev-only:end
 import { captureWithoutOverlay, sendToTab } from "./lib/tab-messaging.js";
 import { loadOverlayShown, tabMessageFor } from "./lib/overlay-toggle.js";
+import { clearPendingShow, savePendingFullSize, savePendingShow } from "./lib/pending-show.js";
+import { createScannerOpener, restoreWinId, saveWinId } from "./lib/scanner-window.js";
 import { FACEBOOK_MAX_SIDE, fullSizeCandidates, isFacebookCdn, largerRendition, loadFullSize, needsShareImages, shareImagesFromHtml } from "./lib/full-size.js";
 import { applySetPrior, pageSetShares } from "./lib/set-prior.js";
 import { hasSiteAccess, siteLabel, siteOrigins } from "./lib/site-access.js";
 import { getPptKey } from "./lib/ppt-key.js";
-import { chooseFallbackTab, isOwnPage } from "./lib/page-target.js";
+import { chooseFallbackTab, isOwnPage, isTargetTopFrame } from "./lib/page-target.js";
+import { CARD_DATA_NOTE_KEY, dismissedNote, nextCardDataNote } from "./lib/card-data-note.js";
 import { isCardBack }                  from "./lib/card-back.js";
 import { loadNumberReader, readArtStamp, readCardName, readCardNumber, readCardRules, readCollectorCorner, readSourceCorner } from "./lib/ocr.js";
 import { choiceFromCorner, cornerRects, parseCornerText } from "./lib/corner-read.js";
@@ -76,7 +83,7 @@ import { loadVariantModel, readVariant, variantModelReady } from "./lib/variant-
 import { finishFromNumber, finishFromVariants, finishSharedByNumber, stampAfterWizards, stampFromCorner } from "./lib/variant.js";
 import { applySetStamp } from "./lib/set-stamp.js";
 import { PROMO_STAR_MIN, choicesForSymbol, promoStarScore, symbolFromScores, symbolScores } from "./lib/set-symbol.js";
-import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard } from "./lib/pricing.js";
+import { getPrice, getFullCardPayload, extractTcgPlayerId, getTcgdexCard, pricingFetchFailed } from "./lib/pricing.js";
 import { applyCatalogPrices, applySnapshot, currentSnapshot, refreshPriceSnapshot } from "./lib/price-snapshot.js";
 import {
   getConditionGrid, fromPokemontcgPayload, fromTcgdexPayload, tcgPlayerIdFromTcgdex,
@@ -84,12 +91,17 @@ import {
 
 // ─── state ───────────────────────────────────────────────────────────────────
 
+// The lowered detector floor for small, compressed listing photos and tiles (the default is 0.55).
+const LOW_CONF_THRESHOLD = 0.12;
+
 let _ready            = false;
 let _meta             = null;
 let _metaBase         = null; // meta.json as shipped; _meta is this plus the bundle's new cards
 let _idMap            = null;
 let _popupWinId       = null;
 let _targetTabId      = null;
+// The era of the last scan the user asked for: automatic rescans of the same page use it too.
+let _lastScanEra      = null;
 // Every scan path (button, rescan, lazy-load) goes through this: two scans on one tab would fight over its scroll.
 const _scanGate = createScanGate();
 // Shared by all scans, since Chrome limits captureVisibleTab per second across them.
@@ -122,7 +134,8 @@ const _uploader = createUploader({
   },
 });
 const _sharing = createSharing({ storage: local, store: _shareStore, uploader: _uploader, relayUrl: RELAY_URL });
-_sharing.enabled().then((on) => on && _uploader.flush()).catch((err) => console.error("[share] startup upload failed:", err?.message || err));
+// Kept so the self-update waits for it: a reload between the batch being posted and removed would send it twice.
+const _startupFlush = _sharing.enabled().then((on) => on && _uploader.flush()).catch((err) => console.error("[share] startup upload failed:", err?.message || err));
 
 // The key moves out of sync storage the first time the worker starts after the update.
 getPptKey().catch(() => {});
@@ -131,6 +144,12 @@ getPptKey().catch(() => {});
 function _setTargetTabId(id) {
   _targetTabId = id;
   chrome.storage.session.set({ targetTabId: id }).catch(() => {});
+}
+
+// Persists _popupWinId next to the target tab id, so a restarted service worker still knows the scanner window is open.
+function _setPopupWinId(id) {
+  _popupWinId = id;
+  saveWinId(chrome.storage.session, id);
 }
 
 // True for browser-internal pages. A tab whose address the extension may not read has no url;
@@ -146,56 +165,47 @@ function _isInternalUrl(url) {
 
 // ─── icon click → open popup window (gets camera permission prompt) ──────────
 
+// Focuses the scanner window, or opens it; `targetTab` becomes the scan target. Resolves true when it opened a new window.
+// Used by the toolbar button and by a click on a card on the page; calls are serialized (lib/scanner-window.js).
+const _scannerWindow = createScannerOpener({
+  windows: chrome.windows,
+  getContexts: (filter) => chrome.runtime.getContexts(filter),
+  popupUrl: chrome.runtime.getURL("popup.html"),
+  setTargetTab: _setTargetTabId,
+  isInternalUrl: _isInternalUrl,
+  getWinId: () => _popupWinId,
+  setWinId: _setPopupWinId,
+});
+const openOrFocusScanner = (targetTab, beforeCreate, onCreateFailed) => _scannerWindow.open(targetTab, beforeCreate, onCreateFailed);
+
 chrome.action.onClicked.addListener(async (clickedTab) => {
+  _activitySinceStart = true; // set before any await: the self-update check counts a clicked worker as busy
   // The tab the icon was clicked on is the one activeTab was granted for. Asking the browser for "the
   // current tab" instead could return the scanner window if that was the last thing focused.
   const activeTab = clickedTab ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
-  // Nothing is injected here: the page is touched only when the user presses Scan.
-  if (activeTab && !_isInternalUrl(activeTab.url)) _setTargetTabId(activeTab.id);
-
-  if (_popupWinId !== null) {
-    try {
-      await chrome.windows.update(_popupWinId, { focused: true });
-      return;
-    } catch {
-      _popupWinId = null;
-    }
-  }
-
-  // After a SW restart _popupWinId is null even if the window still exists — find it.
-  const popupUrl = chrome.runtime.getURL("popup.html");
-  const [existingTab] = await chrome.runtime.getContexts({ contextTypes: ["TAB"], documentUrls: [popupUrl] });
-  if (existingTab?.windowId != null && existingTab.windowId >= 0) {
-    _popupWinId = existingTab.windowId;
-    try {
-      await chrome.windows.update(_popupWinId, { focused: true });
-      return;
-    } catch {
-      _popupWinId = null;
-    }
-  }
-
-  // Keep the popup narrow and tall so it docks on the right without obscuring the page content.
-  const win = await chrome.windows.create({
-    url: popupUrl,
-    type: "popup",
-    width: 500,
-    height: 680,
-    focused: true,
-  });
-  _popupWinId = win.id;
+  await openOrFocusScanner(activeTab);
 });
 
-chrome.windows.onRemoved.addListener((id) => {
-  if (id === _popupWinId) _popupWinId = null;
+// The scanner window may open while the stored id is being read: the fresh id wins over the stale stored one.
+async function restorePopupWinId() {
+  const restored = await restoreWinId(chrome.storage.session, _popupWinId);
+  if (_popupWinId === null) _popupWinId = restored;
+}
+
+chrome.windows.onRemoved.addListener(async (id) => {
+  await restorePopupWinId();
+  if (id === _popupWinId) _setPopupWinId(null);
 });
 
 // Keep _targetTabId current while the scanner popup is open.
 // When the user switches tabs or navigates, the overlay follows automatically.
-chrome.tabs.onActivated.addListener(({ tabId }) => {
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  await restorePopupWinId();
   if (_popupWinId === null) return;
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError) return;
+    // The scanner window's own tab has no url yet when the window is created, so it must not become the target.
+    if (tab.windowId === _popupWinId) return;
     if (!_isInternalUrl(tab.url)) {
       _setTargetTabId(tabId);
     }
@@ -221,6 +231,9 @@ async function tryAutoLoad() {
   try {
     const { targetTabId } = await chrome.storage.session.get("targetTabId");
     if (targetTabId != null) _targetTabId = targetTabId;
+    await restorePopupWinId();
+    const { lastScanEra } = await chrome.storage.session.get("lastScanEra");
+    if (lastScanEra && !_lastScanEra) _lastScanEra = eraById(lastScanEra);
   } catch {
     // session storage unavailable (older Chrome or SW start race): keep the in-memory target
   }
@@ -270,6 +283,7 @@ async function loadModels() {
     _ready = true;
     _loadHubPenalty();
     _loadNumberReader();
+    _loadJapaneseCatalogIfOn();
     // dev-only:start
     _loadVariantModel();
     // dev-only:end
@@ -337,6 +351,50 @@ async function straightenCardsInUse() {
   }
 }
 
+// The Japanese cards are a separate list: never in _meta, never in searchCatalog. Null until loaded; scans work without it.
+let _ja = null;
+let _jaById = null;
+const _loadJapaneseCatalog = createJaLoader(async () => {
+  try {
+    const buffer = await getOptionalAsset(JA_ASSET);
+    if (!buffer) throw new Error("file missing or failed its hash");
+    const { clip, crop } = modelTags();
+    _ja = parseJaCatalog(await gunzip(buffer), { query: clip, crop });
+    _jaById = new Map(_ja.cards.map((card) => [card.id, card]));
+    console.log("[BG] Japanese catalog loaded", _ja.n);
+  } catch (err) {
+    _ja = null;
+    _jaById = null;
+    console.log("[BG] Japanese catalog not available", err?.message || err);
+    throw err;
+  }
+});
+
+// "Japanese cards" in the options page; on unless it is switched off.
+async function japaneseCardsInUse() {
+  try {
+    return (await chrome.storage.local.get("japaneseCards")).japaneseCards !== false;
+  } catch {
+    return true;
+  }
+}
+
+async function _loadJapaneseCatalogIfOn() {
+  if (await japaneseCardsInUse()) await _loadJapaneseCatalog();
+}
+
+// The catalog to scan and search with now: the setting is read each time, like straightenCards, so a change applies to the
+// next scan without a restart. Switching it on starts the load in the background; that scan runs without it.
+async function activeJapaneseCatalog() {
+  if (!(await japaneseCardsInUse())) return null;
+  if (!_ja) _loadJapaneseCatalog();
+  return _ja;
+}
+
+const _jaPrices = createJaPriceClient();
+// A candidate list for a card treated as Japanese: its Japanese cards first, then the English ones the picture also resembles.
+const candidatesWithJapanese = (card, era) => chooseCandidates(card, candidatesFor(card, _meta, 5, era), _jaById);
+
 // The corner session shares the embedder's queue: single-threaded WASM cannot run two sessions at once.
 function cornersSerial(source, box) {
   const run = _embedQueue.then(() => predictCorners(source, box));
@@ -377,18 +435,72 @@ async function numberReaderReady() {
 // ─── message handler ─────────────────────────────────────────────────────────
 
 // Messages that drive the scanner come only from this extension's own pages. A page's content script may
-// send newCardsDetected, the box it drew (drawnBox) and the X on a card (overlayRemove), each checked in its own case.
+// send newCardsDetected, the box it drew (drawnBox), the X on a card (overlayRemove) and a click on a card (overlayPick), each checked in its own case.
 const OWN_PAGE_ONLY = new Set([
   "checkReady", "startSetup", "detect", "priceCard", "scanPage", "scanState", "awaitScan",
   "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard", "setOverlayShown", "drawBox", "cancelDraw",
+  "selfUpdateState", "selfUpdateRestart", "selfUpdateSettings", "selfUpdateCheckNow", "selfUpdateDismiss", "selfUpdateOpenRelease",
+  "cardDataNote", "cardDataNoteDismiss",
 ]);
 
+// Messages that read or change what the worker keeps in session storage wait until a restarted worker has read it back.
+const NEEDS_RESTORED_STATE = new Set(["scanState", "awaitScan", "clearPageOverlay", "cancelDraw", "drawnBox", "overlayRemove"]);
+let _stateRestored = false;
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  _activitySinceStart = true; // any message means someone is using the extension: the self-update will not reload under them
+  if (_stateRestored || !NEEDS_RESTORED_STATE.has(msg.action)) return handleMessage(msg, sender, sendResponse);
+  _workerStateRestored.then(() => handleMessage(msg, sender, sendResponse));
+  return true;
+});
+
+function handleMessage(msg, sender, sendResponse) {
   if (OWN_PAGE_ONLY.has(msg.action) && !isOwnPage(sender, chrome.runtime.id, chrome.runtime.getURL(""))) {
     sendResponse({ error: "Not allowed." });
     return false;
   }
   switch (msg.action) {
+    case "selfUpdateState":
+      selfUpdateState().then(sendResponse);
+      return true;
+
+    case "selfUpdateRestart":
+      selfUpdateRestart().then(sendResponse);
+      return true;
+
+    case "selfUpdateSettings":
+      selfUpdateSettings().then(sendResponse);
+      return true;
+
+    case "selfUpdateCheckNow":
+      selfUpdateCheckNow().then(sendResponse);
+      return true;
+
+    case "selfUpdateDismiss":
+      selfUpdateDismiss(msg.version).then(sendResponse);
+      return true;
+
+    case "selfUpdateOpenRelease":
+      selfUpdateOpenRelease().then(sendResponse);
+      return true;
+
+    case "cardDataNote":
+      local.get(CARD_DATA_NOTE_KEY).then((note) => sendResponse({ ok: true, note: note ?? null }), () => sendResponse({ ok: true, note: null }));
+      return true;
+
+    case "cardDataNoteDismiss":
+      // On the applyBundle chain: a newer note being stored by applyBundleOnce is never overwritten by this read-and-write.
+      _applying = _applying.then(async () => {
+        try {
+          const next = dismissedNote(await local.get(CARD_DATA_NOTE_KEY));
+          if (next) await local.set(CARD_DATA_NOTE_KEY, next);
+          sendResponse({ ok: true });
+        } catch {
+          sendResponse({ ok: false });
+        }
+      });
+      return true;
+
     case "checkReady":
       // The service worker starts blank after Chrome suspends it. Models stay
       // in the cache, so a later visit should come back ready without another download.
@@ -416,7 +528,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case "scanPage":
-      runHeldScan(sendResponse, eraById(msg.era));
+      _lastScanEra = eraById(msg.era);
+      chrome.storage.session.set({ lastScanEra: msg.era ?? null }).catch(() => {});
+      runHeldScan(sendResponse, _lastScanEra);
       return true; // async
 
     case "scanState":
@@ -429,7 +543,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case "clearPageOverlay":
-      _held = null; // a cleared lot must not come back from the held scan
+      _setHeld(null); // a cleared lot must not come back from the held scan
+      clearHeldScan(chrome.storage.session);
       relayToTab({ action: "relayClear" });
       sendResponse({ ok: true });
       return false;
@@ -443,6 +558,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         srcWidth: msg.srcWidth,
         srcHeight: msg.srcHeight,
         ...(msg.fullSize ? { fullSize: msg.fullSize } : {}),
+        ...(typeof msg.pageUrl === "string" ? { pageUrl: msg.pageUrl } : {}),
+        ...(typeof msg.scanId === "string" ? { scanId: msg.scanId } : {}),
         ...(typeof msg.shown === "boolean" ? { shown: msg.shown } : {}),
       });
       sendResponse({ ok: true });
@@ -480,7 +597,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "drawnBox":
       // From the top frame of the tab that started draw mode only, once: the box the user drew, over a photo of that tab.
       if (acceptDrawnSender(_drawTabId, sender)) {
-        _drawTabId = null;
+        _setDrawTabId(null);
         handleDrawnBox(msg, sender.tab);
       }
       return false;
@@ -492,18 +609,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false });
         return false;
       }
-      handleOverlayRemove(msg.index, sender.tab)
+      handleOverlayRemove(msg.index, sender.tab, msg.scanId)
         .then((ok) => sendResponse({ ok }))
         .catch((err) => { console.error("[BG] overlayRemove failed", err?.message || err); sendResponse({ ok: false }); });
       return true;
+
+    case "overlayPick":
+      // A click on a highlighted card on the page: bring the scanner to that card. An open window shows the card from the
+      // page's own message. Only when this call has to open the window is the card (and its page) stored, just before the
+      // window is created, for the window to read once its lot is restored.
+      if (!acceptPageSender(sender, chrome.runtime.id) || !Number.isInteger(msg.index) || msg.index < 0) return false;
+      openOrFocusScanner(sender.tab, () => savePendingShow(chrome.storage.session, { index: msg.index, url: sender.tab.url }), () => clearPendingShow(chrome.storage.session))
+        .catch((err) => console.error("[BG] overlayPick failed", err?.message || err));
+      return false;
+
+    case "overlayFullSize":
+      // The page's "Open full-size photo" pill: the scanner window does what its own button does (site access, a new tab, the scan).
+      // An open window takes the page's message itself; this only brings the window forward. When this call has to open the
+      // window, the click waits (like a card index) for the window to apply it once its lot is restored.
+      if (!acceptPageSender(sender, chrome.runtime.id)) return false;
+      openOrFocusScanner(sender.tab, () => savePendingFullSize(chrome.storage.session, { url: sender.tab.url }), () => clearPendingShow(chrome.storage.session))
+        .catch((err) => console.error("[BG] overlayFullSize failed", err?.message || err));
+      return false;
 
     case "newCardsDetected":
       // Content script saw new card-shaped images load (lazy/infinite scroll).
       // Re-scan only when the popup is open, models are ready, and no scan is running.
       // A scan already running on that tab leaves one follow-up for when it ends.
-      if (_popupWinId !== null && _ready) {
-        const tabId = sender.tab?.id ?? _targetTabId;
-        if (!_scanGate.queueFollowUp(tabId)) handleScanPage(sendRescanResult);
+      // A tab that is not the target is not scanned: handleScanPage reads the target.
+      if (_popupWinId !== null && _ready && isTargetTopFrame(sender, _targetTabId)) {
+        if (!_scanGate.queueFollowUp(sender.tab.id)) handleScanPage(sendRescanResult, _lastScanEra);
       }
       return false;
 
@@ -511,9 +646,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Corrections, references, and search: the extension's own pages only (checked in the handler).
       if (Object.hasOwn(_ownPageActions, msg.action)) return handleOwnPageMessage(msg, sender, sendResponse);
   }
-});
+}
 
-async function handleOverlayRemove(index, tab) {
+async function handleOverlayRemove(index, tab, scanId) {
   const open = await chrome.runtime.getContexts({ contextTypes: ["TAB"], documentUrls: [chrome.runtime.getURL("popup.html")] });
   if (open.length && tab.id === _targetTabId) {
     // The open window owns the list: it takes the removal or the page keeps the box (never a change behind its back).
@@ -523,6 +658,8 @@ async function handleOverlayRemove(index, tab) {
   }
   if (Boolean(_held?.running) && tab.id === _targetTabId) return removalStored({ running: true });
   const saved = await loadLot(chrome.storage.session, tab.url);
+  // An overlay drawn by a later rescan has other cards at these rows than the saved lot: the page keeps the box.
+  if (saved && !scanMatches(scanId, saved?.state?.bgScanId)) return false;
   const gone = saved?.state?.cards?.[index];
   const next = saved ? removeFromLot(saved.state, index) : null;
   if (next) {
@@ -531,9 +668,9 @@ async function handleOverlayRemove(index, tab) {
     contributeBoxSignal({ source: "removed", scanId: saved.state.bgScanId, index, ...(gone?.drawn ? { drawn: true, share: gone.share ?? null, crop: gone.crop ?? null } : {}) });
   }
   let heldChanged = false;
-  if (_held?.data && isSamePage(_held.url, tab.url)) {
+  if (_held?.data && isSamePage(_held.url, tab.url) && scanMatches(scanId, _held.data.scanId)) {
     const held = removeFromLot(_held.data, index);
-    if (held) { _held.data = held; heldChanged = true; }
+    if (held) { _held.data = held; heldChanged = true; saveHeldScan(chrome.storage.session, _held); }
   }
   return removalStored({ savedChanged: Boolean(next), heldChanged });
 }
@@ -570,16 +707,24 @@ function sendRescanResult(data) {
 // The newest scan the popup asked for, kept in memory so a window closed mid-scan (or just after it) loses nothing:
 // the reopened popup asks scanState, then awaitScan, and gets the result or the wait for it.
 let _held = null;
+// Set once anything assigns _held (even to null): the restore at worker start then leaves it alone.
+let _heldTouched = false;
+function _setHeld(held) {
+  _held = held;
+  _heldTouched = true;
+}
 
 function runHeldScan(sendResponse, era) {
   const held = { running: true, startedAt: Date.now(), progress: null, data: null, url: null, finishedAt: null, waiters: [] };
-  _held = held;
+  _setHeld(held);
+  clearHeldScan(chrome.storage.session); // the older result is replaced; a worker stopped mid-scan must not bring it back
   handleScanPage(async (data) => {
     held.running = false;
     held.finishedAt = Date.now();
     held.data = data && !data.error ? data : null;
     if (held.data?.targetTabId != null) held.url = (await chrome.tabs.get(held.data.targetTabId).catch(() => null))?.url ?? null;
     if (held.data) { held.data = { ...held.data, tabUrl: held.url }; data = held.data; }
+    if (_held === held) saveHeldScan(chrome.storage.session, held);
     const reply = { data: held.data, url: held.url, finishedAt: held.finishedAt, error: data?.error };
     try { sendResponse(data); } catch { /* the popup is gone: the held copy is what the next one reads */ }
     for (const waiter of held.waiters.splice(0)) { try { waiter(reply); } catch { /* closed too */ } }
@@ -624,7 +769,7 @@ async function handleScanPage(sendResponse, era) {
     else {
       sendResponse({
         error: choice.reason === "unreadable"
-          ? "Card Scanner cannot read this tab. Click the Card Scanner icon while you are on the page you want to scan."
+          ? "Lotwise cannot read this tab. Click the Lotwise icon while you are on the page you want to scan."
           : "No scannable tab — open a webpage first",
       });
       return;
@@ -789,6 +934,7 @@ async function handleScanPage(sendResponse, era) {
     const wholePage = stops.length > 1;
     const origin = { x: domResp.scrollX || 0, y: domResp.scrollY || 0 };
     let scrolled = false;
+    let boxesFound = 0; // card boxes found so far: the popup's "Reading 6 cards…" line
     const startUrl = targetTab.url;
     let navigated = false;
     const stayOnPage = async () => {
@@ -812,7 +958,7 @@ async function handleScanPage(sendResponse, era) {
         let domCards = sealed ? [] : pageFocus.cards;
         if (wholePage) {
           if (cardRoom(keptRealCount(cards, dropped)) <= 0) { capped = true; break; }
-          (_held && (_held.progress = { screen: stop + 1, screens: stops.length }), chrome.runtime.sendMessage({ action: "scanProgress", screen: stop + 1, screens: stops.length })).catch(() => {});
+          (_held && (_held.progress = { screen: stop + 1, screens: stops.length }), chrome.runtime.sendMessage({ action: "scanProgress", tabId: targetTab.id, screen: stop + 1, screens: stops.length })).catch(() => {});
           scrolled = true;
           await sendToTab(chrome, targetTab.id, { action: "scrollTo", x: origin.x, y });
           await stayOnPage();
@@ -936,14 +1082,7 @@ async function handleScanPage(sendResponse, era) {
                 }
                 photoBitmap = await createImageBitmap(bitmap, sx, sy, sw, sh);
               }
-              const previousThreshold = getConfThreshold();
-              setConfThreshold(0.12);
-              let detectedBoxes;
-              try {
-                detectedBoxes = await detectCards(photoBitmap);
-              } finally {
-                setConfThreshold(previousThreshold);
-              }
+              const detectedBoxes = await detectCards(photoBitmap, LOW_CONF_THRESHOLD);
               const imageW = photoBitmap.width;
               const imageH = photoBitmap.height;
               const shaped = filterPhotoDetections(detectedBoxes, imageW, imageH);
@@ -994,6 +1133,8 @@ async function handleScanPage(sendResponse, era) {
                           boxes.length ? "(scores: " + boxes.map(b => b.score.toFixed(2)).join(",") + ")" : "");
 
               if (!boxes.length) continue;
+              boxesFound += boxes.length;
+              chrome.runtime.sendMessage({ action: "scanProgress", tabId: targetTab.id, found: boxesFound }).catch(() => {});
               console.log("[BG]   splitting", boxes.length, "cards");
               if (!hero) preemptedPhotoKeys.add(_photoKey(ph));
               const photoPixels = readBitmap(photoBitmap);
@@ -1264,7 +1405,8 @@ async function handleScanPage(sendResponse, era) {
       applyBatchedPrices(cards, priceMap);
     }
 
-    await relayToTab({ action: "relayOverlay", cards: overlayCards(cards), srcWidth, srcHeight, shown: await loadOverlayShown(chrome.storage.local) }, targetTab.id);
+    // To the tab that was scanned, which stays the target only if the user has not moved on.
+    await sendToTab(chrome, targetTab.id, tabMessageFor({ action: "relayOverlay", cards: overlayCards(cards), srcWidth, srcHeight, pageUrl: targetTab.url, scanId, shown: await loadOverlayShown(chrome.storage.local) })).catch(() => {});
     console.log("[BG] overlay relayed");
 
     // Ask the content script to start watching for lazy-loaded card images.
@@ -1273,18 +1415,18 @@ async function handleScanPage(sendResponse, era) {
     const encoded = await Promise.all(crops);
     await _corrections.saveScan({ scanId, ts: Date.now(), pageUrl: pageUrlForStorage(targetTab.url), crops: encoded, shares })
       .catch((err) => console.error("[BG] keeping scan pictures failed:", err?.message || err));
-    // An asked card carries the picture it was read from, so the user can see which card the question is about.
+    // Every card carries the picture it was read from: an asked card shows which card the question is about, and a confirmed row keeps its page picture.
     // `ranked` (id, rank, cosine score) rides along so the popup can judge how far the first candidate leads; the set prior ran before.
     const withCandidates = cards.map(({ rankedScores, ...card }, i) => (card.notCard && card.hiddenRead
       // A hidden card keeps its read with the same candidates a Choose row gets, for "Show it". No price is fetched for it.
       ? { ...card, hiddenRead: hiddenReadWithCandidates(card.hiddenRead), crop: encoded[i] ?? null }
       : card.notCard ? { ...card, crop: encoded[i] ?? null }
       : isUnsure(card)
-      ? { ...card, candidates: candidatesFor(card, _meta, 5, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
-      : card));
+      ? { ...card, candidates: candidatesWithJapanese(card, era), ...(card.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }), crop: encoded[i] ?? null }
+      : { ...card, crop: encoded[i] ?? null }));
     function hiddenReadWithCandidates({ rankedScores, ...read }) {
       const asChoose = { ...read, unsure: true };
-      return { ...read, candidates: candidatesFor(asChoose, _meta, 5, era), ...(read.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) };
+      return { ...read, candidates: candidatesWithJapanese(asChoose, era), ...(read.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) };
     }
     const asked = applyTitlePrior(withCandidates, {
       kind: pageFocus.kind,
@@ -1305,7 +1447,7 @@ async function handleScanPage(sendResponse, era) {
     sendToTab(chrome, targetTab.id, { action: "restoreOverlay" }).catch(() => {});
     sendResponse({ error: String(err?.message || err) });
   } finally {
-    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(sendRescanResult);
+    if (_scanGate.end(scanTabId) && _popupWinId !== null) handleScanPage(sendRescanResult, _lastScanEra);
   }
 }
 
@@ -1316,10 +1458,240 @@ let _drawEra = null;
 // The tab draw mode is on, until it sends its one box or is cancelled; a drawnBox from anywhere else is ignored.
 let _drawTabId = null;
 
+// Draw mode (the tab and the era) survives the worker's idle stop: the page keeps its draw bar, and its box must still be accepted.
+let _drawTouched = false; // set once anything assigns the draw tab (even null): the restore then leaves it alone
+function _setDrawTabId(tabId) {
+  _drawTabId = tabId;
+  _drawTouched = true;
+  saveDrawState(chrome.storage.session, tabId === null ? null : { tabId, eraId: _drawEra?.id ?? null });
+}
+
 function cancelDrawBox() {
   const tabId = _drawTabId;
-  _drawTabId = null;
+  _setDrawTabId(null);
   if (tabId !== null) sendToTab(chrome, tabId, { action: "cancelDraw" }).catch(() => {});
+}
+
+// Read back what a stopped worker kept. State set since the worker started (to anything, null included) wins over the
+// stored value. This promise always resolves, so the messages waiting on it are always answered.
+const _workerStateRestored = (async () => {
+  await settleRestore(async () => {
+    const draw = await loadDrawState(chrome.storage.session);
+    const held = await loadHeldScan(chrome.storage.session);
+    if (!_drawTouched && draw) _drawEra = eraById(draw.eraId);
+    _drawTabId = pickRestored(_drawTouched, _drawTabId, draw?.tabId ?? null);
+    const stored = held ? { running: false, startedAt: held.finishedAt, progress: null, data: held.data, url: held.url, finishedAt: held.finishedAt, waiters: [] } : null;
+    _held = pickRestored(_heldTouched, _held, stored);
+  });
+  _stateRestored = true;
+})();
+
+// ─── self-update: an installed copy restarts itself onto newer files (rules in lib/self-update.js) ───
+// Inert unless this is the installer's copy (its fixed extension id). Any failure reading the disk means "nothing newer".
+
+// Set by the icon click handler and by every runtime message: someone is using the extension, so the worker is not idle.
+// A worker woken only by a tab event or the browser starting leaves it false.
+let _activitySinceStart = false;
+
+async function readDiskManifest() {
+  try {
+    const res = await fetch(chrome.runtime.getURL("manifest.json"), { cache: "no-store" });
+    if (!res.ok) return null;
+    const manifest = await res.json();
+    if (!isUsableManifest(manifest)) return null;
+    const worker = await fetch(chrome.runtime.getURL(manifest.background.service_worker), { cache: "no-store" });
+    await worker.body?.cancel().catch(() => {});
+    return worker.ok ? manifest : null;
+  } catch {
+    return null; // the installer may be swapping the folder right now
+  }
+}
+
+// Nothing open, running or stored that a reload would lose (session storage is cleared by a reload).
+async function selfUpdateIdle() {
+  await restorePopupWinId();
+  // Any open page of this extension (scanner, Settings, anything else); the worker's own context is not one.
+  const open = await chrome.runtime.getContexts({ contextTypes: ["TAB", "POPUP", "SIDE_PANEL", "OFFSCREEN_DOCUMENT", "DEVELOPER_TOOLS"] }).catch(() => null);
+  return workerIsIdle({
+    activity: _activitySinceStart,
+    openContextCount: open ? open.length : null,
+    popupWinId: _popupWinId,
+    scanRunning: Boolean(_held?.running),
+    drawActive: _drawTabId !== null,
+    storedWork: await hasStoredSessionWork(chrome.storage.session),
+  });
+}
+
+// The guard goes through the merge helper, so fields a release check saved in the meantime are kept.
+// An automatic reload looks at the activity flag once more, synchronously, after the guard is written: a click or message
+// that landed during the storage wait was not seen by the idle check. It then does not reload and takes the guard back, so
+// the scanner shows the normal "Restart now" banner (a kept guard would read as "a reload to this version failed").
+async function reloadSelf(from, to, reopen, automatic = false) {
+  await saveSelfUpdateFields(guardWithReload({}, { from, to, at: Date.now(), reopen }));
+  if (automatic && _activitySinceStart) {
+    await saveSelfUpdateFields({ reload: undefined, lastReloadAt: undefined });
+    return;
+  }
+  chrome.runtime.reload();
+}
+
+// After a reload that was asked for with `reopen`: the scanner window comes back on the active tab of the last focused normal window.
+async function reopenScannerAfterUpdate() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true, windowType: "normal" }).catch(() => []);
+  if (!tab || _isInternalUrl(tab.url)) return;
+  await openOrFocusScanner(tab);
+}
+
+async function selfUpdateAtStart() {
+  if (!isInstallerCopy(chrome.runtime.id)) return;
+  try {
+    await _workerStateRestored;
+    const running = chrome.runtime.getManifest().version;
+    let guard = (await local.get(SELF_UPDATE_KEY)) ?? null;
+    const settled = settleAfterReload(guard, running);
+    if (settled.succeeded) {
+      guard = settled.guard;
+      await local.set(SELF_UPDATE_KEY, guard);
+      if (settled.reopen) await reopenScannerAfterUpdate().catch((err) => console.warn("[BG] reopening the scanner failed:", err?.message || err));
+    }
+    const disk = await readDiskManifest();
+    const idle = disk ? await selfUpdateIdle() : false;
+    if (decideSelfUpdate({ runningVersion: running, diskManifest: disk, idle, guard, now: Date.now() }) === "reload") {
+      // The upload flush has its own network limits. A click or message may arrive during the waits: look again before reloading.
+      // A flush that has not settled in FLUSH_WAIT_MAX_MS counts as not idle: no reload this time, and the banner is not held up.
+      const flushed = await waitSettled(_startupFlush, FLUSH_WAIT_MAX_MS);
+      if (flushed && await selfUpdateIdle()) await reloadSelf(running, disk.version, false, true);
+    }
+  } catch (err) {
+    console.warn("[BG] self-update check failed:", err?.message || err);
+  }
+}
+const _selfUpdateStarted = selfUpdateAtStart();
+
+// The scanner window asks for this when it opens. It never starts a reload itself.
+// It answers from what is stored; a release check that is due runs after the answer and shows at the next opening.
+async function selfUpdateState() {
+  const none = { diskVersion: null, updatedTo: null, reloadFailed: false, latestVersion: null };
+  if (!isInstallerCopy(chrome.runtime.id)) return none;
+  try {
+    await _selfUpdateStarted;
+    const running = chrome.runtime.getManifest().version;
+    const guard = (await local.get(SELF_UPDATE_KEY)) ?? null;
+    const disk = await readDiskManifest();
+    const diskVersion = disk && isNewerVersion(disk.version, running) ? disk.version : null;
+    const updatedTo = typeof guard?.updatedTo === "string" ? guard.updatedTo : null;
+    if (clearsUpdatedNote(updatedTo, diskVersion)) await saveSelfUpdateFields({ updatedTo: undefined }); // the note shows once, and only when the scanner will show it
+    if (releaseCheckDue(guard?.lastCheckAt, Date.now())) runReleaseCheck().catch(() => {});
+    const latestVersion = availableUpdate({ latestVersion: guard?.latestVersion, runningVersion: running, diskVersion: disk?.version ?? null, dismissedVersion: guard?.dismissedVersion });
+    return { diskVersion, updatedTo, reloadFailed: diskVersion !== null && compareVersions(guard?.reload?.to, diskVersion) === 0, latestVersion };
+  } catch {
+    return none;
+  }
+}
+
+// Stores just these fields in the record, on top of what is stored now (the check, a dismissal and the reload guard share it).
+async function saveSelfUpdateFields(fields) {
+  const current = (await local.get(SELF_UPDATE_KEY)) ?? {};
+  await local.set(SELF_UPDATE_KEY, { ...current, ...fields });
+}
+
+// One release check at a time; a second caller gets the one in flight.
+let _releaseCheck = null;
+function runReleaseCheck() {
+  _releaseCheck ??= (async () => {
+    try {
+      const guard = (await local.get(SELF_UPDATE_KEY)) ?? {};
+      return await checkForRelease({ guard, fetchFn: (url, init) => fetch(url, init), now: () => Date.now(), save: saveSelfUpdateFields });
+    } catch {
+      return { ok: false, guard: {} };
+    } finally {
+      _releaseCheck = null;
+    }
+  })();
+  return _releaseCheck;
+}
+
+// The Settings page's view: read-only (it must not use up the "updated" note), and no check is started.
+async function selfUpdateSettings() {
+  if (!isInstallerCopy(chrome.runtime.id)) return { installer: false };
+  try {
+    await _selfUpdateStarted;
+    const running = chrome.runtime.getManifest().version;
+    const guard = (await local.get(SELF_UPDATE_KEY)) ?? null;
+    const disk = await readDiskManifest();
+    return {
+      installer: true,
+      runningVersion: running,
+      latestVersion: availableUpdate({ latestVersion: guard?.latestVersion, runningVersion: running, diskVersion: disk?.version ?? null, dismissedVersion: null }),
+      lastCheckedAt: Number.isFinite(guard?.lastCheckAt) ? guard.lastCheckAt : null,
+      lastCheckOk: typeof guard?.lastCheckOk === "boolean" ? guard.lastCheckOk : null,
+    };
+  } catch {
+    return { installer: false };
+  }
+}
+
+// The Settings page's "Check now": runs a check unless one ran within the last minute (then the stored result is answered).
+async function selfUpdateCheckNow() {
+  const failed = { ok: false, latestVersion: null, checkedAt: null };
+  if (!isInstallerCopy(chrome.runtime.id)) return failed;
+  try {
+    await _selfUpdateStarted;
+    const running = chrome.runtime.getManifest().version;
+    let guard = (await local.get(SELF_UPDATE_KEY)) ?? {};
+    let ok = guard.lastCheckOk === true;
+    if (manualCheckAllowed(guard.lastCheckAt, Date.now())) {
+      const result = await runReleaseCheck();
+      ok = result.ok;
+      guard = result.guard;
+    }
+    const disk = await readDiskManifest();
+    return {
+      ok,
+      latestVersion: availableUpdate({ latestVersion: guard.latestVersion, runningVersion: running, diskVersion: disk?.version ?? null, dismissedVersion: null }),
+      checkedAt: Number.isFinite(guard.lastCheckAt) ? guard.lastCheckAt : null,
+    };
+  } catch {
+    return failed;
+  }
+}
+
+// "Not now" in the scanner: that version is not offered there again (a newer one is).
+async function selfUpdateDismiss(version) {
+  if (!isInstallerCopy(chrome.runtime.id) || parseVersion(version) === null) return { ok: false };
+  try {
+    await saveSelfUpdateFields({ dismissedVersion: version });
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// "Get the update": the page opened is the fixed release page; the message carries no address.
+async function selfUpdateOpenRelease() {
+  if (!isInstallerCopy(chrome.runtime.id)) return { ok: false };
+  try {
+    await chrome.tabs.create({ url: RELEASE_PAGE_URL });
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// The scanner's Restart button. Checks everything again; the scanner window is reopened after the reload.
+async function selfUpdateRestart() {
+  if (!isInstallerCopy(chrome.runtime.id)) return { ok: false };
+  try {
+    await _selfUpdateStarted;
+    const running = chrome.runtime.getManifest().version;
+    const guard = (await local.get(SELF_UPDATE_KEY)) ?? null;
+    const disk = await readDiskManifest();
+    if (!disk || !isNewerVersion(disk.version, running) || compareVersions(guard?.reload?.to, disk.version) === 0) return { ok: false };
+    await reloadSelf(running, disk.version, true);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
 }
 
 async function startDrawBox(msg) {
@@ -1332,15 +1704,15 @@ async function startDrawBox(msg) {
     }
     if (!tab) return { error: "No scannable tab. Open a webpage first." };
     _drawEra = eraById(msg.era);
-    _drawTabId = tab.id;
+    _setDrawTabId(tab.id);
     await sendToTab(chrome, tab.id, { action: "startDraw" });
     // The page may be in another window than the popup: bring it forward so the user can draw on it.
     chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     return { ok: true };
   } catch (err) {
-    _drawTabId = null;
+    _setDrawTabId(null);
     console.error("[BG] draw mode failed:", err?.message || err);
-    return { error: "Card Scanner cannot draw on this tab." };
+    return { error: "Lotwise cannot draw on this tab." };
   }
 }
 
@@ -1480,7 +1852,7 @@ async function readDrawnBox(msg, tab, era, capture = null) {
     if (ids.size) applyBatchedPrices([entry], await batchPriceCards([...ids]));
     const { rankedScores, ...rest } = entry;
     return isUnsure(entry)
-      ? { ...rest, candidates: candidatesFor(entry, _meta, 5, era), ...(entry.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) }
+      ? { ...rest, candidates: candidatesWithJapanese(entry, era), ...(entry.ranked || !rankedScores?.length ? {} : { ranked: rankedScores }) }
       : rest;
   } finally {
     photoBitmap?.close?.();
@@ -1520,6 +1892,9 @@ async function shareCrop(cropDataUrl) {
 
 // Never lets sharing break the pick the user made.
 async function contributeTeachPick(scan, msg) {
+  // A Japanese card is never shared as a card answer; box rows (drawn, removed, put back) are still sent without a card id.
+  // So a pick on a Japanese row sends nothing here, plain pick or drawn box (the drawn box's own signal comes from shareBoxSignal).
+  if (keepsNoPicture(msg)) return;
   try {
     const { share, crop: scanCrop } = correctionSource(scan, msg);
     if (!share || share.split !== "teach" || !(await _sharing.enabled())) return;
@@ -1568,7 +1943,11 @@ async function confirmExam(msg) {
       console.error("[BG] sharing an exam photo failed:", err?.message || err);
     }
   }
-  await _corrections.saveScan({ ...scan, examSent: true }).catch(() => {});
+  // Re-read under the same one-at-a-time chain so a pick held while the photo was sent is not overwritten.
+  await serializeByScan(msg.scanId,async () => {
+    const latest = await _corrections.getScan(msg.scanId).catch(() => null);
+    await _corrections.saveScan({ ...(latest || scan), examSent: true });
+  }).catch(() => {});
   return { ok: true, sent };
 }
 
@@ -1682,16 +2061,31 @@ const _ownPageActions = {
   shareBoxSignal: (msg) => contributeBoxSignal(msg),
   findCards: async (msg) => {
     await _ensureCatalog();
-    return { cards: findCards(_meta, msg.query, { era: eraById(msg.era) }) };
+    const english = findCards(_meta, msg.query, { era: eraById(msg.era) });
+    return { cards: searchAll(english, await activeJapaneseCatalog(), msg.query, msg.japanese) };
+  },
+  // The options page's line under the Japanese switch: off, ready with the card count, or not available yet.
+  japaneseState: async () => {
+    if (!(await japaneseCardsInUse())) return { state: "off" };
+    await _loadJapaneseCatalog();
+    return _ja ? { state: "ready", count: _ja.n } : { state: "unavailable" };
   },
   saveCorrection: async (msg) => {
     await _ensureCatalog();
-    if (!catalogCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
+    // A Japanese card picked from an earlier scan is known even after the setting was switched off or the worker restarted.
+    if (isJaId(msg.pickedId)) await _loadJapaneseCatalog();
+    if (!anyCard(msg.pickedId)) throw new Error("That card isn't in the catalog.");
     // A scan older than the last two has lost its pictures; the answer is still worth keeping.
-    const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
     // An exam photo's answers leave only as a whole, when sharing is on and the user confirms the photo; they never enter
     // the shared training queue. That is the only thing the exam split decides: the correction itself is always kept here.
-    if (examHoldAllowed(msg)) await holdExamPick(_corrections, scan, msg, await _sharing.enabled().catch(() => false));
+    // A Japanese card is never shared as a card answer; box rows (drawn, removed, put back) are still sent without a card id.
+    // So a Japanese card, or any pick on a Japanese row, is never held for sharing and removes an answer held earlier for the box.
+    // One scan's held answers are updated one pick at a time: the bulk confirm sends several picks at once.
+    const scan = await serializeByScan(msg.scanId, async () => {
+      const scan = msg.scanId ? await _corrections.getScan(msg.scanId).catch(() => null) : null;
+      await settleExamPick(_corrections, scan, msg, { holdAllowed: examHoldAllowed(msg), sharingEnabled: () => _sharing.enabled().catch(() => false) });
+      return scan;
+    });
     // The same card the user corrected before, confirmed again from a different crop: that counts as "x2" on the earlier
     // correction instead of storing a near-duplicate picture.
     const agreed = await agreeWithReference(_corrections, msg);
@@ -1709,7 +2103,7 @@ const _ownPageActions = {
       guess: msg.guess,
       pickedId: msg.pickedId,
       via: msg.via,
-      crop: correctionSource(scan, msg).crop,
+      crop: keepsNoPicture(msg) ? null : correctionSource(scan, msg).crop,
       extVersion: chrome.runtime.getManifest().version,
       why: msg.guess?.why,
       wrongId,
@@ -1730,7 +2124,7 @@ const _ownPageActions = {
       index: msg.index,
       pageUrl: scan?.pageUrl,
       guess: msg.guess,
-      crop: correctionSource(scan, msg).crop,
+      crop: keepsNoPicture(msg) ? null : correctionSource(scan, msg).crop,
       extVersion: chrome.runtime.getManifest().version,
       why: msg.guess?.why,
     });
@@ -1912,6 +2306,15 @@ async function applyBundleOnce() {
   console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }), "| card check:", _photoCheck ? (stored?.check ? "bundle" : "packaged") : "off");
   if (adapter) console.log("[BG] photo adapter in use: rank", adapter.rank, "sha", stored.manifest.assets.adapter.sha256.slice(0, 8), "seq", stored.manifest.seq);
   else console.log("[BG] photo adapter not in use:", stored ? "the bundle has none" : "no bundle stored yet");
+  if (stored) {
+    try {
+      const prev = await local.get(CARD_DATA_NOTE_KEY);
+      const note = nextCardDataNote(prev, { seq: stored?.manifest?.seq, cards: merged?.meta, now: Date.now() });
+      if (note) await local.set(CARD_DATA_NOTE_KEY, note);
+    } catch (err) {
+      console.error("[BG] card data note not stored:", err?.message || err);
+    }
+  }
 }
 
 // At most one check a day (lib/bundle.js); nothing about the user is sent.
@@ -2008,10 +2411,7 @@ async function withReferenceHit(embedding, hits, rawTop = hits[0]?.score ?? 0, h
 // The normal (adapted, when a photo adapter is live) hits, and the raw ones the gate also scores. They are the
 // same array when no adapter is live.
 async function searchBoth(embedding) {
-  const penalty = await lookalikePenaltyInUse();
-  const hits = physicalHits(searchCatalog(embedding, 20, { penalty }), _meta);
-  const rawHits = adapterActive() ? physicalHits(searchCatalog(embedding, 20, { penalty, raw: true }), _meta) : hits;
-  return { hits, rawHits };
+  return searchPair(embedding, _meta, { penalty: await lookalikePenaltyInUse() });
 }
 
 async function embedCrop(cropDataUrl) {
@@ -2096,12 +2496,17 @@ async function handleDetect(imageB64, sendResponse) {
     for (const { box, score } of rawBoxes) {
       const cardCanvas = await cardCanvasFor(bitmap, box);
       const embedding  = await embedSerial(cardCanvas);
-      const { hits: catalogHits, rawHits } = await searchBoth(embedding);
-      if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
+      const { hits: catalogHits, rawHits, rawTop } = await searchBoth(embedding);
+      if (isCardBack(embedding, rawTop)) {
         cards.push({ box, score, identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null });
         continue;
       }
-      const { hits }   = await withReferenceHit(embedding, catalogHits, rawHits[0]?.score ?? 0);
+      const japanese = japaneseRead(await activeJapaneseCatalog(), embedding, { bestEn: rawTop, height: box[3] - box[1] });
+      if (japanese) {
+        cards.push({ box, score, ...japanese });
+        continue;
+      }
+      const { hits }   = await withReferenceHit(embedding, catalogHits, rawTop);
       const { identity, confidence, abstain } = capAdapterChange(fuseResults(hits, null, _meta, _idMap), hits, rawHits, _meta);
       const priceData  = abstain ? null : await getPrice(identity);
       const market_price  = priceData?.price  ?? null;
@@ -2212,7 +2617,7 @@ const TITLE_RERANK_DEPTH = 20;
  * Silent, nothing changes. A changed name is always asked about, never shown as identified.
  */
 async function checkTitle(result, cardCanvas, height, era) {
-  if (!result || result.cardBack || result.numberRead || !(height >= TITLE_MIN_HEIGHT)) return result;
+  if (!result || result.cardBack || result.japanese || result.numberRead || !(height >= TITLE_MIN_HEIGHT)) return result;
   const name = result.abstain ? null : result.identity?.name || null;
   let text = "";
   try {
@@ -2235,14 +2640,27 @@ async function checkTitle(result, cardCanvas, height, era) {
   const longer = hits.slice(0, TITLE_RERANK_DEPTH).some((h) => _meta[h.index] && extendsTitle(_meta[h.index].name, verdict.titleName));
   if (hit && !longer) {
     console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name ?? "-"), "- asked with that name");
-    return guessFromTitle(_meta[hit.index], hits, result);
+    return guessFromTitle(_meta[hit.index], hits, result, era);
   }
-  if (!name) return result;
+  // The title's own printings are only offered in the list (lib/card-picker.js candidatesFor); nothing here is decided by them.
+  // embedSerial is cached per canvas, so this does not embed again. (tests/lookalike-setting.test.js pins the count of
+  // the searchBoth call sites by their argument text, so the first embedding is not kept in a variable.)
+  const titleChoices = titleChoicesFor(verdict.titleName, await embedSerial(cardCanvas), era);
+  const offered = titleChoices.length ? { titleChoices } : {};
+  // No picture name to contradict: the title's cards join the list, and nothing is marked as contradicted or preselected.
+  if (!name) return { ...result, ...offered };
   console.log("[BG]   title says", JSON.stringify(verdict.titleName), "not", JSON.stringify(name), "- asked");
-  return { ...result, confidence: Math.min(result.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP), unsure: true, titleContradicts: verdict.titleName };
+  return { ...result, confidence: Math.min(result.confidence ?? 0, SMALL_SOURCE_CONFIDENCE_CAP), unsure: true, titleContradicts: verdict.titleName, ...offered };
 }
 
-async function guessFromTitle(card, hits, before) {
+// Catalog ids of the best-looking printings of the card the title spelled, for the list the user chooses from.
+function titleChoicesFor(titleName, embedding, era) {
+  return titleChoiceIds(physicalHits(scoreIndices(embedding, printingsOf(titleName)), _meta), _meta, { era });
+}
+
+async function guessFromTitle(card, allHits, before, era) {
+  // With an era chosen, the choices and lists come only from that era's rows, as in recognizeWith.
+  const hits = era ? allHits.filter((h) => _meta[h.index] && inEra(_meta[h.index], era)) : allHits;
   const base = {
     confidence: Math.min(Math.max(before.confidence ?? 0, 0), SMALL_SOURCE_CONFIDENCE_CAP),
     abstain: false,
@@ -2481,21 +2899,15 @@ async function identifyFully(cardCanvas, era, sourceHeight, stampCanvas, numberS
 /** Card boxes from running the detector over overlapping tiles of a photo (2x2 and 3x3), in photo pixels. */
 async function detectTiled(bitmap) {
   const tiles = [];
-  const previousThreshold = getConfThreshold();
-  setConfThreshold(0.12);
-  try {
-    for (const n of [2, 3]) {
-      for (const rect of tileRects(bitmap.width, bitmap.height, n)) {
-        const piece = await createImageBitmap(bitmap, rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
-        try {
-          tiles.push({ rect, detections: await detectCards(piece) });
-        } finally {
-          piece.close();
-        }
+  for (const n of [2, 3]) {
+    for (const rect of tileRects(bitmap.width, bitmap.height, n)) {
+      const piece = await createImageBitmap(bitmap, rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
+      try {
+        tiles.push({ rect, detections: await detectCards(piece, LOW_CONF_THRESHOLD) });
+      } finally {
+        piece.close();
       }
     }
-  } finally {
-    setConfThreshold(previousThreshold);
   }
   return mergeTileDetections(tiles);
 }
@@ -2563,15 +2975,22 @@ async function confirmContext(cardCanvas, capHeight) {
 
 async function recognizeWith(cardCanvas, era, sourceHeight, seen, capHeight = sourceHeight) {
   const embedding = await embedSerial(cardCanvas);
-  const { hits: catalogHits, rawHits } = await searchBoth(embedding);
-  seen.catalogTop = rawHits[0]?.score ?? null;
-  if (isCardBack(embedding, rawHits[0]?.score ?? 0)) {
+  const { hits: catalogHits, rawHits, rawTop } = await searchBoth(embedding);
+  seen.catalogTop = rawHits.length ? rawTop : null;
+  if (isCardBack(embedding, rawTop)) {
     return { identity: null, confidence: 0, abstain: true, cardBack: true, market_price: null, price_variant: null, price_grid: null };
+  }
+  // A card that resembles a Japanese card more than any English one is asked about with Japanese candidates first. It is
+  // never confirmed here, so the saved-correction memory, the number reader and the title read are skipped for it.
+  const japanese = japaneseRead(await activeJapaneseCatalog(), embedding, { bestEn: rawTop, height: sourceHeight });
+  if (japanese) {
+    seen.ranked = rankedIds(catalogHits);
+    return { ...japanese, nearest: closestIds(catalogHits), ranked: seen.ranked };
   }
   // The user said when these cards are from: the name, the set choices and the closest cards offered all come from that era's rows,
   // so a modern card that outscores every printing from the era can neither name the card nor be suggested for it.
   const inEraHits = era ? eraHits(embedding, _meta, era) : null;
-  const { hits, referencedId, memory, skip } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawHits[0]?.score ?? 0, capHeight);
+  const { hits, referencedId, memory, skip } = await withReferenceHit(embedding, inEraHits ?? catalogHits, rawTop, capHeight);
   seen.referencedId = referencedId;
   seen.skippedBefore = Boolean(skip);
   seen.memory = memory;
@@ -2877,6 +3296,15 @@ async function priceIdentity(identity) {
     return _scanPriceCache.get(cacheKey);
   }
 
+  // A Japanese card is priced from TCGPlayer's own list for its set; the English lookups below know nothing of it.
+  if (isJaId(identity.id)) {
+    const { result: japanesePrice, failed } = await jaLookup(identity, _jaPrices, Date.now());
+    // A lookup that got no answer is not kept: the next ask tries again.
+    if (!failed) _scanPriceCache.set(cacheKey, japanesePrice);
+    else throw new Error("price lookup failed");
+    return japanesePrice;
+  }
+
   // TCGdex is keyed by our catalog id and answers when pokemontcg.io's keyless tier times out.
   // Run independent fetches in parallel.
   const [tcgdex, full, snapshot] = await Promise.all([
@@ -2903,6 +3331,8 @@ async function priceIdentity(identity) {
     price_grid: grid || null,
   };
 
+  // Every free source failed (timeouts, network): not a real "no price". Do not keep it; the caller shows the retry text.
+  if (!grid && !legacyPrice && pricingFetchFailed(identity.id)) throw new Error("price lookup failed");
   _scanPriceCache.set(cacheKey, result);
   return result;
 }
@@ -2945,10 +3375,15 @@ function catalogCardsInSet(setCode) {
   return _meta.filter((card) => card.setCode === setCode);
 }
 
+// A catalog card or a Japanese one. Only the price lookup and "is this card known" for a saved pick use it; everything else is English-only.
+const anyCard = (id) => catalogCard(id) ?? _jaById?.get(id);
+
 async function handlePriceCard(id, sendResponse) {
   if (!(await _ensureReady(sendResponse))) return;
   try {
-    const identity = catalogCard(id);
+    // A Japanese card may be picked while its catalog is still loading.
+    if (isJaId(id)) await _loadJapaneseCatalog();
+    const identity = anyCard(id);
     if (!identity) {
       sendResponse({ error: "That card isn't in the catalog." });
       return;
@@ -3078,8 +3513,12 @@ async function loadPhotoSource(rawUrl, { timeoutMs = 0, maxSide = 0, allowedHost
       blob = read.blob.slice(0, read.blob.size, sniffed);
     }
     // The header gives the size before any pixels are decoded.
-    const plan = decodePlan(imageSize(read.head), maxSide);
+    // When the first bytes do not hold it (metadata before the frame header, or an AVIF), look through the whole file.
+    const size = imageSize(read.head) || imageSize(new Uint8Array(await blob.arrayBuffer()));
+    const plan = decodePlan(size, maxSide);
     if (plan.reject) return photoRejected("dimensions too large", landed);
+    // Still unknown: decoding could allocate a huge bitmap before the limit is checked, so the screenshot crop is used.
+    if (!plan.known) return photoRejected("size unreadable", landed);
     const bitmap = plan.resize ? await createImageBitmap(blob, plan.resize) : await createImageBitmap(blob);
     if (bitmap.width > 10000 || bitmap.height > 10000) {
       bitmap.close();

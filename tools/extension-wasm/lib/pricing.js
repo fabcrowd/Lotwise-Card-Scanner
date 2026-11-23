@@ -45,6 +45,12 @@ export async function getPrice(identity) {
  * so this doesn't collide with the lean getPrice() cache.
  */
 const _fullInflight = new Map();
+// Cards whose last lookup at a source failed (timeout, network, server error), as opposed to the source not having the card.
+const _fullFailed = new Set();
+const _tcgdexFailed = new Set();
+/** True when both free sources failed for this card on their last lookup, so an empty answer is not a real "no price". */
+export const pricingFetchFailed = (id) => _fullFailed.has(id) && _tcgdexFailed.has(id);
+
 export async function getFullCardPayload(id) {
   if (!id) return null;
   const cacheKey = `full2_${id}`;
@@ -53,17 +59,19 @@ export async function getFullCardPayload(id) {
   if (_fullInflight.has(id)) return _fullInflight.get(id);
   const p = (async () => {
     const url = `${API_BASE}/${id}`;
+    _fullFailed.add(id);
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 400 * attempt));
         const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
         if (!resp.ok) {
-          if (resp.status === 404) { await setCached(cacheKey, null); return null; }
+          if (resp.status === 404) { _fullFailed.delete(id); await setCached(cacheKey, null); return null; }
           if (resp.status >= 500 && attempt < 2) continue;
           return null;
         }
         const json = await resp.json();
         const data = json?.data || null;
+        _fullFailed.delete(id);
         await setCached(cacheKey, data);
         return data;
       } catch {
@@ -88,11 +96,13 @@ export async function getTcgdexCard(id) {
   if (cached !== undefined) return cached;
   if (_tcgdexInflight.has(id)) return _tcgdexInflight.get(id);
   const p = (async () => {
+    _tcgdexFailed.add(id);
     try {
       const resp = await fetch(`${TCGDEX_BASE}/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(8000) });
-      if (resp.status === 404) { await setCached(cacheKey, null); return null; }
+      if (resp.status === 404) { _tcgdexFailed.delete(id); await setCached(cacheKey, null); return null; }
       if (!resp.ok) return null;
       const card = await resp.json();
+      _tcgdexFailed.delete(id);
       await setCached(cacheKey, card);
       return card;
     } catch (err) {

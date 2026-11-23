@@ -1,4 +1,4 @@
-# Pokémon Card Scanner — Install
+# Lotwise — Install
 
 A Chrome extension that scans the Pokémon cards on any webpage and overlays
 market prices (NM / LP / MP / HP / DMG + graded).
@@ -7,21 +7,35 @@ Works fully offline after the one-time model download. No account required.
 
 ---
 
-## Install (3 minutes)
+## Easy path (Windows installer)
 
-1. **Download the extension.** Copy or clone the `dist/extension-wasm/` folder
-   anywhere on your computer (Desktop is fine). All files must stay together.
+If someone sent you **Lotwise-Setup-*.exe**, or you downloaded it from the
+project’s `installer` release, use that. Full steps (SmartScreen, Chrome
+clicks, update, remove): [`docs/store/install.md`](../../docs/store/install.md).
+
+In short: run Setup → when the guide opens, turn on Developer mode → Load
+unpacked → paste the folder from the guide → pin Lotwise → **Download models**.
+
+---
+
+## Developer path (load unpacked from this repo)
+
+1. **Build the extension** (from the repo root):
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension.ps1
+   ```
 
 2. **Open Chrome's extension page.**
    Paste this into the Chrome address bar: `chrome://extensions/`
 
 3. **Enable "Developer mode"** (toggle in the top-right of that page).
 
-4. **Click "Load unpacked"** (button that appears top-left), then pick the
-   `dist/extension-wasm/` folder you downloaded.
+4. **Click "Load unpacked"** (button that appears top-left), then pick
+   `dist/extension-wasm/` (all files in that folder must stay together).
 
 5. **Pin the extension** so the icon is always visible: click the puzzle-piece
-   icon in Chrome's toolbar, find "Pokémon Card Scanner", click the pin.
+   icon in Chrome's toolbar, find "Lotwise", click the pin.
 
 6. **First launch — download the models.**
    Click the scanner icon in the toolbar. A small window opens. Click

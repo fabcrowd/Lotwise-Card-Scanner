@@ -233,7 +233,7 @@ test('the Choose row button and the Skipped group are accessible, collapsed by d
   assert.match(button, /skip-btn-hot/);
   assert.doesNotMatch(renderSkipButton(2), /skip-btn-hot/);
   const group = renderSkippedGroup(renderSkippedRow(2, 'data:image/jpeg;base64,AA'), 1, false);
-  assert.match(group, /Skipped \(1\)/);
+  assert.match(group, /Left out \(1\)/);
   assert.match(group, /aria-expanded="false"/);
   assert.match(group, / hidden>/);
   assert.match(group, /Put back/);
@@ -261,17 +261,23 @@ test('removeCard is idempotent, never mutates, and marks a skipped card so put b
 });
 
 test('leftOutLabel and the group heading and row text say skipped, removed, or both', () => {
-  assert.equal(leftOutLabel(2, 0), 'Skipped');
-  assert.equal(leftOutLabel(2, 2), 'Removed');
-  assert.equal(leftOutLabel(2, 1), 'Skipped or removed');
-  assert.equal(skippedHeading(3), 'Skipped (3)');
-  assert.equal(skippedHeading(1, 1), 'Removed (1)');
-  assert.equal(skippedHeading(3, 1), 'Skipped or removed (3)');
-  assert.match(renderSkippedGroup('<i></i>', 1, false, 1), />Removed \(1\)</);
-  assert.match(renderSkippedGroup('<i></i>', 1, false), />Skipped \(1\)</);
+  // 11.6: the lot card and the bottom group share one name.
+  assert.equal(leftOutLabel(2, 0), 'Left out');
+  assert.equal(leftOutLabel(2, 2), 'Left out');
+  assert.equal(leftOutLabel(2, 1), 'Left out');
+  // 11.6: the bottom group is "Left out (n)" however its cards got there; each row says its own reason.
+  assert.equal(skippedHeading(3), 'Left out (3)');
+  assert.match(renderSkippedGroup('<i></i>', 1, false), />Left out \(1\)</);
   const row = renderSkippedRow(0, null, true);
-  assert.match(row, /Card 1: removed/);
+  assert.match(row, /Card 1: Removed\./);
   assert.match(row, /Put back card 1: return it to the lot/);
-  assert.match(renderSkippedRow(0, null), /Card 1: skipped/);
+  assert.match(renderSkippedRow(0, null), /Card 1: Skipped\./);
   assert.match(renderSkippedRow(0, null), /return it to the cards to confirm/);
+});
+
+test('saveSkip keeps no picture for a row treated as Japanese (finding 16)', () => {
+  const source = fs.readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
+  const start = source.indexOf('  saveSkip: async');
+  const body = source.slice(start, source.indexOf('\n  },', start));
+  assert.match(body, /crop: keepsNoPicture\(msg\) \? null : correctionSource\(scan, msg\)\.crop/);
 });

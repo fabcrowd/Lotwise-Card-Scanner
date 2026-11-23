@@ -27,6 +27,9 @@ function sourceSentence(why, name) {
   }
 }
 
+/** The choose row's sub-line for a card the scanner treats as Japanese. */
+export const JAPANESE_REASON = "Looks like a Japanese card. Pick the match.";
+
 /** @param {object|null} why @param {{name?: string}} context the card's current name */
 export function whyText(why, { name } = {}) {
   if (!why?.src) return "";

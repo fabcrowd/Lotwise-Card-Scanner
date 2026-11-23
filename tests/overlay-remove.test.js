@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { acceptFromBackground, acceptPageSender, acceptRemove, removalStored, removeFromLot } from '../tools/extension-wasm/lib/overlay-remove.js';
+import { acceptFromBackground, acceptPageSender, acceptPickSender, acceptRemove, removalStored, removeFromLot, scanMatches } from '../tools/extension-wasm/lib/overlay-remove.js';
 import { putBackCard, removeCard, skipCard } from '../tools/extension-wasm/lib/skip.js';
 import { chooseState, renderRemoveButton, renderSkippedRow } from '../tools/extension-wasm/lib/choose-flow.js';
 import { lotEstimate } from '../tools/extension-wasm/lib/card-display.js';
@@ -48,6 +48,25 @@ test('senders: the page click comes from the extension top frame in a tab; the f
   assert.equal(acceptFromBackground({ id: EXT, tab: { id: 1 } }, EXT), false, 'a page cannot forge the forward');
   assert.equal(acceptFromBackground({ id: 'other' }, EXT), false);
   assert.equal(acceptFromBackground(undefined, EXT), false);
+});
+
+test('scanMatches: a removal for a scan other than the saved lot\'s is refused; no id behaves as before', () => {
+  assert.equal(scanMatches('ab12cd34', 'ab12cd34'), true);
+  assert.equal(scanMatches('ab12cd34', 'ff00ff00'), false, 'the overlay came from a later rescan');
+  assert.equal(scanMatches('ab12cd34', undefined), false, 'the lot has no scan id to match');
+  assert.equal(scanMatches(undefined, 'ab12cd34'), true, 'no id from the page');
+  assert.equal(scanMatches(null, 'ab12cd34'), true);
+  assert.equal(scanMatches(undefined, undefined), true);
+});
+
+test('the background refuses a closed-window removal for another scan, and the page and relays carry the id', async () => {
+  const { readFileSync } = await import('node:fs');
+  const bg = readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
+  assert.match(bg, /handleOverlayRemove\(msg\.index, sender\.tab, msg\.scanId\)/);
+  const fn = bg.slice(bg.indexOf('async function handleOverlayRemove('), bg.indexOf('// ─── setup'));
+  assert.match(fn, /scanMatches\(scanId, saved\?\.state\?\.bgScanId\)/);
+  assert.ok(fn.indexOf('scanMatches(') < fn.indexOf('saveLot('), 'checked before anything is stored');
+  assert.match(bg, /relayOverlay", cards: overlayCards\(cards\), srcWidth, srcHeight, pageUrl: targetTab\.url, scanId,/);
 });
 
 test('removalStored: the page drops the box only when the removal is stored', () => {
@@ -132,4 +151,15 @@ test('renderRemoveButton names the card, carries the index, and escapes nothing 
 test('the Put back label says where the card goes: the lot, or back to the skipped cards', () => {
   assert.match(renderSkippedRow(0, null, true), /Put back card 1: return it to the lot/);
   assert.match(renderSkippedRow(0, null, true, true), /Put back card 1: return it to the skipped cards/);
+});
+
+test('a card pick (page click) is taken from the background, or from a page of the lot the window holds', () => {
+  const page = (url, frameId = 0) => ({ id: EXT, tab: { id: 1, url }, frameId });
+  assert.equal(acceptPickSender({ id: EXT }, EXT, URL_A), true, 'from the background');
+  assert.equal(acceptPickSender(page(TAB_URL), EXT, URL_A), true, 'the same page');
+  assert.equal(acceptPickSender(page(`${TAB_URL}#photo-2`), EXT, URL_A), true, 'a hash does not make another page');
+  assert.equal(acceptPickSender(page('https://other.example/x'), EXT, URL_A), false, 'a tab on another page');
+  assert.equal(acceptPickSender(page(TAB_URL), EXT, null), true, 'no lot yet: any page');
+  assert.equal(acceptPickSender(page(TAB_URL, 3), EXT, URL_A), false, 'a sub-frame');
+  assert.equal(acceptPickSender({ id: 'other', tab: { id: 1, url: TAB_URL }, frameId: 0 }, EXT, URL_A), false, 'another extension');
 });

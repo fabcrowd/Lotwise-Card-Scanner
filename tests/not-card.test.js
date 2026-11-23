@@ -68,9 +68,9 @@ test('Show it on a too-small entry gives the Too small row', () => {
   assert.equal(chooseState(shown), 'back');
 });
 
-test('the popup group is collapsed, headed "Hidden: not a card (N)", with a Show it button per row', () => {
+test('the popup group is collapsed, headed "Not a card (N)", with a Show it button per row', () => {
   const html = renderNotCardGroup('<div>rows</div>', 2, false);
-  assert.match(html, /Hidden: not a card \(2\)/);
+  assert.match(html, /Not a card \(2\)/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /id="notcard-list"[^>]*hidden/);
   assert.equal(renderNotCardGroup('', 0, false), '');

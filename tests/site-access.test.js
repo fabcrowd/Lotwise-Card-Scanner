@@ -122,11 +122,9 @@ test('asking for one site requests exactly its origins; a refusal or a throw is 
   assert.equal(await requestSites({ request: async () => { throw new Error('no gesture'); } }, ['https://a.example/*']), false);
 });
 
-test('the offer says where and what the access is for, counting the unread gallery photos', () => {
-  const text = accessOfferText({ site: 'facebook.com', galleryUnread: 8 });
-  assert.match(text, /on facebook\.com and the other 8 photos of this listing/);
-  assert.match(text, /more of them are named right/);
-  assert.doesNotMatch(accessOfferText({ site: 'ebay.com' }), /other/);
+test('the offer is one plain question: which site, and what reading the original photos gives', () => {
+  assert.equal(accessOfferText({ site: 'facebook.com', galleryUnread: 8 }), 'Let Lotwise read the original photos on facebook.com? It finds more cards.');
+  assert.equal(accessOfferText({ site: '' }), 'Let Lotwise read the original photos on the sites you scan? It finds more cards.');
 });
 
 test('"Not now" on one site does not silence the offer on another', () => {

@@ -351,3 +351,15 @@ test('choiceSummary carries the catalog row art, so a choice can show its own pi
   assert.deepEqual(choiceSummary(row), { id: 'sv03-166', name: 'Eevee', set: 'Obsidian Flames', setCode: 'sv03', number: '166', imageUrl: row.imageUrl });
   assert.equal('imageUrl' in choiceSummary({ id: 'a', name: 'B', set: 'C', setCode: 'd', number: '1' }), false);
 });
+
+import fs from 'node:fs';
+
+test('guessFromTitle builds its choices and lists from the chosen era only (finding 14)', () => {
+  const source = fs.readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
+  assert.match(source, /guessFromTitle\(_meta\[hit\.index\], hits, result, era\)/);
+  const start = source.indexOf('async function guessFromTitle(');
+  const body = source.slice(start, source.indexOf('\n}\n', start));
+  assert.match(body, /era\)?\s*\?\s*allHits\.filter\(/);
+  assert.match(body, /inEra\(/);
+  assert.doesNotMatch(body, /setChoices\(card, allHits/);
+});

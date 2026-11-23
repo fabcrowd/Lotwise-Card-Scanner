@@ -89,13 +89,52 @@ test('Esc cancels and removes everything', () => {
   assert.equal(drawn(p).length, 0);
 });
 
-test('a click without a drag cancels', () => {
+// 10.2: a plain click no longer cancels; it keeps draw mode and says what to do. The hint bar has a Cancel button.
+const CLICK_HINT = 'Drag a box around the card.';
+const cancelButton = (p) => live(p).find((el) => el.tagName === 'BUTTON' && el.textContent === 'Cancel');
+const ended = (p) => p.sent.filter((m) => m.action === 'drawEnded');
+
+test('a click without a drag keeps draw mode and the hint says to drag a box', () => {
   const p = page();
   p.send({ action: 'startDraw' });
   mouse(p, 'mousedown', 200, 200);
   mouse(p, 'mouseup', 200, 200);
-  assert.equal(live(p).length, 0);
+  assert.ok(live(p).length > 0, 'still in draw mode');
+  assert.ok(live(p).some((el) => el.textContent === CLICK_HINT), 'the hint now says to drag');
   assert.equal(drawn(p).length, 0);
+  assert.equal(ended(p).length, 0);
+  drag(p, 150, 120, 300, 340);
+  assert.equal(drawn(p).length, 1, 'a drag after the click still draws');
+});
+
+test('the hint bar has a Cancel button that leaves draw mode and tells the scanner window', () => {
+  const p = page();
+  p.send({ action: 'startDraw' });
+  const button = cancelButton(p);
+  assert.ok(button, 'a Cancel button is in the hint bar');
+  const down = stubs();
+  p.fire('mousedown', { clientX: 5, clientY: 5, button: 0, target: button, ...down });
+  assert.equal(drawn(p).length, 0);
+  assert.ok(live(p).length > 0, 'pressing it does not start a rectangle or leave yet');
+  p.fire('mouseup', { clientX: 5, clientY: 5, button: 0, target: button, ...stubs() });
+  p.fire('click', { clientX: 5, clientY: 5, button: 0, target: button, ...stubs() });
+  assert.equal(live(p).length, 0, 'everything it added is gone');
+  assert.equal(ended(p).length, 1);
+});
+
+test('Esc tells the scanner window draw mode ended; a finished drag and a cancel from the window do not', () => {
+  const p = page();
+  p.send({ action: 'startDraw' });
+  key(p, 'Escape');
+  assert.equal(ended(p).length, 1);
+  const q = page();
+  q.send({ action: 'startDraw' });
+  drag(q, 150, 120, 300, 340);
+  assert.equal(ended(q).length, 0, 'a drawn box is its own answer');
+  const r = page();
+  r.send({ action: 'startDraw' });
+  r.send({ action: 'cancelDraw' });
+  assert.equal(ended(r).length, 0, 'the window asked for it and knows');
 });
 
 test('a box under 12x12 is ignored and draw mode stays on', () => {

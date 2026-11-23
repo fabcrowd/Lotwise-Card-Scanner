@@ -18,6 +18,9 @@ const SITE_SUFFIX = new RegExp(`\\s*[|\\-\\u2013\\u2014\\u00b7:]\\s*(?:[^|\\-\\u
 // Cookie and consent dialogs, challenge pages and error pages put their own h1 on the page.
 const BANNER = /^(?:privacy|your privacy|cookie|we use cookies|we value your privacy|accept|manage (?:cookie|consent)|consent|sign in|log ?in|access denied|just a moment|error page|security (?:check|measure)|pardon our|verify|captcha|robot)|\bcookies?\b.{0,40}$/i;
 const LOT = /\b(?:lots?|bundles?|bulk|collections?|assorted|mystery|random|set of \d+|\d+\s*(?:x\s*)?cards?)\b/i;
+// Grades and "1/1" are written as small fractions, and printed set totals this low are rare, so
+// only a slash total at or above this proves a real card number; below it the set code stays a number.
+const MIN_REAL_SLASH_TOTAL = 20;
 const GRADERS = /^(?:psa|bgs|cgc|sgc|ace|hga|tag|gma|pcg)$/;
 
 /** The title without the site's name, "for sale online" filler or a banner dialog's heading. "" when nothing is left. */
@@ -66,15 +69,23 @@ function numberKey(number) {
 
 function numbersIn(text) {
   const found = [];
+  let realNumber = false;
   const add = (number, total) => {
     const key = numberKey(number);
     if (key && !found.some((f) => f.number === key)) found.push({ number: key, total: total ?? null });
   };
   for (const m of text.matchAll(/(?<![\w/])#?([a-z]{0,5}\d{1,4})\s*\/\s*([a-z]{0,3}\d{1,4})(?![\w/])/gi)) {
-    if (!GRADERS.test(m[1].toLowerCase())) add(m[1], m[2].replace(/^0+(?=\d)/, ""));
+    if (GRADERS.test(m[1].toLowerCase())) continue;
+    add(m[1], m[2].replace(/^0+(?=\d)/, ""));
+    if (Number(m[2].replace(/\D/g, "")) >= MIN_REAL_SLASH_TOTAL) realNumber = true;
   }
-  for (const m of text.matchAll(/(?<![\w/])#([a-z]{0,5}\d{1,4})\b/gi)) add(m[1], null);
-  for (const m of text.matchAll(/(?<![\w/#])([a-z]{2,5}\d{2,4})\b/gi)) {
+  for (const m of text.matchAll(/(?<![\w/])#([a-z]{0,5}\d{1,4})\b/gi)) {
+    add(m[1], null);
+    if (m[1].replace(/\D/g, "").length >= 2) realNumber = true;
+  }
+  // A set code ("SV08") is a card number unless the title has a real slash or # number.
+  const setCodes = realNumber ? [] : text.matchAll(/(?<![\w/#])([a-z]{2,5}\d{2,4})\b/gi);
+  for (const m of setCodes) {
     if (!GRADERS.test(m[1].toLowerCase().replace(/\d+$/, ""))) add(m[1], null);
   }
   return found;

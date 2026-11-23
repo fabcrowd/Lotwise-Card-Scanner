@@ -1,0 +1,32 @@
+{
+ "23627": {
+  "success": true,
+  "errors": [],
+  "results": [
+   {
+    "productId": 569591,
+    "lowPrice": 0.2,
+    "midPrice": 0.3,
+    "highPrice": 0.9,
+    "marketPrice": 0.64,
+    "directLowPrice": null,
+    "subTypeName": "Normal"
+   }
+  ]
+ },
+ "23630": {
+  "success": true,
+  "errors": [],
+  "results": [
+   {
+    "productId": 569885,
+    "lowPrice": 0.1,
+    "midPrice": 0.2,
+    "highPrice": 0.5,
+    "marketPrice": 0.37,
+    "directLowPrice": null,
+    "subTypeName": "Normal"
+   }
+  ]
+ }
+}

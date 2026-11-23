@@ -17,6 +17,9 @@ import {
   parseSearch,
   renderPickList,
   thumbUrl,
+  titleChoiceIds,
+  TITLE_CANDIDATE_SLOTS,
+  TITLE_CHOICE_LIMIT,
 } from '../tools/extension-wasm/lib/card-picker.js';
 import { confTier } from '../tools/extension-wasm/lib/card-display.js';
 import { eraById } from '../tools/extension-wasm/lib/era.js';
@@ -330,15 +333,14 @@ test('candidatesFor ignores a referenced card the catalog does not have', () => 
 import { cropThumb, unrecognisedLabel, renderUnrecognisedGroup } from '../tools/extension-wasm/lib/card-picker.js';
 
 test('unrecognisedLabel counts and says what the button does', () => {
-  assert.equal(unrecognisedLabel(1, false), '1 card not recognised — Show');
-  assert.equal(unrecognisedLabel(12, false), '12 cards not recognised — Show');
-  assert.equal(unrecognisedLabel(12, true), '12 cards not recognised — Hide');
+  assert.equal(unrecognisedLabel(1), 'Not read (1)');
+  assert.equal(unrecognisedLabel(12), 'Not read (12)');
 });
 
 test('renderUnrecognisedGroup is a collapsed disclosure button that controls the list', () => {
   const html = renderUnrecognisedGroup('<p>rows</p>', 12, false);
   assert.match(html, /<button type="button"[^>]*data-unrec-toggle[^>]*aria-expanded="false"[^>]*aria-controls="unrec-list"/);
-  assert.match(html, /12 cards not recognised — Show/);
+  assert.match(html, />Not read \(12\)</);
   assert.match(html, /<div id="unrec-list"[^>]* hidden>/);
   assert.match(renderUnrecognisedGroup('<p>rows</p>', 12, true), /aria-expanded="true"[\s\S]*<div id="unrec-list"(?![^>]* hidden)/);
   assert.equal(renderUnrecognisedGroup('', 0, false), '');
@@ -416,4 +418,86 @@ test('thumbUrl never builds a pokemontcg.io url for a TCGdex set code; it uses t
   for (const code of ['sv03', 'sv8', 'zzz9']) {
     assert.doesNotMatch(String(thumbUrl({ setCode: code, number: '1' })), /pokemontcg\.io/);
   }
+});
+
+// Title-named cards: the card's own title line names a card the picture match did not offer.
+const idsOf = (rows) => rows.map((c) => c.id);
+const TITLE_META = [
+  ...META,
+  { name: 'No id' },
+  row('base1-7', 'Charizard', 'base1', '7', 'base'),
+];
+
+test('titleChoiceIds: keeps order, drops duplicates and rows without id, respects limit', () => {
+  const hits = [{ index: 4 }, { index: 4 }, { index: 10 }, { index: 0 }, { index: 99 }, { index: 5 }, { index: 6 }];
+  assert.deepEqual(titleChoiceIds(hits, TITLE_META), ['xy12-11', 'base1-4', 'sv3-125']);
+  assert.deepEqual(titleChoiceIds(hits, TITLE_META, { limit: 2 }), ['xy12-11', 'base1-4']);
+  assert.equal(TITLE_CHOICE_LIMIT, 3);
+  assert.equal(TITLE_CANDIDATE_SLOTS, 2);
+});
+
+test('titleChoiceIds: an era keeps only printings inside it', () => {
+  const hits = [{ index: 4 }, { index: 0 }, { index: 5 }];
+  const era = eraById('wotc');
+  const all = titleChoiceIds(hits, TITLE_META);
+  const inBase = titleChoiceIds(hits, TITLE_META, { era });
+  assert.deepEqual(inBase, ['base1-4']);
+  assert.ok(all.length > inBase.length);
+});
+
+test('titleChoiceIds: bad input returns an empty list', () => {
+  assert.deepEqual(titleChoiceIds(null, META), []);
+  assert.deepEqual(titleChoiceIds([{ index: 0 }], null), []);
+  assert.deepEqual(titleChoiceIds(undefined, undefined), []);
+  assert.deepEqual(titleChoiceIds([null, {}], META), []);
+});
+
+const CLEFAIRY = { identity: { id: 'base1-5', name: 'Clefairy' }, nearest: ['base1-5', 'base1-6'] };
+
+test('candidatesFor: title cards come right after the first candidate, at most two', () => {
+  const card = { ...CLEFAIRY, titleChoices: ['xy12-11', 'base1-4', 'sv1-004'] };
+  assert.deepEqual(idsOf(candidatesFor(card, META)), ['base1-5', 'xy12-11', 'base1-4', 'base1-6']);
+});
+
+test('candidatesFor: the result never exceeds the limit and never repeats a card', () => {
+  const card = { ...CLEFAIRY, titleChoices: ['xy12-11', 'base1-4'] };
+  const ids = idsOf(candidatesFor(card, META, 3));
+  assert.deepEqual(ids, ['base1-5', 'xy12-11', 'base1-4']);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('candidatesFor: a title id already in the list or unknown adds nothing', () => {
+  const plain = idsOf(candidatesFor(CLEFAIRY, META));
+  assert.deepEqual(idsOf(candidatesFor({ ...CLEFAIRY, titleChoices: ['base1-6', 'base1-5'] }, META)), plain);
+  assert.deepEqual(idsOf(candidatesFor({ ...CLEFAIRY, titleChoices: ['nope-1'] }, META)), plain);
+  assert.deepEqual(idsOf(candidatesFor({ ...CLEFAIRY, titleChoices: [] }, META)), plain);
+});
+
+test('candidatesFor: with an empty picture list the title cards are returned alone', () => {
+  const card = { cardBack: false, titleChoices: ['xy12-11', 'base1-4', 'sv1-004'] };
+  assert.deepEqual(idsOf(candidatesFor(card, META)), ['xy12-11', 'base1-4']);
+});
+
+test('candidatesFor: the low-certainty path gets title cards too', () => {
+  const card = {
+    lowCertainty: true,
+    identity: META[3],
+    nearest: ['base1-6', 'base2-6', 'sv3pt5-4'],
+    titleChoices: ['xy12-11'],
+  };
+  assert.deepEqual(idsOf(candidatesFor(card, META)), ['base1-6', 'xy12-11', 'base2-6', 'sv3pt5-4']);
+});
+
+test('candidatesFor: an era drops title cards outside it', () => {
+  const card = { ...CLEFAIRY, titleChoices: ['xy12-11', 'base1-4'] };
+  assert.deepEqual(idsOf(candidatesFor(card, META, 5, eraById('wotc'))), ['base1-5', 'base1-4', 'base1-6']);
+});
+
+test('candidatesFor: without titleChoices the lists are unchanged', () => {
+  const charizard = { identity: { name: 'Charizard' }, setChoices: [{ id: 'xy12-11' }, { id: 'base1-4' }] };
+  assert.deepEqual(idsOf(candidatesFor(charizard, META)), ['xy12-11', 'base1-4', 'ex6-100']);
+  assert.deepEqual(idsOf(candidatesFor(CLEFAIRY, META)), ['base1-5', 'base1-6']);
+  const guess = { lowCertainty: true, identity: META[3], nearest: ['base1-6', 'base2-6', 'sv3pt5-4'] };
+  assert.deepEqual(idsOf(candidatesFor(guess, META)), ['base1-6', 'base2-6', 'sv3pt5-4']);
+  assert.deepEqual(idsOf(candidatesFor({ identity: META[9] }, META)), ['sv1-004']);
 });

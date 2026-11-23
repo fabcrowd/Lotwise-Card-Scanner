@@ -2,6 +2,7 @@
 
 import { BOX_KINDS, SIGNAL_SOURCES, detectorOf, normalizeBox, scannerOf } from "./contribution.js";
 import { correctionSource } from "./draw-box.js";
+import { isJaId } from "./japanese.js";
 import { splitOf } from "./photo-id.js";
 
 /**
@@ -11,7 +12,7 @@ import { splitOf } from "./photo-id.js";
 export function shareFor({ photoId, box, width, height, card, kind = "found" }) {
   const normalized = normalizeBox(box, width, height);
   if (!normalized) return null;
-  const share = { photoId, split: splitOf(photoId), box: normalized, scanner: scannerOf(card) };
+  const share = { photoId, split: splitOf(photoId), box: normalized, scanner: scannerOf(card), ...(card?.japanese === true ? { japanese: true } : {}) };
   const detector = detectorOf({ score: card?.score, box, kind });
   return detector ? { ...share, detector } : share;
 }
@@ -22,11 +23,17 @@ export function withBoxKind(share, kind) {
   return { ...share, detector: { ...share.detector, kind } };
 }
 
-/** One box signal row (drawn, removed, put back). A drawn box the user then picked a card for answers that card. Null when it cannot be built. */
+/**
+ * One box signal row (drawn, removed, put back). A drawn box the user then picked a card for answers that card. Null when it cannot be built.
+ * A Japanese card is never shared as a card answer; box rows (drawn, removed, put back) are still sent without a card id:
+ * a flagged or `jp-` row answers "unknown" and its scanner guess is blank.
+ */
 export function signalRow({ share, crop, source, pickedId = null }) {
   if (!share?.detector || !crop || !SIGNAL_SOURCES.includes(source)) return null;
-  const answer = source === "drawn" && typeof pickedId === "string" && pickedId ? { cardId: pickedId } : { unknown: true };
-  return { box: share.box, crop, answer, scanner: share.scanner, source, detector: share.detector };
+  const japanese = share.japanese === true || isJaId(share.scanner?.cardId) || isJaId(pickedId);
+  const answer = !japanese && source === "drawn" && typeof pickedId === "string" && pickedId ? { cardId: pickedId } : { unknown: true };
+  const scanner = japanese ? { cardId: null, confidence: share.scanner?.confidence ?? 0, stripe: "none" } : share.scanner;
+  return { box: share.box, crop, answer, scanner, source, detector: share.detector };
 }
 
 /** What a box signal (drawn, removed, put back) needs: its teach-split share with a detector and a picture. Null otherwise. */
@@ -74,9 +81,11 @@ export const wantsExamPrompt = (shares) => examGroups(shares).size > 0;
 /**
  * Every row of one exam photo. A fix the user made wins; otherwise the popup's own displayed answer is confirmed
  * (a card id the catalog does not know, or nothing, is "unknown"). Null when any row has no picture, because an
- * exam contribution must hold every row of its photo.
+ * exam contribution must hold every row of its photo. Also null when any box of the photo is Japanese (flagged, shown
+ * as a Japanese card, or picked as one): a Japanese card is never shared as a card answer; box rows (drawn, removed, put back) are still sent without a card id.
+ * A partial photo would break the contract, so the whole exam photo is dropped.
  * @param picks index -> { cardId, source }
- * @param displayed index -> { cardId } | { notACard: true } | { unknown: true }
+ * @param displayed index -> { cardId } | { notACard: true } | { unknown: true } | { japanese: true }
  */
 export function examRows({ shares, indices, crops, picks, displayed, known }) {
   const rows = [];
@@ -85,6 +94,7 @@ export function examRows({ shares, indices, crops, picks, displayed, known }) {
     if (!crop) return null;
     const pick = picks[index];
     const shown = displayed[index];
+    if (shown?.japanese === true || isJaId(shown?.cardId) || isJaId(pick?.cardId)) return null;
     let answer = { unknown: true };
     let source = "confirm";
     if (pick) {

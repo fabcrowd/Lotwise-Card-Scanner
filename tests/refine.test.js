@@ -55,6 +55,39 @@ test('mergeSourceRead: an unsettled source read with a closest card re-ranks the
   assert.equal(mergeSourceRead(card, { cardBack: true, abstain: true }, () => guess), card);
 });
 
+test('mergeSourceRead: a Japanese source read replaces the earlier read, keeping the tile\'s place', () => {
+  const card = { box: [1, 2, 3, 4], score: 1, docBox: [5, 6, 7, 8], via: 'v', lowCertainty: true, unsure: true, identity: { id: 'a' }, nearest: ['a'] };
+  const read = { identity: null, abstain: true, confidence: 0, japanese: true, jaNearest: ['jp-1'], nearest: ['a'] };
+  const out = mergeSourceRead(card, read, () => assert.fail('a Japanese read is not turned into an English guess'));
+  assert.equal(out.japanese, true);
+  assert.deepEqual(out.jaNearest, ['jp-1']);
+  assert.equal(out.identity, null);
+  assert.equal(out.lowCertainty, undefined);
+  assert.deepEqual(out.box, [1, 2, 3, 4]);
+  assert.deepEqual(out.docBox, [5, 6, 7, 8]);
+  assert.equal(out.refinedFromSource, true);
+});
+
+test('mergeSourceRead: a Japanese card gives way to a confirmed or guessed English source read', () => {
+  const card = { box: [1, 2, 3, 4], identity: null, abstain: true, japanese: true, jaNearest: ['jp-1'] };
+  const named = { abstain: false, identity: { id: 'b', name: 'B' }, confidence: 0.8 };
+  const out = mergeSourceRead(card, named, () => assert.fail('not asked for a guess'));
+  assert.equal(out.identity.id, 'b');
+  assert.equal(out.japanese, undefined);
+  const abstained = { abstain: true, nearest: ['c'] };
+  const guess = { ...abstained, lowCertainty: true, identity: { id: 'c' } };
+  const guessed = mergeSourceRead(card, abstained, () => guess);
+  assert.equal(guessed.identity.id, 'c');
+  assert.equal(guessed.japanese, undefined);
+});
+
+test('mergeSourceRead: a Japanese card is kept when the source read is empty or abstains without a Japanese verdict', () => {
+  const card = { box: [1, 2, 3, 4], identity: null, abstain: true, japanese: true, jaNearest: ['jp-1'] };
+  assert.equal(mergeSourceRead(card, null, () => assert.fail('no read')), card);
+  assert.equal(mergeSourceRead(card, { abstain: true, nearest: [] }, (r) => r), card);
+  assert.equal(mergeSourceRead(card, { cardBack: true, abstain: true }, () => assert.fail('card back')), card);
+});
+
 test('looksLikeCard: portrait card shapes only', () => {
   assert.equal(looksLikeCard(245, 342), true);
   assert.equal(looksLikeCard(342, 245), false);

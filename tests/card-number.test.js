@@ -190,3 +190,47 @@ test('an impossible total is ignored when only one printing has the number', () 
   assert.equal(printingByNumber(rows, { number: '112', total: 712 }, sizes), 1);
   assert.equal(printingByNumber(rows, { number: '82', total: 712 }, sizes), null);
 });
+
+test('parseCardNumber: spaces around the slash read like no spaces', () => {
+  assert.deepEqual(parseCardNumber(['ILLUS. ARITA 057 / 191']), { number: '057', total: 191 });
+  assert.deepEqual(parseCardNumber(['ILLUS. ARITA TG05 / TG30']), { number: 'TG05', total: 30 });
+  assert.deepEqual(parseCardNumber(['HP 057 / 191']), { number: '057', total: 191 });
+  assert.deepEqual(parseCardNumber(['A 057 / 191 M']), { number: '057', total: 191 });
+});
+
+test('parseCardNumber: lines that already worked with spaces still work', () => {
+  assert.deepEqual(parseCardNumber(['Illus. Arita 057 / 191']), { number: '057', total: 191 });
+  assert.deepEqual(parseCardNumber(['057 / 191 PSA']), { number: '057', total: 191 });
+  assert.deepEqual(parseCardNumber(['TG05 / TG30']), { number: 'TG05', total: 30 });
+});
+
+test('parseCardNumber: a line with spaces around the slash parses like the same line without them', () => {
+  const spaced = [
+    'ILLUS. ARITA 057 / 191', 'HP 060 / 064', 'A 001 / 100 M', 'ILLUS. MITSUHIRO ARITA 123 / 165 M',
+    'SWSH 045 / 198', 'G 001 / 100 X', 'ILLUS. KEN SUGIMORI TG05 / TG30', '12 / 2024', 'no number here',
+  ];
+  const joined = [
+    'ILLUS. ARITA 057/191', 'HP 060/064', 'A 001/100 M', 'ILLUS. MITSUHIRO ARITA 123/165 M',
+    'SWSH 045/198', 'G 001/100 X', 'ILLUS. KEN SUGIMORI TG05/TG30', '12/2024', 'no number here',
+  ];
+  assert.ok(spaced.length >= 8);
+  spaced.forEach((line, i) => {
+    assert.deepEqual(parseCardNumber([line]), parseCardNumber([joined[i]]), line);
+  });
+});
+
+test('parseCardNumber: no number is still null, and a date matches its no-space form', () => {
+  assert.equal(parseCardNumber(['no number here']), null);
+  assert.deepEqual(parseCardNumber(['12 / 2024']), parseCardNumber(['12/2024']));
+});
+
+test('parseCardNumber: a very long digit line is skipped quickly and a 150-character line still reads', () => {
+  const long = '1'.repeat(5000);
+  const before = Date.now();
+  const result = parseCardNumber([long]);
+  assert.ok(Date.now() - before < 500);
+  assert.equal(result, null);
+  const line = `${'ILLUS. ARITA '.repeat(11)}057 / 191`;
+  assert.ok(line.length > 140 && line.length < 200);
+  assert.deepEqual(parseCardNumber([line]), { number: '057', total: 191 });
+});

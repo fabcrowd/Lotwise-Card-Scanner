@@ -1,0 +1,50 @@
+{
+  "cacheName": "cardscanner-models-v2.1p",
+  "files": [
+    {
+      "name": "clip_visual_int8.onnx",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v3.0/clip_visual_int8.onnx",
+      "sha256": "0dba1302580da2a629936be835b765d6dba9019e677284257470d30070d9d52b"
+    },
+    {
+      "name": "card_detect.onnx",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.1/card_detect.onnx",
+      "sha256": "5e17ae58b25843be1ee19f5dce4e0e5981a23411564a69eb633bb0694d582ac5"
+    },
+    {
+      "name": "catalog.bin.gz",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.0/catalog.bin.gz",
+      "sha256": "2f3c50cec84937ff63ae5196da040e441599a5df6f28de829db79dd2b2dd7e13"
+    },
+    {
+      "name": "meta.json",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.0/meta.json",
+      "sha256": "5febdc04fa74a456b80f6f322bc58fd22f1c4bb5e685abda3c50a12edfd88866"
+    },
+    {
+      "name": "id_map.json",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.0/id_map.json",
+      "sha256": "2d60e5a300369d36bd512d750819eb720c470f1a58bce3018cfef320aeee335f"
+    },
+    {
+      "name": "ocr_det.onnx",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.2/ocr_det.onnx",
+      "sha256": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9"
+    },
+    {
+      "name": "ocr_rec.onnx",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.2/ocr_rec.onnx",
+      "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b"
+    },
+    {
+      "name": "card_corners.onnx",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.2/card_corners.onnx",
+      "sha256": "d85aba2af7c30c868df9353ec6f5750973133dfffdb2dbc2c1f4784ca968d57e"
+    },
+    {
+      "name": "catalog-ja.bin.gz",
+      "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v3.2/catalog-ja.bin.gz",
+      "sha256": "64e574fc24f844f142e6c13a0568dde4aafe7879f0608d5c313d3fb514ef774a"
+    }
+  ]
+}

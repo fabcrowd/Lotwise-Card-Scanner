@@ -118,6 +118,19 @@ function webpSize(b) {
   return null;
 }
 
+// An AVIF declares each image's size in an "ispe" box (4 bytes of version and flags, then width and height); the
+// largest one is the picture itself, the others are thumbnails.
+function avifSize(b) {
+  let best = null;
+  for (let i = 4; i + 16 <= b.length; i++) {
+    if (!hasAscii(b, i, "ispe")) continue;
+    const width = u32be(b, i + 8);
+    const height = u32be(b, i + 12);
+    if (width > 0 && height > 0 && (!best || width * height > best.width * best.height)) best = { width, height };
+  }
+  return best;
+}
+
 /** Pixel size declared in the file header of a PNG, JPEG, GIF or WebP; null for anything else or a header that is cut short. */
 export function imageSize(bytes) {
   const b = bytes;
@@ -126,6 +139,8 @@ export function imageSize(bytes) {
   if (ascii(b, 0, 3) === "GIF") return { width: b[6] | (b[7] << 8), height: b[8] | (b[9] << 8) };
   if (b[0] === 0xff && b[1] === 0xd8) return jpegSize(b);
   if (ascii(b, 0, 4) === "RIFF" && ascii(b, 8, 4) === "WEBP") return webpSize(b);
+  // Any ISO media file (an AVIF may have the major brand mif1 as well as avif or avis).
+  if (hasAscii(b, 4, "ftyp")) return avifSize(b);
   return null;
 }
 

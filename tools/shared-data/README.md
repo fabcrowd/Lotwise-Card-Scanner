@@ -61,14 +61,40 @@ A GitHub fine-grained token cannot be limited to one branch, so the guarantee co
 9. **Protect the key (exact steps).** Repo, Settings, Environments, New environment, name `pack-signing`.
    - Deployment branches and tags: "Selected branches and tags", add `main`.
    - Required reviewers: add yourself (optional; it makes every nightly run wait for your approval, so leave it off
-     for unattended runs).
+     for unattended runs). Required reviewers delay the sign job, and a manifest signed more than an hour after it was
+     built is refused, so do not combine required reviewers with the nightly schedule.
    - Environment secrets, Add secret: `PACK_SIGNING_KEY` = the full PEM text. Do **not** add it as a repository secret:
      the `build` job, which reads strangers' data, must not be able to see it.
 10. **Regression set.** Build it once on your machine from labelled, non-sealed HiBid development crops, and commit
     `regression.npz` to the root of `main`:
     `python scripts/build_regression.py --labels labels.json --root <crops folder> --model clip_visual_int8.onnx --out regression.npz`.
     It holds embeddings and catalog ids only, no images. Without it the manifest never says `improved`, so no
-    user ever receives the pack.
+    user ever receives the pack. The file also records the recognizer model (first 16 hex of the sha256 of `--model`)
+    and the crop version (`pins.json`, or `--pins`) that made it, and the nightly job ignores a regression set that
+    was made with another model or has no such tag. After a model change, rebuild it with the new model or nothing
+    ships. The same check applies to the live release: until a bundle made with the new model has shipped as the
+    latest release, each night ignores the live bundle (it is another model) and rebuilds the new-card file
+    (`catalog-extra.bin`) from scratch.
+
+    **Two kinds of rows.** An id-labelled row names one exact catalog id (the image mode above). A name-labelled row names
+    a card and is built from embeddings that already exist:
+    `python scripts/build_regression.py --embeddings emb.npy --labels labels.json --catalog-names names.json --id-map id_map.json --model clip_visual_int8.onnx --out regression.npz`.
+    `labels.json` is a list of `{"row": <index into emb.npy>, "name": "<label>"}`, `names.json` maps each shipped catalog
+    id to its printed name, and `id_map.json` is the shipped catalog's id list. Each name row stores the label's base name
+    (lower case, `'s` and punctuation dropped, and the variant words ex, v, vmax, vstar, vunion, gx, star, delta removed;
+    `pipeline/names.py`) and the list of shipped ids with that base name, worked out once when the file is built, so the
+    nightly job needs no name map. A name nobody ships has an empty list. The file may mix both kinds of row. The script
+    prints the rows written, the rows with an empty accept list, and the number of distinct base names. Any path
+    containing `sealed` is refused in both modes.
+
+    **How a name row is scored.** The first hit is right when its id is in the row's list, or when it is one of the new-card
+    rows (tonight's, or the live bundle's for "before") and the base name of that new card's own printed name equals the
+    row's base name. An id row is right only on the exact id. Only this right-or-wrong comparison changes: the accept rule,
+    the rival margin and the exam are the same. Old id-only files load and score exactly as before.
+
+    **What the name rows do not prove.** The labels of the name rows were made by two independent model labellers that
+    agreed, not by a person. A card with the same name from another set counts as right. The set holds no photos of the new
+    cards, so it can only catch harm to cards it contains.
 
     **How blind is this gate?** The adapter's learning rate and epoch count were chosen while looking at HiBid scores,
     so the HiBid regression gate is not fully blind to the adapter. The independent checks are the community exam
@@ -79,7 +105,9 @@ A GitHub fine-grained token cannot be limited to one branch, so the guarantee co
     It embeds labelled real crops plus synthetic photo-like variants of catalog images and stores embeddings and card
     ids only, no images. Any input path containing `hibid`, `sealed` or `realworld` is refused. Commit `seed.npz` to the
     root of `main`; the nightly reads it from the `main` checkout (`--seed seed.npz`) and trains the adapter on it
-    together with promoted contributions. Without the file the adapter trains on contributions alone.
+    together with promoted contributions. Without the file the adapter trains on contributions alone. The seed is
+    optional and is tagged with the model and crop like the regression set; an untagged or other-model seed is ignored,
+    which means the adapter is trained only from contributed rows, if any, until you rebuild the seed with the new model.
 11. **Where packs are published.** The Action publishes releases in the data repo itself, which is public, so
     nothing more is needed. Only if you ever make the data repo private: set the Actions variable
     `PACK_RELEASE_REPO` to a public repo and the secret `PACK_RELEASE_TOKEN` to a fine-grained token with
@@ -90,6 +118,14 @@ A GitHub fine-grained token cannot be limited to one branch, so the guarantee co
     - `PACK_PUBLIC_KEY` = the base64 SPKI line from step 8
 13. **First run.** Actions tab, "nightly-pack", Run workflow. With no contributions it publishes an empty,
     valid, not-improved bundle (a pre-release), which proves the signing key and release path work.
+
+**Go-live order after a model change** (the first nightly run must publish a bundle for the new model):
+1. Push this template to the root of `main` (step 1).
+2. Rebuild `regression.npz` with the tagged script (step 10).
+3. Decide on `seed.npz` (step 10a): rebuild it with the new model, or leave it out.
+4. Run the workflow once (step 13) and read the log lines that say what was ignored (`... not ours`,
+   `... was made with another model (or is untagged): ignored`, `catalogExtra was made with another model: rebuilding`,
+   `dropped N previous catalogExtra rows`, and the `new-card rows are the first hit ...` line).
 
 ## Contribution schema v1
 
@@ -127,7 +163,7 @@ rejects any other combination.
 
 `model.clip` and `catalog` are the first 16 hex digits of the sha256 pinned in the extension's `setup.js` for
 `clip_visual_int8.onnx` and `catalog.bin.gz`. The pin lives in `tools/shared-data/pins.json` and in `setup.js`; read it there.
-`model.crop` is `EMBEDDING_VERSION` (currently 2). The crop is the rectified card image, the same canvas
+`model.crop` is `EMBEDDING_VERSION` (currently 3). The crop is the rectified card image, the same canvas
 `embedCard` receives; the pipeline takes its own art strip from it.
 
 **Crop limits.** A real JPEG: SOF0/SOF1/SOF2 header with at most 3 components, width and height at most 400, long
@@ -196,15 +232,96 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
    additionally requires, on that set, a rise in top-1 and in accepted-right answers, no rise in accepted-wrong answers
    and an abstain rate up by at most 2 points (`pipeline/gate.py`; accepted/abstained follow the accept rule of
    `lib/fusion.js`, read on the raw cosine because the adapter only ranks); without the file it is never true.
+   Every night the replay (regression set and exam) searches the catalog plus the `catalog-extra.bin` rows: "before"
+   with the live bundle's rows (none when the live bundle is ignored or has none), "after" with tonight's. A night
+   that only adds new cards (the learned parts, memory pack and adapter, are unchanged from the live bundle, or there is
+   no live memory part and nothing was learned tonight) ships only when a tagged, non-empty regression set shows, with
+   tonight's rows, no fewer correct reads and no more confident wrong reads than before. The log says how many
+   regression rows have a new-card row as their first hit before and after, and how many correct reads were lost and gained.
+   A candidate with fewer new cards than the live bundle's `catalog-extra.bin` (when the live bundle is ours) never ships.
+
+   **Holding back blamed cards.** When a night that only adds cards fails that condition, the job may hold back the new
+   cards the replay blames and test what is left with the same condition (`pipeline/run.py`, `_plan_hold`). It applies only
+   when nothing learned changed, a regression set is present, the exam condition is not what fails, and the failing part is
+   the regression rate (after below before) and/or the confident-wrong count (after above before). A blamed card is a card
+   added tonight (not a row already in the live bundle) that is the first hit, after, of a regression row that is confidently
+   wrong now and was not before (counted only when the confident-wrong count rose), or that was right before and is wrong
+   now (counted only when the rate fell). The blamed cards are removed, the new-card part is rebuilt from the rows that
+   remain, and the whole evaluation runs again on that smaller candidate. At most 3 such rounds, and at most 10 held cards
+   in the night. Nothing ships, and nothing is held, when a condition still fails after the last round, when holding would
+   pass 10 cards, when a failing row's first hit is not one of tonight's cards (a live-bundle row or a catalog card: there
+   is nothing to hold), or when no new card would be left. When it ships, the manifest, `catalog-extra.bin`, the new-card
+   counts and sets, the log and the status all describe the smaller candidate, so the signer's re-check sees consistent
+   numbers. The log prints one line per held card (id, name, set, reason, how many regression rows blamed it) and a summary
+   line; `status.json` gets a `held` list (id, name, reason) for that night, and `STATUS.md` lists the latest night's held
+   cards under the table. Held cards are not remembered anywhere: they are candidates again the next night, and are held
+   again if they are still blamed. A held card is also announced by a `::warning::` line in the build job's log (the step
+   "Warn about held new cards"). Holding never happens when the exam's own confident wrong reads rose: the replay counts
+   the exam's and the regression set's separately for this, so a regression row that a held card brings back cannot hide
+   harm on the exam. A trimmed candidate must pass that check too: it ships only if, in its own evaluation, the exam's
+   confident wrong count is not above the "before" count. Otherwise nothing ships and the night is reported as the
+   unreduced failed candidate, like any other failed hold. If the gate does not report the exam's count at all, nothing is
+   held. Holding turns a night that used to be blocked into a night that ships, with a warning in the log instead of a
+   failed run.
+
+   **What the gate cannot see.**
+   - A name-labelled row cannot tell a right printing from a wrong one when the name matches. A new set that reprints an
+     old name is therefore not checked for taking over the older printing. In the first local night, 193 of 3,363 rows had
+     a new card as their first hit, 173 of them counted right through the same-name rule, and 167 of those were right
+     before with an older printing.
+   - Only about a fifth of a night's new cards are the first hit of any regression row, so most new cards ship with no
+     evidence from the set.
+   - Accept lists include digital-only (TCG Pocket) cards of the same name.
+   - Holding removes the cards the fixed photos expose and says nothing about their set mates.
+   - The base name drops variant words such as ex, V, VMAX and GX, so "Pikachu" and "Pikachu ex" count as the same name.
+   - The confident-wrong count is blind to a same-name reprint: a confident read of the wrong printing counts as right.
+   - Holding turns what used to be a blocked night into a shipped one, with a warning instead of a failed run. The hold
+     never happens when the exam's own confident wrong reads rose, and a trimmed night must pass that check too.
+   The regression set holds id rows, name rows, or both (step 10). A name row is right when the first hit is one of its
+   listed shipped ids, or a new-card row whose printed name has the same base name; an id row is right only on the exact
+   id. The same rule feeds right, wrong-high, accepted-right, accepted-wrong and the lost and gained counts. The name rows
+   were labelled by two model labellers that agreed, not by a person, and a same-name card from another set counts as right.
+
+   **Not checked:** the regression set may contain no photos of cards that look like the new ones, so a new row that
+   confuses real photos of other cards can pass this gate. It only catches harm to cards the set contains.
 7. `manifest.json` is signed by the `sign` job (ECDSA P-256, SHA-256) over its exact bytes. `manifest.sig` is the
    base64 of the 64-byte raw `r||s` signature, which is what WebCrypto `verify` takes with
    `{name: "ECDSA", hash: "SHA-256"}`. The public key is imported as `spki`. Before signing, `sign_release.py`
    re-checks: manifest fields, every part's sha256 / size / format (rank at most 64, finite check weights, at most
    20000 rows), each url is this run's release asset, `seq` equals the run number, `issuedAt` is within an hour, and
    `improved: true` is not contradicted by the numbers (regression present with no drop; no exam drop once it has 30
-   cards; wrong "high" answers not up). The gate in `pipeline/gate.py` decides the rest. A bundle the gate did not
+   cards; wrong "high" answers not up), and every new-card picture address starts with an allowed host
+   (`pipeline/image_hosts.py`, the one list the build also uses; the sign job checks out that file with the signer).
+   `issuedAt` is stamped when the manifest is made, after the long stages, so a slow build still passes the hour check.
+   The gate in `pipeline/gate.py` decides the rest. A bundle the gate did not
    approve is published as a pre-release, so "latest" is always the live bundle. `STATUS.md` and `status.json` go to
    the rolling `status` pre-release (the data repo's `main` is admin-only, so the nightly never commits there).
+   **Quiet nights re-issue the live bundle.** The extension drops a manifest older than 30 days, which would take the
+   live bundle (and its new-card rows) away from every install after a month with no shipping night. So when a night
+   does not ship, and the live bundle was made for the same recognizer model and crop, and its manifest is older than
+   `REISSUE_AFTER_DAYS` (14, in `pipeline/run.py`; `tests/test_drift.py` keeps at least 7 days of margin against the
+   extension's limit), `out/` holds the live part files byte for byte and a manifest equal to the live one except `seq`
+   (this run's number) and `issuedAt` (now); its urls still point at the original release. The `build` job reports this
+   as the `reissue` output. The `sign` job then downloads the latest release itself (never from the build artifact),
+   and `sign_release.py --reissue-live-dir` signs only if the live manifest's signature verifies with the public key of
+   the signing key, nothing but `seq` (higher) and `issuedAt` (later) differs, and the part files match the manifest's
+   hashes and formats. An older signed manifest therefore cannot be re-issued. The build only proposes a re-issue whose
+   numbers the signer's own `improved` rule backs (it loads that rule from `scripts/sign_release.py`). If the signer
+   still refuses (it exits with code 3), the step prints a GitHub warning annotation with the reason, signs and
+   publishes no pack release, and the job carries on to publish status and prices as on any night that ships nothing; a
+   refusal on a normal night, or any other failure (no key, a crash), still fails the job. `STATUS.md` is written by
+   the build job before signing, so it shows such a night as not shipped and does not record the refused re-issue;
+   read the warning in the run log. Expect a refused re-issue to repeat each night until the live manifest is replaced
+   or fixed. A refusal does not stay a warning for long: once the live manifest's `issuedAt` is `REISSUE_FAIL_AFTER_DAYS`
+   (21, in `scripts/sign_release.py`) or more days old, or cannot be read, the signer exits 1 and the job fails, because
+   clients stop accepting the bundle at 30 days. A problem with the signing key itself (missing, unparsable, not
+   ECDSA P-256) exits 1 on every night, re-issue or not.
+   **One install cannot fill the exam.** `pipeline/exam.py` takes at most `ceil(30 / 4) = 8` exam cases per install a
+   night, in photo order. A kept case counts against every install that voted on it, and a case is skipped only when
+   all of its voters are at the cap, so an install that co-votes on every case cannot push honest cases out. The exam
+   rule still needs at least four installs.
+   The nightly workflow fetches the live release with a fallback that forgives only "release not found", and the status
+   history with one that also forgives a status release without `status.json`; any other failure stops the night.
    The same night writes `prices.json` (`python -m pipeline.prices`, TCGPlayer's daily public snapshot) and the sign
    job publishes it on the rolling `prices` pre-release. It is not a bundle part and not gated on `improved`, so a
    night the gate rejects still updates prices, and `latest` stays the live learning bundle. The extension downloads
@@ -213,7 +330,7 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
 ### manifest.json (v2)
 
 ```
-{ "v": 2, "model": "<clip 16 hex>", "crop": 2,
+{ "v": 2, "model": "<clip 16 hex>", "crop": 3,
   "assets": { "memory"?: A, "adapter"?: A, "check"?: A, "catalogExtra"?: A },   A = { "url", "sha256", "bytes" }
   "exam": { "before": 0.0-1.0, "after": 0.0-1.0, "n": N, "wrongAtHigh": { "before": .., "after": .. } },
   "regression": { "before": .., "after": .., "n": N } | null,
@@ -232,7 +349,12 @@ a bad bundle, publish a new improved one without the part (an `improved: false` 
 | memory | `community-pack.bin` | pack v1 below |
 | adapter | `adapter.bin` | header `{v:1,dim:512,rank:r<=64,scale:s}`, then U and V (`512*r` int8 each, row-major); `e' = normalize(e + U(Vt e))` on queries and catalog rows |
 | check | `check.bin` | header `{v:1,dim:512,bias,threshold}`, then 512 float32 weights; a detected box is dropped when `sigmoid(w.e+b) < threshold` on the raw embedding |
-| catalogExtra | `catalog-extra.bin` | pack v1 plus `"cards":[{id,name,set,setName,number,image}]` parallel to `cardIds`; made by `pipeline/new_sets.py` from TCGdex, cumulative, at most 500 new cards per night |
+| catalogExtra | `catalog-extra.bin` | pack v1 plus `"cards":[{id,name,set,setName,number,image}]` parallel to `cardIds`; made by `pipeline/new_sets.py` from TCGdex, cumulative, at most 500 new cards per night; the header also carries `"model"` and `"crop"`, and a previous file with another (or no) tag is rebuilt from scratch. TCG Pocket sets are skipped. A card TCGdex lists without a picture gets its `images.large` URL from pokemontcg.io when both its number and its name match a card of that set there (read from the static per-set files of the `PokemonTCG/pokemon-tcg-data` repo on raw.githubusercontent.com, at most 150 sets a night) |
+
+New cards (`catalog-extra.bin`), in short:
+- Newest sets first (the TCGdex set list, read from its end), at most 500 cards added a night and 20,000 in total.
+- A failed set list (retried once), a used-up time budget, or a set whose pictures keep failing means the rest waits for the next night.
+- Card ids over 64 characters are refused (the signer refuses the whole bundle over that).
 
 ### Pack byte format (v1)
 
@@ -270,7 +392,9 @@ by GitHub issue or the contact email. Then:
 you find abuse: delete the files and rewrite `inbox` history exactly as above, rotate `RELAY_ID_SECRET` only if the
 mapping itself leaked, and publish an abuse contact (the same contact email as the privacy policy) on the repo
 README. A bad bundle is handled by publishing a newer improved bundle without the bad part; deleting a release does
-not reach clients that already stored it.
+not reach clients that already stored it. Never delete a release whose tag a live manifest's asset addresses point to:
+a re-issued manifest keeps the original release's addresses, so deleting that release breaks the live bundle. To take a
+bad bundle down, ship or re-issue a good one first, then delete.
 
 ## Tests
 

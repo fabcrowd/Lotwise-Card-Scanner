@@ -55,7 +55,8 @@ export function sourceRefineOrder(cards, hints, max = MAX_REFINED) {
 export function mergeSourceRead(card, read, asGuess) {
   if (!read || read.cardBack) return card;
   const place = { box: card.box, score: card.score, docBox: card.docBox, via: card.via };
-  if (!read.abstain) return { ...read, ...place, refinedFromSource: true };
+  // A Japanese verdict from the larger source picture replaces the earlier read; it is never turned into an English guess.
+  if (!read.abstain || read.japanese) return { ...read, ...place, refinedFromSource: true };
   const guess = asGuess(read);
   return guess?.lowCertainty ? { ...guess, ...place, refinedFromSource: true } : card;
 }

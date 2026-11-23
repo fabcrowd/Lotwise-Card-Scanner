@@ -9,8 +9,9 @@ const PAD_COLOR  = 114; // gray letterbox fill
 
 let _session = null;
 
-// Allow callers to override the confidence floor — small compressed thumbnails
+// Callers pass a lower confidence floor per call — small compressed thumbnails
 // (FB Marketplace, HiBid lot tiles) often need a lower bar than physical photos.
+// It is a parameter, not shared state: overlapping scans must not see each other's floor.
 let _confThresh = CONF_THRESH;
 export function setConfThreshold(t) {
   if (typeof t === "number" && t >= 0 && t <= 1) _confThresh = t;
@@ -26,8 +27,9 @@ export async function loadDetector(modelBuffer) {
 /**
  * Run YOLO detection on an ImageBitmap.
  * Returns boxes in original image coordinates: [{ box:[x1,y1,x2,y2], score }]
+ * `confThreshold` overrides the confidence floor for this call only.
  */
-export async function detectCards(bitmap) {
+export async function detectCards(bitmap, confThreshold = _confThresh) {
   if (!_session) throw new Error("Detector not loaded");
 
   const origW = bitmap.width;
@@ -70,13 +72,13 @@ export async function detectCards(bitmap) {
     // Class 0 is a card front. If that score is weak, another class (a back,
     // or a tight corner) can still be the card in the photo.
     let conf = raw[base + 4] || 0;
-    if (conf < _confThresh) {
+    if (conf < confThreshold) {
       for (let c = 1; c < classCount; c++) {
         const score = raw[base + 4 + c];
         if (score > conf) conf = score;
       }
     }
-    if (conf < _confThresh) continue;
+    if (conf < confThreshold) continue;
 
     // Convert cx/cy/w/h → x1/y1/x2/y2 in letterboxed coords
     const lx1 = cx - w / 2;

@@ -229,7 +229,7 @@ test('a card label shows only its name and one price', () => {
   const id = { name: 'Charmeleon', set: 'Base Set', number: '24' };
   const label = (card) => ({ ...pure.labelText(card) });
   assert.deepEqual(label({ identity: id, display: { price: 4.5, printing: 'Normal', condition: 'NM', footer: 'TCGPlayer' } }), { name: 'Charmeleon', price: '$4.50' });
-  assert.deepEqual(label({ identity: id, display: { price: null, printingNote: 'set not sure · $0.71–$8.63' } }), { name: 'Charmeleon', price: '$0.71–$8.63', caveat: 'set not sure' });
+  assert.deepEqual(label({ identity: id, display: { price: null, printingNote: 'Several versions · $0.71–$8.63' } }), { name: 'Charmeleon', price: '$0.71–$8.63', caveat: 'Pick a version' });
   const grid = { variants: { normal: { market: 1.25 }, holofoil: { market: 38.99 } } };
   assert.deepEqual(label({ identity: id, price_grid: grid }), { name: 'Charmeleon', price: '$1.25–$38.99' });
   assert.deepEqual(label({ identity: id, market_price: 2 }), { name: 'Charmeleon', price: '$2.00' });
@@ -244,11 +244,11 @@ test('a card with an old price shows its name and "Old price", never the price',
   const id = { name: 'Charmeleon', number: '24' };
   assert.deepEqual({ ...pure.labelText({ identity: id, display: { price: 4.5, stale: true } }) }, { name: 'Charmeleon', price: 'Old price', muted: true });
   assert.deepEqual({ ...pure.labelText({ identity: id, display: { price: null, printingNote: 'set not sure · $0.71–$8.63', stale: true } }) }, { name: 'Charmeleon', price: 'Old price', muted: true });
-  const tag = JSON.parse(JSON.stringify(pure.tagText({ identity: id, display: { state: 'identified', price: 4.5, stale: true } })));
-  assert.deepEqual(tag.lines, ['Charmeleon #24', 'Old price']);
-  assert.ok(!JSON.stringify(tag).includes('4.50'));
+  const chip = JSON.parse(JSON.stringify(pure.chipSpec({ identity: id, display: { state: 'identified', price: 4.5, stale: true } })));
+  assert.equal(chip.text, '—');
+  assert.ok(!JSON.stringify(chip).includes('4.50'));
   // A fresh price is unchanged.
-  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagText({ identity: id, display: { state: 'identified', price: 4.5 } }).lines)), ['Charmeleon #24', '$4.50']);
+  assert.equal(pure.chipSpec({ identity: id, display: { state: 'identified', price: 4.5 } }).text, '$4.50');
 });
 
 test('the overlay takes only trusted clicks, never one a page script dispatched', () => {
@@ -293,7 +293,7 @@ test('D4: the hovered label of a small card shows its full name and its whole pr
   const choose = labelOf([100, 100, 172, 200], darkSlowbro);
   const texts = choose.lines.map((l) => l.text);
   assert.ok(texts.includes('Dark Slowbro? ~$51.51'), JSON.stringify(texts));
-  assert.ok(texts.includes('Tap to pick it in the scanner'), JSON.stringify(texts));
+  assert.ok(texts.includes('Click to pick it in the scanner'), JSON.stringify(texts));
   assert.ok(choose.w > 72, 'the label may be wider than the 72 px box');
 
   const drowzee = labelOf([300, 100, 428, 275], { identity: { name: 'Drowzee', number: '61' }, display: { state: 'identified', price: 0.07 } });
@@ -320,26 +320,86 @@ test('D4: the expanded label stays inside the visible photo rect and the viewpor
   assert.ok(edge.x + edge.w <= 1100 && edge.x >= 0, JSON.stringify(edge));
 });
 
-test('D3: a small card\'s tag never shows a bare price: a name stub of 4 or more letters, else its row number', () => {
-  const rows = (card, index, max, measure = perChar) => plainJson(pure.tagRows(pure.tagText(card, index), false, max, measure));
-  // 72 px box: tagLayout gives 13 px text and a 68 px tag, so 50 px of text.
-  assert.equal(pure.tagLayout(72, 100).maxWidth - 4 - 7 * 2, 50);
-  const chooseRows = rows(darkSlowbro, 4, 50);
-  assert.equal(chooseRows.length, 1);
-  assert.match(chooseRows[0], /^Dark/);
-  assert.doesNotMatch(chooseRows[0], /\$/);
-  const slowbro = { identity: { name: 'Dark Slowbro' }, display: { state: 'identified', price: 51.51 } };
-  assert.deepEqual(rows(slowbro, 4, 50), ['Dark…']);
-  // Three letters are not a name: the tag shows the card's row in the scanner instead.
-  assert.deepEqual(rows(slowbro, 4, 30), ['5']);
-  assert.deepEqual(rows(darkSlowbro, 4, 30), ['5']);
-  // Letters wider than digits: the price would fit where no name does; the row number shows, never the price.
-  const wideLetters = (t) => [...String(t)].reduce((s, c) => s + (/[A-Za-z]/.test(c) ? 10 : 6), 0);
-  const drowzee = { identity: { name: 'Drowzee', number: '61' }, display: { state: 'identified', price: 0.07 } };
-  assert.deepEqual(rows(drowzee, 0, 35, wideLetters), ['1']);
-  // Two lines on a tall narrow card: the first row is never dropped while the price row shows.
-  const two = plainJson(pure.tagRows(pure.tagText(drowzee, 0), true, 35, wideLetters));
-  assert.equal(two[0], '1');
+test('the name card opens just outside the card: above, left-aligned; else below; else inside at the bottom', () => {
+  const card = { identity: { name: 'Charizard', number: '4' }, display: { state: 'identified', price: 954.65 } };
+  const overlapsTopHalf = (l, box) => l.x < box[2] && box[0] < l.x + l.w && l.y < (box[1] + box[3]) / 2 && box[1] < l.y + l.h;
+  // Room above: the name card sits above the top edge, left edge on the card's.
+  const mid = [300, 300, 372, 420];
+  const above = labelOf(mid, card);
+  assert.equal(above.side, 'above');
+  assert.equal(above.x, mid[0]);
+  assert.ok(above.y + above.h <= mid[1], JSON.stringify(above));
+  assert.ok(!overlapsTopHalf(above, mid));
+  // Top row: no room above inside the photo, so it goes below the bottom edge, still inside the photo.
+  const photo = { x1: 0, y1: 0, x2: 1100, y2: 600 };
+  const topRow = labelOf([300, 20, 372, 160], card, photo);
+  assert.equal(topRow.side, 'below');
+  assert.ok(topRow.y >= 160, JSON.stringify(topRow));
+  assert.ok(topRow.y + topRow.h <= photo.y2);
+  // Under a site bar: the photo's visible rect starts at y 56, so a card at 60 cannot take the name above it either.
+  const bar = labelOf([300, 60, 372, 200], card, { x1: 0, y1: 56, x2: 1100, y2: 600 });
+  assert.equal(bar.side, 'below');
+  assert.ok(bar.y >= 56);
+  // No room above or below (a tall card filling the photo): inside the card, at the bottom, whole inside the photo.
+  const tall = labelOf([300, 10, 372, 590], card, photo);
+  assert.equal(tall.side, 'inside');
+  assert.ok(tall.y + tall.h <= 590 && tall.y >= 10 + (590 - 10) / 2, JSON.stringify(tall));
+  // A card at the photo's right edge: the name card keeps to the photo, so it is shifted left of the card's left edge.
+  const right = labelOf([1040, 300, 1098, 420], card);
+  assert.ok(right.x + right.w <= 1100 && right.side === 'above');
+  // The hover area joins the name card to the card, so the pointer can travel from one to the other.
+  assert.equal(above.hit.y + above.hit.h, mid[1]);
+  assert.equal(above.hit.y, above.y);
+  assert.equal(topRow.hit.y, 160);
+  assert.equal(topRow.hit.y + topRow.hit.h, topRow.y + topRow.h);
+  assert.deepEqual({ x: tall.hit.x, y: tall.hit.y, w: tall.hit.w, h: tall.hit.h }, { x: tall.x, y: tall.y, w: tall.w, h: tall.h });
+});
+
+test('an inside name card keeps clear of the card\'s chip: bottom-left, else just above the chip row', () => {
+  const card = { identity: { name: 'Charizard', number: '4' }, display: { state: 'identified', price: 954.65 } };
+  const photo = { x1: 0, y1: 0, x2: 1100, y2: 600 };
+  const hits = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  // A card filling the photo's height: no room above or below. Narrow card: the name card is wider than the card, so it would sit on the chip.
+  const narrow = [300, 10, 372, 590];
+  const narrowChip = { x: 372 - 4 - 54, y: 590 - 4 - 22, w: 54, h: 22 };
+  const covered = labelOf(narrow, card, photo);
+  assert.equal(covered.side, 'inside');
+  assert.ok(hits(covered, narrowChip), 'without the chip given it lands on the chip (the old behaviour)');
+  const clear = plainJson(pure.labelLayout(narrow, card, photo, perChar, narrowChip));
+  assert.equal(clear.side, 'inside');
+  assert.ok(!hits(clear, narrowChip), JSON.stringify(clear));
+  assert.ok(clear.y + clear.h <= narrowChip.y, 'just above the chip row');
+  assert.ok(clear.x >= photo.x1 && clear.x + clear.w <= photo.x2 && clear.y >= photo.y1 && clear.y + clear.h <= photo.y2);
+  // A wide card: the name card stays at the bottom-left and the chip at the bottom-right do not meet.
+  const wide = [300, 10, 700, 590];
+  const wideChip = { x: 700 - 4 - 54, y: 590 - 4 - 22, w: 54, h: 22 };
+  const left = plainJson(pure.labelLayout(wide, card, photo, perChar, wideChip));
+  assert.equal(left.side, 'inside');
+  assert.equal(left.x, 300);
+  assert.ok(!hits(left, wideChip));
+  assert.ok(left.y + left.h <= 590);
+});
+
+test('the name card shows the name, then " #number" in a second colour, then the price or the ask', () => {
+  const card = { identity: { name: 'Charizard', number: '4' }, display: { state: 'identified', price: 954.65 } };
+  const got = labelOf([300, 300, 372, 420], card);
+  assert.deepEqual(got.lines.map((l) => l.text), ['Charizard', '$954.65']);
+  assert.equal(got.lines[0].suffix, ' #4');
+  assert.equal(got.lines[1].color, '#3DD9A0');
+  // An action line is 13 px, a price 17 px; a Choose card has no number.
+  const choose = labelOf([300, 300, 372, 420], darkSlowbro);
+  assert.equal(choose.lines[0].suffix, undefined);
+  assert.equal(choose.lines[1].px, 13);
+  assert.equal(got.lines[1].px, 17);
+  assert.equal(choose.lines[1].color, '#FBBF24');
+});
+
+test('a small Choose card\'s chip never shows a bare price: "? ~$x" marked unconfirmed, or a dot', () => {
+  // 72 px card: a 64 px chip would be the most that fits; "? ~$51.51" does not, so a dot shows, never "$51.51" alone.
+  const got = plainJson(pure.chipLayout(darkSlowbro, 72, perChar));
+  assert.equal(got.kind, 'dot');
+  const roomy = plainJson(pure.chipLayout(darkSlowbro, 140, perChar));
+  assert.deepEqual(roomy.parts.map((p) => p.text), ['?', '~$51.51']);
 });
 
 test('fitText ellipsizes to the width and leaves short text alone', () => {
@@ -437,20 +497,65 @@ test('restoreOverlay brings back a hidden overlay', () => {
   assert.equal(page.canvas.style.visibility, 'visible');
 });
 
-test('every card tag says its state: identified, printing to pick, choose, card back', () => {
+test('every card\'s chip says only its price, marked by its state: identified, printing to pick, choose, none, skipped', () => {
   const id = { name: 'Charizard', number: '4' };
-  const tag = (card) => JSON.parse(JSON.stringify(pure.tagText(card)));
-  assert.deepEqual(tag({ identity: id, display: { state: 'identified', price: 954.65 } }).lines, ['Charizard #4', '$954.65']);
-  assert.deepEqual(tag({ identity: id, display: { state: 'printing', printingNote: 'set not sure · $120.00–$950.00' } }).lines,
-    ['Charizard #4', 'Set not sure · $120.00–$950.00']);
-  assert.deepEqual(tag({ identity: id, display: { state: 'printing', printingNote: '3 variants · $120.00–$950.00' } }).lines,
-    ['Charizard #4', '$120.00–$950.00 · pick printing']);
-  // Choose: no name and no price, only the ask.
-  assert.deepEqual(tag({ identity: id, display: { state: 'choose' } }).lines, ['Choose', 'Tap to choose']);
-  assert.equal(tag({ identity: id, display: { state: 'choose' } }).short, 'Choose');
-  assert.equal(tag({ identity: null, abstain: true }).state, 'choose');
-  assert.equal(tag({ cardBack: true }).state, 'none');
-  assert.deepEqual(tag({ cardBack: true }).lines, ['Not recognised', 'Turn it over']);
+  const chip = (card) => plain(pure.chipSpec(card));
+  // Identified: the price, or a dash when there is none or it is old.
+  assert.deepEqual(chip({ identity: id, display: { state: 'identified', price: 954.65 } }), { state: 'identified', marks: [], text: '$954.65' });
+  assert.equal(chip({ identity: id, display: { state: 'identified' } }).text, '—');
+  assert.equal(chip({ identity: id, display: { state: 'identified', price: 4.5, stale: true } }).text, '—');
+  // Printing to pick: the range with one dollar sign; "set not sure" moves to the hover card.
+  assert.deepEqual(chip({ identity: id, display: { state: 'printing', printingNote: 'set not sure · $120.00–$950.00' } }), { state: 'printing', marks: [], text: '$120.00–950.00' });
+  assert.equal(chip({ identity: id, display: { state: 'printing', printingNote: '3 variants · $0.60–$2.01' } }).text, '$0.60–2.01');
+  assert.equal(chip({ identity: id, display: { state: 'printing' } }).text, '—');
+  // Choose: the best match's price marked unconfirmed, "Pick" with no price (11.3), and never an unmarked figure.
+  assert.deepEqual(chip({ identity: null, abstain: true, display: { state: 'choose', guess: { name: 'Entei', price: 0.74 } } }), { state: 'choose', marks: ['?'], text: '~$0.74' });
+  assert.deepEqual(chip({ identity: null, abstain: true, display: { state: 'choose', guess: { name: 'Entei', price: null, kind: 'none' } } }), { state: 'choose', marks: [], text: 'Pick' });
+  assert.deepEqual(chip({ identity: null, abstain: true, display: { state: 'choose', guess: { name: 'Entei', price: 0.74, stale: true } } }), { state: 'choose', marks: [], text: 'Pick' });
+  assert.deepEqual(chip({ identity: id, display: { state: 'choose' } }), { state: 'choose', marks: [], text: 'Pick' });
+  assert.deepEqual(chip({ identity: id, display: { state: 'choose', highValue: true } }), { state: 'choose', marks: ['!'], text: 'Pick' });
+  // High value: a "!" before the text.
+  assert.deepEqual(chip({ identity: id, display: { state: 'identified', price: 120, highValue: true } }), { state: 'identified', marks: ['!'], text: '$120.00' });
+  assert.deepEqual(chip({ identity: null, abstain: true, display: { state: 'choose', highValue: true, guess: { name: 'Entei', price: 120 } } }), { state: 'choose', marks: ['!', '?'], text: '~$120.00' });
+  // Not recognised and too small: "?" alone. Skipped: no chip.
+  assert.deepEqual(chip({ cardBack: true }), { state: 'none', marks: [], text: '?' });
+  assert.deepEqual(chip({ cardBack: true, tooSmall: true }), { state: 'none', marks: [], text: '?' });
+  assert.equal(pure.chipSpec({ identity: id, display: { state: 'skipped' } }), null);
+});
+
+test('chip layout: the whole chip, "from $x" for a range that does not fit, else a dot; never a cut number', () => {
+  const m = perChar; // 7.5 px per character; a space is 7.5 px
+  const id = { name: 'Charizard', number: '4' };
+  const layout = (card, w) => plain(pure.chipLayout(card, w, m));
+  const price = { identity: id, display: { state: 'identified', price: 3.49 } };
+  // 3 px rail + 7 px padding each side around the text: 17 + 5 * 7.5.
+  assert.deepEqual(layout(price, 140), { kind: 'chip', state: 'identified', w: 54.5, h: 22, parts: [{ text: '$3.49', x: 10, mark: false }] });
+  // The marks sit before the text, a space apart.
+  const choose = { identity: null, abstain: true, display: { state: 'choose', guess: { name: 'Entei', price: 0.74 } } };
+  assert.deepEqual(layout(choose, 140).parts, [{ text: '?', x: 10, mark: true }, { text: '~$0.74', x: 25, mark: false }]);
+  // The range: whole at 17 + 82.5, as "from $0.60" at 17 + 75, else a dot.
+  const range = { identity: id, display: { state: 'printing', printingNote: 'set not sure · $0.60–$12.01' } };
+  assert.deepEqual(layout(range, 110).parts.map((p) => p.text), ['$0.60–12.01']);
+  assert.deepEqual(layout(range, 105).parts.map((p) => p.text), ['from $0.60']);
+  assert.equal(layout(range, 105).w, 92);
+  assert.deepEqual(layout(range, 98), { kind: 'dot', state: 'printing', w: 10, h: 10 });
+  // A chip must fit inside the card's visible width minus 8 px: a 70 px card shows a dot for a Choose price, a chip for a short one.
+  assert.equal(layout(choose, 70).kind, 'dot');
+  assert.equal(layout(price, 70).kind, 'chip');
+  assert.ok(layout(price, 70).w <= 70 - 8);
+  assert.equal(layout(price, 60).kind, 'dot');
+  assert.equal(layout({ cardBack: true }, 70).kind, 'chip');
+  // A dot says its state; a chip's text is never cut.
+  for (const w of [30, 50, 62, 70, 90, 120]) {
+    const got = layout(choose, w);
+    if (got.kind === 'chip') assert.ok(got.w <= w - 8 && got.parts.every((p) => !p.text.includes('…')), `${w}: ${JSON.stringify(got)}`);
+  }
+});
+
+test('cardState: the popup\'s verdict, else the card\'s own fields', () => {
+  const id = { name: 'Charizard', number: '4' };
+  assert.equal(pure.cardState({ identity: null, abstain: true }), 'choose');
+  assert.equal(pure.cardState({ cardBack: true }), 'none');
   // Straight from the background, before the popup has drawn: the card's own fields decide.
   assert.equal(pure.cardState({ identity: id, unsure: true }), 'choose');
   // The removed guess tier is not a state any more.
@@ -458,167 +563,126 @@ test('every card tag says its state: identified, printing to pick, choose, card 
   assert.equal(pure.cardState({ identity: id, confidence: 0.9 }), 'identified');
 });
 
-test('tags scale with the card and never sit on another tag', () => {
-  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagLayout(60, 85))), { px: 13, lines: 1, maxWidth: 56 });
-  assert.equal(pure.tagLayout(200, 280).px, 16);
-  assert.equal(pure.tagLayout(200, 280).lines, 2);
-  const view = { w: 1000, h: 800 };
-  const first = pure.placeTag([100, 100, 200, 240], 90, 30, [], view);
-  assert.deepEqual(JSON.parse(JSON.stringify(first)), { x: 102, y: 102, w: 90, h: 30 });
-  // The same spot is taken: the next free one is inside the bottom of the card.
-  const second = pure.placeTag([100, 100, 200, 240], 90, 30, [first], view);
-  assert.equal(second.y, 240 - 30 - 2);
-  const boxed = [first, second, { x: 102, y: 68, w: 90, h: 30 }, { x: 102, y: 242, w: 90, h: 30 }];
-  assert.equal(pure.placeTag([100, 100, 200, 240], 90, 30, boxed, view), null);
-});
-
 const plain = (value) => JSON.parse(JSON.stringify(value));
-const TAG_TOP_BAND_FOR_TEST = 24;
-const hitsBand = (rect, other) => rect.x < other[2] && other[0] < rect.x + rect.w && rect.y < other[1] + TAG_TOP_BAND_FOR_TEST && other[1] < rect.y + rect.h;
 
-test('a tag does not land on a neighbouring card when another spot is free', () => {
-  const view = { w: 1000, h: 800 };
+test('the price chip sits in the bottom-right corner, then top-right, below, above; never on another chip', () => {
+  const view = { x: 0, y: 0, w: 1000, h: 800 };
   const box = [100, 100, 200, 240];
-  // The card below starts 4 px under this one and the card above ends 2 px over it, so a spot above or below is on a neighbour.
-  const above = [100, 0, 200, 98];
-  const below = [100, 244, 200, 400];
-  const topTaken = { x: 102, y: 102, w: 90, h: 30 };
-  // Inside the top is taken: the inside bottom is free and is on no neighbour.
-  assert.equal(pure.placeTag(box, 90, 30, [topTaken], view, [above, below]).y, 208);
-  // Without neighbours given the old order is unchanged.
-  assert.deepEqual(plain(pure.placeTag(box, 90, 30, [], view)), { x: 102, y: 102, w: 90, h: 30 });
-  // A neighbour whose box overlaps this card's top: skip that spot, take the inside bottom.
-  const overlapping = [100, 60, 200, 130];
-  assert.equal(pure.placeTag(box, 90, 30, [], view, [overlapping]).y, 208);
+  const first = plain(pure.placeChip(box, 54, 22, [], view));
+  // 4 px in from both edges of the card.
+  assert.deepEqual(first, { x: 200 - 4 - 54, y: 240 - 4 - 22, w: 54, h: 22 });
+  const top = plain(pure.placeChip(box, 54, 22, [first], view));
+  assert.deepEqual(top, { x: 142, y: 104, w: 54, h: 22 });
+  const below = plain(pure.placeChip(box, 54, 22, [first, top], view));
+  assert.deepEqual(below, { x: 142, y: 242, w: 54, h: 22 });
+  const above = plain(pure.placeChip(box, 54, 22, [first, top, below], view));
+  assert.deepEqual(above, { x: 142, y: 100 - 22 - 2, w: 54, h: 22 });
+  assert.equal(pure.placeChip(box, 54, 22, [first, top, below, above], view), null);
 });
 
-test('the ladder shrinks to the short tag before it settles for a neighbour', () => {
-  const view = { w: 1000, h: 800 };
-  const box = [100, 100, 200, 240];
-  const above = [100, 0, 200, 98];
-  const below = [100, 244, 200, 400];
-  // Another card's tag sits on the right half of both inside spots, so the full tag (90 wide) fits neither inside spot,
-  // and the spots above and below are on neighbours. The short tag (48 wide) fits beside it, inside this card.
-  const taken = [{ x: 150, y: 102, w: 60, h: 30 }, { x: 150, y: 208, w: 60, h: 30 }];
-  const sizes = [{ w: 90, h: 30 }, { w: 48, h: 22 }];
-  const fit = pure.placeTagLadder(box, sizes, taken, view, [above, below]);
-  assert.equal(fit.size, 1);
-  assert.deepEqual(plain(fit.rect), { x: 102, y: 102, w: 48, h: 22 });
-  assert.deepEqual(plain(pure.placeTagLadder(box, sizes, taken, view, [above, below])), plain(fit));
-});
-
-test('the ladder gives up on neighbours last, never on another tag, and answers null when nothing is free', () => {
-  const view = { w: 1000, h: 800 };
-  const box = [100, 100, 200, 240];
-  const taken = [{ x: 102, y: 102, w: 90, h: 30 }, { x: 102, y: 208, w: 90, h: 30 }, { x: 102, y: 134, w: 90, h: 72 }];
-  const above = [100, 0, 200, 98];
-  const below = [100, 244, 200, 400];
-  const sizes = [{ w: 90, h: 30 }, { w: 50, h: 22 }];
-  // Inside is full of tags; above lies on the lower part of the neighbour but not its top band: the relaxed pass takes it.
-  const relaxed = pure.placeTagLadder(box, sizes, taken, view, [above, below]);
-  assert.equal(relaxed.size, 0);
-  assert.equal(relaxed.rect.y, 68);
-  assert.ok(!hitsBand(relaxed.rect, above) && !hitsBand(relaxed.rect, below));
-  // Neighbour tags above and below as well: nothing is free, the tag is left to hover.
-  const wall = [...taken, { x: 102, y: 66, w: 90, h: 32 }, { x: 102, y: 242, w: 90, h: 32 }];
-  assert.equal(pure.placeTagLadder(box, sizes, wall, view, [above, below]), null);
-});
-
-test('a crowded grid: no tag covers another tag or the top edge of another card, and every card keeps a tag', () => {
-  const view = { w: 520, h: 420 };
-  const boxes = [];
-  // Four rows of six 78 x 100 cards, 3 px apart, every other card nudged 7 px so neighbours overlap a little.
-  for (let r = 0; r < 4; r += 1) {
-    for (let c = 0; c < 6; c += 1) {
-      const nudge = (r + c) % 2 ? 7 : 0;
-      const x = 6 + c * 81;
-      const y = 8 + r * 103 + nudge;
-      boxes.push([x, y, x + 78, y + 100]);
-    }
+test('the price chip stays inside the visible photo: nothing over a bar above it, nothing past its bottom', () => {
+  // A site bar covers the top 56 px: the card's top-right inside spot starts under it.
+  const bar = { x: 0, y: 56, w: 1000, h: 744 };
+  const box = [100, 0, 200, 140];
+  const bottom = plain(pure.placeChip(box, 54, 22, [], bar));
+  assert.equal(bottom.y, 140 - 4 - 22);
+  const top = plain(pure.placeChip(box, 54, 22, [bottom], bar));
+  assert.equal(top.y, 56 + 4);
+  const below = plain(pure.placeChip(box, 54, 22, [bottom, top], bar));
+  assert.equal(below.y, 142);
+  // Above the card is under the bar: nothing is free.
+  assert.equal(pure.placeChip(box, 54, 22, [bottom, top, below], bar), null);
+  // A card at the photo's bottom edge: below does not fit, above does.
+  const view = { x: 0, y: 0, w: 1000, h: 800 };
+  const low = [100, 660, 200, 800];
+  const inside = [{ x: 142, y: 774, w: 54, h: 22 }, { x: 142, y: 664, w: 54, h: 22 }];
+  assert.deepEqual(plain(pure.placeChip(low, 54, 22, inside, view)), { x: 142, y: 660 - 22 - 2, w: 54, h: 22 });
+  for (const spot of [first(view, low), first(view, [100, 0, 200, 140])]) {
+    assert.ok(spot.x >= view.x && spot.y >= view.y && spot.x + spot.w <= view.x + view.w && spot.y + spot.h <= view.y + view.h);
   }
-  const sizes = [{ w: 74, h: 30 }, { w: 48, h: 22 }];
-  const run = (order) => {
-    const taken = [];
-    const placed = new Map();
-    for (const i of order) {
-      const others = boxes.filter((_, j) => j !== i);
-      const fit = pure.placeTagLadder(boxes[i], sizes, taken, view, others);
-      if (!fit) continue;
-      taken.push(fit.rect);
-      placed.set(i, plain(fit.rect));
-    }
-    return placed;
-  };
-  const order = boxes.map((_, i) => i);
-  const placed = run(order);
-  assert.equal(placed.size, boxes.length, 'every card keeps its tag');
-  for (const [i, rect] of placed) {
-    for (const [j, other] of placed) assert.ok(i === j || !(rect.x < other.x + other.w && other.x < rect.x + rect.w && rect.y < other.y + other.h && other.y < rect.y + rect.h), `tags ${i} and ${j} overlap`);
-    boxes.forEach((other, j) => assert.ok(i === j || !hitsBand(rect, other), `tag ${i} covers the top edge of card ${j}`));
-    assert.ok(rect.x >= 2 && rect.y >= 2 && rect.x + rect.w <= view.w - 2 && rect.y + rect.h <= view.h - 2);
-  }
-  // Deterministic: the same boxes in the same order give the same spots.
-  assert.deepEqual([...run(order)], [...placed]);
+  function first(v, b) { return plain(pure.placeChip(b, 54, 22, [], v)); }
 });
 
-test('cards whose boxes overlap their neighbours still keep a tag, clear of every other tag', () => {
-  const view = { w: 520, h: 420 };
-  const boxes = [];
-  for (let r = 0; r < 4; r += 1) {
-    for (let c = 0; c < 6; c += 1) {
-      const x = 6 + c * 72;
-      const y = 8 + r * 103 + ((r + c) % 2 ? 9 : 0);
-      boxes.push([x, y, x + 78, y + 100]);
-    }
-  }
-  const sizes = [{ w: 74, h: 30 }, { w: 48, h: 22 }];
-  const taken = [];
-  boxes.forEach((box, i) => {
-    const fit = pure.placeTagLadder(box, sizes, taken, view, boxes.filter((_, j) => j !== i));
-    if (!fit) return;
-    assert.ok(!taken.some((other) => other.x < fit.rect.x + fit.rect.w && fit.rect.x < other.x + other.w && other.y < fit.rect.y + fit.rect.h && fit.rect.y < other.y + other.h), `tag ${i} overlaps a tag`);
-    taken.push(fit.rect);
-  });
-  assert.ok(taken.length >= 20, `${taken.length} of ${boxes.length} cards have a tag`);
+test('a chip\'s click area is at least 28 px tall (and wide, for a dot) around the drawn chip', () => {
+  assert.deepEqual(plain(pure.chipHit({ x: 142, y: 214, w: 54, h: 22 })), { x: 142, y: 211, w: 54, h: 28 });
+  assert.deepEqual(plain(pure.chipHit({ x: 190, y: 220, w: 10, h: 10 })), { x: 181, y: 211, w: 28, h: 28 });
+  assert.deepEqual(plain(pure.chipHit({ x: 10, y: 10, w: 60, h: 30 })), { x: 10, y: 10, w: 60, h: 30 });
 });
 
-test('tag rows: Choose never reads "Tap to c...", a price is never cut mid-number', () => {
+test('corner bracket arms are 18 px, or 22% of the shorter side on a small card', () => {
+  assert.equal(pure.bracketArm(100, 140), 18);
+  assert.equal(pure.bracketArm(400, 560), 18);
+  assert.ok(Math.abs(pure.bracketArm(60, 80) - 13.2) < 1e-9);
+  assert.ok(Math.abs(pure.bracketArm(300, 40) - 8.8) < 1e-9);
+  assert.equal(pure.bracketArm(0, 100), 0);
+});
+
+test('a price is never cut mid-number: the whole of it, or "from" its lower bound, or nothing', () => {
   const m = (t) => t.length * 7; // 7 px per character
-  const rows = (card, two, max) => JSON.parse(JSON.stringify(pure.tagRows(pure.tagText(card), two, max, m)));
-  const id = { name: 'Charizard', number: '4' };
-  const choose = { identity: id, display: { state: 'choose' } };
-  assert.deepEqual(rows(choose, true, 100), ['Choose', 'Tap to choose']);
-  assert.deepEqual(rows(choose, true, 60), ['Choose']);
-  const range = { identity: id, display: { state: 'printing', printingNote: 'set not sure · $1.43–$20.00' } };
-  // Small card: name before price; the price shows only when the name cannot, and whole or as "from".
-  assert.deepEqual(rows(range, false, 200), ['Charizard $1.43–$20.00']);
-  assert.deepEqual(rows(range, false, 70), ['Charizard']);
-  assert.deepEqual(rows(range, false, 24), []);
-  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagRows(pure.tagText(range, 2), false, 24, m))), ['3']);
   assert.equal(pure.fitPrice('$1.43–$20.00', 100, m), '$1.43–$20.00');
   assert.equal(pure.fitPrice('$1.43–$20.00', 80, m), 'from $1.43');
   assert.equal(pure.fitPrice('$1.43–$20.00', 50, m), '');
   assert.equal(pure.fitPrice('$9.99', 20, m), '');
-  const name = rows({ identity: { name: 'Charizard ex' }, display: { state: 'identified', price: 4.5 } }, false, 56);
-  assert.deepEqual(name, ['Chariza…']);
-  assert.ok(!name.some((t) => /\$.*…/.test(t)));
-  // Two lines: a price line that does not fit is dropped, not cut.
-  assert.equal(rows(range, true, 80)[1], 'from $1.43');
-  assert.deepEqual(rows(range, true, 50), ['Chariz…']);
 });
 
-test('a skipped card has a grey Skipped tag with no name or price, even if the card carries a price', () => {
+test('a skipped card has no chip and a Skipped label with no name or price, even if the card carries a price', () => {
   const id = { name: 'Charizard', number: '4' };
   const card = { identity: id, price_grid: { variants: { normal: { market: 9 } } }, display: { state: 'skipped' } };
   assert.equal(pure.cardState(card), 'skipped');
-  const tag = JSON.parse(JSON.stringify(pure.tagText(card)));
-  assert.deepEqual(tag.lines, ['Skipped']);
-  assert.equal(tag.short, 'Skipped');
-  const measure = (text) => text.length * 7;
-  assert.deepEqual(JSON.parse(JSON.stringify(pure.tagRows(pure.tagText(card), true, 100, measure))), ['Skipped']);
+  assert.equal(pure.chipSpec(card), null);
+  assert.equal(pure.chipLayout(card, 200, (text) => text.length * 7), null);
   const label = JSON.parse(JSON.stringify(pure.labelText(card)));
   assert.equal(label.name, 'Skipped');
   assert.doesNotMatch(JSON.stringify(label), /Charizard|\$/);
+});
+
+test('11.3: the name card of a card whose version is open says "Pick a version · range", and a Choose card says "Click"', () => {
+  const open = { identity: { name: 'Charizard', number: '4' }, display: { state: 'printing', number: '4', printingNote: 'Several versions · $0.60–$12.01' } };
+  const lines = labelOf([100, 100, 300, 380], open).lines.map((l) => l.text);
+  assert.ok(lines.includes('Pick a version · $0.60–$12.01'), JSON.stringify(lines));
+  assert.ok(!lines.some((t) => /set not sure|several versions/i.test(t)), JSON.stringify(lines));
+  const high = labelOf([100, 100, 300, 380], { identity: null, abstain: true, display: { state: 'choose', highValue: true } }).lines.map((l) => l.text);
+  assert.ok(high.includes('High value · check the match. Click to pick it in the scanner'), JSON.stringify(high));
+  assert.ok(!JSON.stringify(high).includes('Tap'));
+});
+
+test('11.3: the first-scan legend is two lines of colored keys inside the width given, with a close box', () => {
+  const m = (t) => String(t).length * 7;
+  const legend = plainJson(pure.legendLayout(m, 1000));
+  const text = legend.lines.map((line) => line.map((p) => p.text).join('')).join('\n');
+  assert.match(text, /Green: priced · Amber: pick the card · Blue: pick a version · Grey: not read\./);
+  assert.match(text, /Hover a card for its name, click it to open it\./);
+  assert.equal(legend.lines.length, 2);
+  assert.ok(legend.w <= 1000 && legend.close.x + legend.close.w <= legend.w && legend.close.w >= 20);
+  // A narrow page wraps the keys onto more lines instead of running off it.
+  const narrow = plainJson(pure.legendLayout(m, 320));
+  assert.ok(narrow.lines.length > 2 && narrow.w <= 320, JSON.stringify(narrow.w));
+  for (const line of narrow.lines) assert.ok(line.every((p) => p.x + m(p.text) <= narrow.close.x), 'text stays clear of the close box');
+});
+
+test('11.3: the legend goes above the photo when there is room, else below it, else inside it', () => {
+  const size = { w: 500, h: 56 };
+  const view = { w: 1200, h: 900 };
+  const place = (photo, avoidTop) => plainJson(pure.legendPlacement(size, photo, view, avoidTop));
+  // Room above: its bottom edge is 6 px over the photo's top edge, centered on the photo.
+  const above = place({ x1: 100, y1: 200, x2: 900, y2: 700 });
+  assert.deepEqual(above, { x: 250, y: 138, where: 'above' });
+  // No room above, room below: 6 px under the photo's bottom edge.
+  const below = place({ x1: 100, y1: 30, x2: 900, y2: 500 });
+  assert.deepEqual(below, { x: 250, y: 506, where: 'below' });
+  // Neither: inside the photo, near its top.
+  const inside = place({ x1: 0, y1: 0, x2: 1200, y2: 900 });
+  assert.equal(inside.where, 'inside');
+  assert.equal(inside.y, 4);
+  // Never off the page sideways.
+  assert.equal(place({ x1: 0, y1: 200, x2: 100, y2: 700 }).x, 4);
+  assert.equal(place({ x1: 1100, y1: 200, x2: 1200, y2: 700 }).x, 1200 - 500 - 4);
+  // Something above the photo (the full-size pill) is cleared too: the legend goes above that.
+  assert.deepEqual(place({ x1: 100, y1: 200, x2: 900, y2: 700 }, 150), { x: 250, y: 88, where: 'above' });
+  // With the pill and no room above it, below the photo.
+  assert.equal(place({ x1: 100, y1: 90, x2: 900, y2: 500 }, 40).where, 'below');
+  // Inside, the legend sits under the pill when there is one.
+  assert.equal(plainJson(pure.legendPlacement(size, { x1: 0, y1: 0, x2: 1200, y2: 900 }, view, 10, 40)).y, 44);
 });
 
 test('closeButtonRect centres the X on the top-right corner, kept whole inside the visible clip', () => {

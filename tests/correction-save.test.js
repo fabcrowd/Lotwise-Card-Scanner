@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { agreeWithReference, evictCorrections, storeCorrection } from '../tools/extension-wasm/lib/correction-save.js';
+import { correctionsToEmbed } from '../tools/extension-wasm/lib/references.js';
 import { createCorrectionsStore } from '../tools/extension-wasm/lib/corrections-store.js';
 import { fakeIndexedDB } from './helpers/fake-idb.js';
 
@@ -35,6 +36,35 @@ test('the old reference of a replaced answer is deleted', async () => {
   await store.saveReference({ id: 's:0', cardId: 'a', ts: NOW, v: 3, embedding: new Float32Array(2) });
   await storeCorrection(store, draft({ ts: NOW + 1, pickedId: 'b' }), { now: NOW });
   assert.equal(await store.countReferences(), 0);
+});
+
+test('a Japanese pick is kept as an answer without its picture, so no reference vector is ever made for it', async () => {
+  const store = createCorrectionsStore(fakeIndexedDB());
+  const record = await storeCorrection(store, draft({ pickedId: 'jp-709157' }), { now: NOW });
+  assert.equal(record.pickedId, 'jp-709157');
+  assert.equal(record.crop, null);
+  assert.equal(record.count, 1);
+  const [row] = await store.all();
+  assert.equal(row.pickedId, 'jp-709157');
+  assert.equal(row.crop, null);
+  const heads = await store.correctionHeads();
+  assert.equal(heads[0].hasCrop, false);
+  assert.deepEqual(correctionsToEmbed(heads, await store.allReferences()), []);
+  // An English pick still keeps its picture and is embedded.
+  await storeCorrection(store, draft({ id: 's:1', index: 1, pickedId: 'a' }), { now: NOW });
+  assert.deepEqual(correctionsToEmbed(await store.correctionHeads(), []).map((c) => c.id), ['s:1']);
+});
+
+test('a Japanese answer counts toward the cap and is evicted like any other, and its replacement by an English one keeps the picture', async () => {
+  const store = createCorrectionsStore(fakeIndexedDB());
+  await store.save({ id: 'x', ts: NOW - 90 * DAY, pickedId: 'a' });
+  await storeCorrection(store, draft({ pickedId: 'jp-1' }), { max: 1, now: NOW });
+  assert.deepEqual((await store.all()).map((r) => r.id), ['s:0']);
+  await storeCorrection(store, draft({ ts: NOW + 1, pickedId: 'b' }), { max: 1, now: NOW });
+  const [row] = await store.all();
+  assert.equal(row.pickedId, 'b');
+  assert.equal(row.crop, 'data:image/jpeg;base64,AA');
+  assert.equal(row.history[0].pickedId, 'jp-1');
 });
 
 test('the cap evicts the oldest unprotected corrections and their references, never an x2 or a recent one first', async () => {
@@ -133,4 +163,29 @@ test('a correction on an exam-split photo is stored locally either way, and its 
     const ref = { id: record.id, cardId: 'a', ts: record.ts, v: (await import('../tools/extension-wasm/lib/embed.js')).EMBEDDING_VERSION, embedding: new Float32Array(512) };
     assert.equal(currentReferences([ref], heads).length, 1);
   }
+});
+
+test('agreeWithReference: not when this crop already holds a different answer, so the normal path replaces it (finding 15)', async () => {
+  const store = createCorrectionsStore(fakeIndexedDB());
+  await store.save({ id: 'old:0', ts: NOW - DAY, pickedId: 'b', crop: 'x' });
+  await store.save({ id: 's2:3', ts: NOW, pickedId: 'a', crop: 'y' });
+  const msg = { scanId: 's2', index: 3, pickedId: 'b', guess: { memory: { refId: 'old:0', cardId: 'b' } } };
+  assert.equal(await agreeWithReference(store, msg, NOW), null);
+  assert.equal((await store.getCorrection('old:0')).count || 1, 1);
+  // The same answer already on this crop still counts as agreement.
+  await store.save({ id: 's2:3', ts: NOW, pickedId: 'b', crop: 'y' });
+  assert.deepEqual(await agreeWithReference(store, msg, NOW), { count: 2 });
+});
+
+import { serializeByScan, settleExamPick } from '../tools/extension-wasm/lib/correction-save.js';
+
+test('exam holds for one scan run one at a time, so concurrent picks all survive (finding 17)', async () => {
+  let saved = { shares: { 1: { split: 'exam' }, 2: { split: 'exam' }, 3: { split: 'exam' } } };
+  const later = () => new Promise((resolve) => setTimeout(resolve, 5));
+  const store = { getScan: async () => { await later(); return saved; }, saveScan: async (s) => { await later(); saved = s; } };
+  await Promise.all([1, 2, 3].map((index) => serializeByScan('s', async () => {
+    const scan = await store.getScan('s');
+    await settleExamPick(store, scan, { index, pickedId: `c${index}`, via: 'candidates' }, { holdAllowed: true, sharingEnabled: async () => true });
+  })));
+  assert.deepEqual(Object.keys(saved.examPicks).sort(), ['1', '2', '3']);
 });

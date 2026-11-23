@@ -49,7 +49,9 @@ function l2Page() {
     page.flush();
   };
   const newCards = () => page.sent.filter((m) => m.action === 'newCardsDetected').length;
-  return { page, img, backdrop, layout, scan, settle, newCards, canvas: () => canvas };
+  // Only the quiet timer runs: no mutation record reaches the observers.
+  const tick = () => { while (timers.length) timers.shift()(); page.flush(); };
+  return { page, img, backdrop, layout, scan, settle, tick, newCards, canvas: () => canvas };
 }
 
 function mapped(box, from, to) {
@@ -126,6 +128,26 @@ test('(c) a picture that is really new still asks for a rescan: a new image, and
   assert.equal(lazy.newCards(), 1);
 });
 
+test('(c2) an image added before its picture loads is judged when it finishes loading, with one listener that stop removes', () => {
+  const late = l2Page();
+  late.scan();
+  const pending = late.page.addImg(late.page.body, rectOf(200, 300, 250, 350), { src: 'https://scontent.example/late-card_n.jpg', natural: [750, 1050] });
+  Object.assign(pending, { complete: false, naturalWidth: 0, naturalHeight: 0 });
+  late.settle();
+  assert.equal(late.newCards(), 0, 'not loaded yet, so not judged as a card yet');
+  // No further DOM change happens: the picture simply finishes loading.
+  Object.assign(pending, { complete: true, naturalWidth: 750, naturalHeight: 1050 });
+  late.page.fire('load', { target: pending });
+  late.tick();
+  assert.equal(late.newCards(), 1, 'judged when it loaded');
+
+  // A second scan completion must not stack a second listener; stopping removes it.
+  late.page.send({ action: 'startObserving' });
+  assert.equal(late.page.listenerCount('load'), 1);
+  late.page.send({ action: 'stopObserving' });
+  assert.equal(late.page.listenerCount('load'), 0);
+});
+
 test('(d) a background rescan hides the overlay only for its screenshot; the previous boxes show until the new result', async () => {
   const sent = [];
   const api = { tabs: { sendMessage: async (tabId, msg) => { sent.push(msg.action); return { hidden: true }; } }, scripting: {} };
@@ -157,4 +179,28 @@ test('(d) a background rescan hides the overlay only for its screenshot; the pre
   const background = readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
   assert.doesNotMatch(background, /action: "hideOverlay"/);
   assert.match(background, /captureWithoutOverlay\(chrome, targetTab\.id, /);
+});
+
+// Service-worker decisions that live inline in background.js are pinned by source, as above.
+const BACKGROUND_SRC = readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
+
+test('a finished scan sends its overlay to the scanned tab without making it the target', () => {
+  assert.doesNotMatch(BACKGROUND_SRC, /relayToTab\(\{ action: "relayOverlay"[^\n]*targetTab\.id\)/);
+  assert.match(BACKGROUND_SRC, /sendToTab\(chrome, targetTab\.id, tabMessageFor\(\{ action: "relayOverlay"/);
+});
+
+test('automatic rescans reuse the era of the last scan the user asked for', () => {
+  assert.match(BACKGROUND_SRC, /handleScanPage\(sendRescanResult, _lastScanEra\)/);
+  assert.match(BACKGROUND_SRC, /_scanGate\.end\(scanTabId\) && _popupWinId !== null\) handleScanPage\(sendRescanResult, _lastScanEra\)/);
+  assert.doesNotMatch(BACKGROUND_SRC, /handleScanPage\(sendRescanResult\)/);
+});
+
+test('the worker restores the scanner window id and ignores new-cards messages from other tabs', () => {
+  assert.match(BACKGROUND_SRC, /isTargetTopFrame\(sender, _targetTabId\)/);
+  assert.match(BACKGROUND_SRC, /const restored = await restoreWinId\(chrome\.storage\.session, _popupWinId\);\s*if \(_popupWinId === null\) _popupWinId = restored;/);
+  assert.doesNotMatch(BACKGROUND_SRC, /_popupWinId = await restoreWinId/);
+});
+
+test('switching tabs never makes a tab of the scanner window the target', () => {
+  assert.match(BACKGROUND_SRC, /if \(chrome\.runtime\.lastError\) return;\s*\/\/[^\n]*\s*if \(tab\.windowId === _popupWinId\) return;\s*if \(!_isInternalUrl\(tab\.url\)\) \{\s*_setTargetTabId\(tabId\);/);
 });

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lotwise setup</title>
+<style>
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("extension/ui/fonts/bricolage-grotesque-latin-wght-normal.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Figtree";
+  src: url("extension/ui/fonts/figtree-latin-wght-normal.woff2") format("woff2");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #F3F3F7;
+  --surface: #FFFFFF;
+  --surface-2: #F7F7FA;
+  --border: #E2E2EA;
+  --border-strong: #8A889F;
+  --ink: #17152B;
+  --ink-2: #4A4862;
+  --ink-3: #6B6982;
+  --primary-bg: #17152B;
+  --primary-bg-hover: #2A2748;
+  --primary-fg: #FFFFFF;
+  --brand: #5B3FE6;
+  --ok: #0B7A53;
+  --font-display: "Bricolage Grotesque", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-text: "Figtree", "Segoe UI", system-ui, sans-serif;
+  --radius: 10px;
+  --radius-lg: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F0E1A;
+    --surface: #191729;
+    --surface-2: #211F36;
+    --border: #2E2B47;
+    --border-strong: #7572A0;
+    --ink: #EFEEF8;
+    --ink-2: #C3C1D9;
+    --ink-3: #9D9AB8;
+    --primary-bg: #EFEEF8;
+    --primary-bg-hover: #FFFFFF;
+    --primary-fg: #17152B;
+    --brand: #A795FF;
+    --ok: #3DD9A0;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-text);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 16px 64px;
+}
+
+h1, h2 {
+  font-family: var(--font-display);
+  line-height: 1.2;
+  margin: 0;
+}
+h1 { font-size: 34px; font-weight: 700; }
+h2 { font-size: 20px; font-weight: 650; margin-bottom: 8px; }
+
+.lede { font-size: 18px; color: var(--ink-2); margin: 8px 0 4px; }
+.version { font-size: 13px; color: var(--ink-3); margin: 0 0 28px; }
+
+ol.steps { margin: 0 0 28px; padding-left: 24px; }
+ol.steps > li { padding-left: 8px; margin-bottom: 24px; }
+ol.steps > li::marker { font-family: var(--font-display); font-weight: 700; color: var(--brand); }
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  margin-bottom: 16px;
+}
+.panel h2 { font-size: 18px; }
+.panel p { margin: 0; color: var(--ink-2); }
+
+p { margin: 0 0 8px; color: var(--ink-2); }
+
+.copy-row { display: flex; gap: 8px; margin-top: 12px; }
+.copy-row input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+}
+.copy-row button {
+  min-width: 88px;
+  height: 44px;
+  padding: 0 16px;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  border: 0;
+  border-radius: var(--radius);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.copy-row button:hover { background: var(--primary-bg-hover); }
+
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+@media (max-width: 420px) {
+  h1 { font-size: 28px; }
+  .copy-row { flex-direction: column; }
+  .copy-row button { width: 100%; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Lotwise is on this PC</h1>
+  <p class="lede">Three steps in Chrome finish the setup.</p>
+  <p class="version">Version {{VERSION}}</p>
+
+  <ol class="steps">
+    <li>
+      <h2>Open the Extensions page.</h2>
+      <p>Open a new tab, paste this address into the address bar and press Enter. A web page cannot link to it, so it is shown as text.</p>
+      <div class="copy-row">
+        <input type="text" id="addr" value="chrome://extensions" readonly aria-label="Extensions page address">
+        <button type="button" data-copy="addr">Copy</button>
+      </div>
+      <p style="margin-top:8px">Or click the three-dot menu, then Extensions, then Manage Extensions.</p>
+    </li>
+    <li>
+      <h2>Switch on Developer mode.</h2>
+      <p>The switch is in the top right corner of the Extensions page.</p>
+    </li>
+    <li>
+      <h2>Click Load unpacked and paste the folder.</h2>
+      <p>Click Copy next to the folder below. In the folder window, click the address bar at the top (or press Ctrl+L), paste with Ctrl+V, press Enter, and click Select Folder.</p>
+      <div class="copy-row">
+        <input type="text" id="path" value="{{EXTENSION_PATH}}" readonly aria-label="Lotwise extension folder">
+        <button type="button" data-copy="path">Copy</button>
+      </div>
+    </li>
+  </ol>
+
+  <section class="panel">
+    <h2>After that</h2>
+    <p>Pin Lotwise from the puzzle-piece menu in Chrome's toolbar. Click the Lotwise icon and choose Download models (about 147 MB, one time).</p>
+  </section>
+
+  <section class="panel">
+    <h2>Why these steps?</h2>
+    <p>Chrome installs an extension automatically only from the Chrome Web Store. Lotwise is not in the store yet.</p>
+  </section>
+
+  <section class="panel">
+    <h2>If Windows warned you</h2>
+    <p>Lotwise Setup is not code-signed, so Windows may have shown a "Windows protected your PC" (SmartScreen) notice when you ran it. Choosing More info and then Run anyway is expected. Download Lotwise Setup only from the project's own release page.</p>
+  </section>
+
+  <section class="panel">
+    <h2>If Chrome shows a notice at start-up</h2>
+    <p>Because Lotwise is loaded unpacked, Chrome shows a "Disable developer mode extensions" notice each time it starts. That is expected. Close the notice and Lotwise stays on.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Keep Developer mode on</h2>
+    <p>Leave the Developer mode switch on. Chrome turns unpacked extensions off when that switch is off, and also after Lotwise reloads itself.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Updating</h2>
+    <p>Download and run the newer Lotwise Setup. From version 3.2.0 on, Lotwise reloads itself when nothing would be lost, or shows "Restart now" in the scanner window. If you are still on an older version, click the reload arrow on Lotwise's card on the Extensions page once.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Removing</h2>
+    <p>Open Windows Settings, then Apps, then Installed apps, and remove Lotwise card scanner. Then click Remove on Lotwise's card on the Extensions page.</p>
+  </section>
+</main>
+<script>
+(function () {
+  function copyFrom(input, button) {
+    function done() {
+      var label = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = label === 'Copied' ? 'Copy' : label; }, 1500);
+    }
+    function fallback() {
+      input.focus();
+      input.select();
+      try { document.execCommand('copy'); done(); } catch (e) { /* the text stays selected for Ctrl+C */ }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(input.value).then(done, fallback);
+    } else {
+      fallback();
+    }
+  }
+  var buttons = document.querySelectorAll('button[data-copy]');
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener('click', function (event) {
+      var button = event.currentTarget;
+      copyFrom(document.getElementById(button.getAttribute('data-copy')), button);
+    });
+  }
+})();
+</script>
+</body>
+</html>

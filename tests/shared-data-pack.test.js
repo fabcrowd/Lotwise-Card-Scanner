@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parsePack } from "../tools/extension-wasm/lib/bundle.js";
+import { parseCatalogExtra, parsePack } from "../tools/extension-wasm/lib/bundle.js";
 
 // pack-v1.bin is written by tools/shared-data/pipeline/pack.py (tests/test_pack.py keeps it byte-identical).
 const bytes = readFileSync(new URL("../tools/shared-data/tests/fixtures/pack-v1.bin", import.meta.url));
@@ -16,6 +16,18 @@ test("the extension's parsePack reads a pack the Python pipeline wrote", () => {
     for (const x of row.embedding) norm += (x * row.scale) ** 2;
     assert.ok(Math.abs(Math.sqrt(norm) - 1) < 0.02, `row norm ${Math.sqrt(norm)}`);
   }
+});
+
+// catalog-extra-tagged-v1.bin is written by new_sets.write_extra(..., tag=...) (tests/test_new_sets.py keeps it byte-identical).
+test("the extension's parseCatalogExtra reads a tagged catalogExtra the Python pipeline wrote", () => {
+  const tagged = readFileSync(new URL("../tools/shared-data/tests/fixtures/catalog-extra-tagged-v1.bin", import.meta.url));
+  const headerLength = new DataView(tagged.buffer, tagged.byteOffset, 4).getUint32(0, true);
+  const header = JSON.parse(tagged.subarray(4, 4 + headerLength).toString("utf8"));
+  assert.deepEqual([header.model, header.crop], ["0dba1302580da2a6", 3]);
+  const extra = parseCatalogExtra(new Uint8Array(tagged));
+  assert.deepEqual(extra.meta.map((m) => m.id), ["sv9-2", "sv9-3"]);
+  assert.equal(extra.meta[1].imageUrl, "https://images.pokemontcg.io/sv9/3_hires.png");
+  assert.equal(extra.rows.length, 2 * 512);
 });
 
 test("parsePack rejects the pack when the manifest entry count differs", () => {

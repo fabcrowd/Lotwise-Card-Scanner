@@ -22,3 +22,8 @@ export function chooseFallbackTab(tabs, scannerWindowId) {
 export function isOwnPage(sender, extensionId, extensionBaseUrl) {
   return sender?.id === extensionId && typeof sender.url === "string" && sender.url.startsWith(extensionBaseUrl);
 }
+
+/** True when a message came from the top frame of the target tab: only that page's lazy-loaded cards may start a rescan. */
+export function isTargetTopFrame(sender, targetTabId) {
+  return sender?.tab?.id != null && sender.tab.id === targetTabId && (sender.frameId ?? 0) === 0;
+}

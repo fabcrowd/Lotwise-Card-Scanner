@@ -21,11 +21,23 @@ export function acceptFromBackground(sender, extensionId) {
   return Boolean(sender) && sender.id === extensionId && !sender.tab;
 }
 
+/** A card pick (a click on a page card): from the background, or from a page's top frame that is the page of the lot the window holds. */
+export function acceptPickSender(sender, extensionId, lotUrl) {
+  if (acceptFromBackground(sender, extensionId)) return true;
+  if (!acceptPageSender(sender, extensionId)) return false;
+  return !lotUrl || isSamePage(lotUrl, sender.tab.url);
+}
+
 /** Whether the removal of card `index` is taken for the lot of `lotUrl`: the same page, and a card that can be removed. */
 export function acceptRemove(tabUrl, index, lotUrl, cards) {
   if (!isSamePage(lotUrl, tabUrl)) return false;
   if (!Number.isInteger(index) || index < 0 || !Array.isArray(cards)) return false;
   return removable(cards[index]);
+}
+
+/** Whether a removal made on an overlay drawn from scan `overlayScanId` is for the lot of scan `lotScanId`. No id from the page: as before. */
+export function scanMatches(overlayScanId, lotScanId) {
+  return typeof overlayScanId !== "string" || overlayScanId === lotScanId;
 }
 
 /** A saved lot state with the card at `index` removed, or null when there is no such removable card. */

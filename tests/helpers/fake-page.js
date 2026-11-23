@@ -65,7 +65,7 @@ export function recorder() {
         { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity });
       clip = clip ? (intersect(clip, bounds) || { x1: 0, y1: 0, x2: 0, y2: 0 }) : bounds;
     },
-    stroke() { for (const r of path) record('stroke', grow(r, ctx.lineWidth / 2), { lineWidth: ctx.lineWidth, raw: r }); },
+    stroke() { for (const r of path) record('stroke', grow(r, ctx.lineWidth / 2), { lineWidth: ctx.lineWidth, alpha: ctx.globalAlpha, raw: r }); },
     fill() { for (const r of path) record('fill', r); },
     fillRect(x, y, w, h) { record('fill', box(x, y, w, h)); },
     strokeRect(x, y, w, h) { record('stroke', grow(box(x, y, w, h), ctx.lineWidth / 2), { lineWidth: ctx.lineWidth, raw: box(x, y, w, h) }); },
@@ -75,8 +75,8 @@ export function recorder() {
   return {
     ctx,
     ops,
-    /** Card frames drawn and not clipped away: drawFrame's 2 px state-coloured outline. */
-    frames: () => ops.filter((o) => o.kind === 'stroke' && o.lineWidth === 2 && o.seen).map((o) => o.raw),
+    /** Card frames drawn and not clipped away: drawFrame's 1 px state-coloured outline at 35% opacity (one per card). */
+    frames: () => ops.filter((o) => o.kind === 'stroke' && o.lineWidth === 1 && Math.abs(o.alpha - 0.35) < 1e-9 && o.seen).map((o) => o.raw),
     texts: () => ops.filter((o) => o.kind === 'text' && o.seen).map((o) => o.text),
     visible: () => ops.filter((o) => o.seen),
   };
@@ -84,10 +84,11 @@ export function recorder() {
 
 /**
  * content.js running against a fake page.
- * @param {{viewport?: {w: number, h: number}, clientWidth?: number, url?: string, globals?: object}} [options]
+ * @param {{viewport?: {w: number, h: number}, clientWidth?: number, url?: string, globals?: object, storage?: object}} [options]
  *   globals: extra script globals (fetch, setTimeout, AbortController, ...) for code paths that need them
+ *   storage: an object that backs chrome.storage.local (read and written by the content script); omit for no storage
  */
-export function loadPage({ viewport = { w: 2504, h: 1287 }, clientWidth = 2489, url = 'https://www.facebook.com/marketplace/item/1752834219639617/', globals = {} } = {}) {
+export function loadPage({ viewport = { w: 2504, h: 1287 }, clientWidth = 2489, url = 'https://www.facebook.com/marketplace/item/1752834219639617/', globals = {}, storage = null } = {}) {
   const source = fs.readFileSync(new URL('../../tools/extension-wasm/content.js', import.meta.url), 'utf8');
   const view = { cssW: clientWidth, h: viewport.h };
   const html = makeNode('HTML', null, {}, rectOf(0, 0, clientWidth, viewport.h));
@@ -120,14 +121,22 @@ export function loadPage({ viewport = { w: 2504, h: 1287 }, clientWidth = 2489, 
     getElementById: () => null,
     querySelector: () => null,
     querySelectorAll: (selector) => (selector === 'img' ? imgs : []),
-    createTreeWalker: () => ({ currentNode: null, nextNode: () => null }),
+    // Walks the root's `textNodes` (or its textContent as one node); the page itself has none.
+    createTreeWalker: (root) => {
+      const nodes = root?.textNodes ?? (root?.textContent ? [{ nodeValue: root.textContent }] : []);
+      let at = 0;
+      return { currentNode: null, nextNode() { this.currentNode = at < nodes.length ? nodes[at++] : null; return this.currentNode; } };
+    },
     elementsFromPoint: (x, y) => stackAt(x, y),
     createElement(tag) {
       return {
         tagName: tag.toUpperCase(), style: {}, width: 0, height: 0, isConnected: false,
         getBoundingClientRect: () => rectOf(0, 0, view.cssW, view.h),
         getContext: () => rec.ctx,
-        remove() { this.isConnected = false; },
+        children: [],
+        append(...nodes) { for (const n of nodes) this.appendChild(n); },
+        appendChild(node) { node.isConnected = true; this.children.push(node); return node; },
+        remove() { this.isConnected = false; for (const c of this.children) c.remove(); },
       };
     },
   };
@@ -141,14 +150,22 @@ export function loadPage({ viewport = { w: 2504, h: 1287 }, clientWidth = 2489, 
   };
   let listener = null;
   const sent = [];
-  const chrome = { runtime: { onMessage: { addListener: (fn) => { listener = fn; } }, sendMessage: (msg) => { sent.push(msg); return Promise.resolve(); } } };
+  const location = { href: url };
+  const chrome = { runtime: { id: 'test-extension-id', onMessage: { addListener: (fn) => { listener = fn; } }, sendMessage: (msg) => { sent.push(msg); return Promise.resolve(); } } };
+  // A page with no `storage` option has no chrome.storage at all, as a page where the extension may not use it.
+  if (storage) {
+    chrome.storage = { local: {
+      get: async (key) => (typeof key === 'string' ? { [key]: storage[key] } : { ...storage }),
+      set: async (values) => { Object.assign(storage, values); },
+    } };
+  }
   vm.runInNewContext(source, {
-    window, document, chrome, MutationObserver: FakeMutationObserver, NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 },
-    getComputedStyle: (el) => el.style, URL, Map, WeakMap, Set, ...globals,
+    window, document, chrome, location, MutationObserver: FakeMutationObserver, NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 },
+    getComputedStyle: (el) => el.style, URL, Map, WeakMap, Set, clearTimeout, ...globals,
   });
 
   return {
-    window, document, body, imgs, rec, observers,
+    window, document, body, imgs, rec, observers, chrome, location,
     /** Messages content.js sent to the extension (chrome.runtime.sendMessage). */
     sent,
     send(msg) {
@@ -170,6 +187,7 @@ export function loadPage({ viewport = { w: 2504, h: 1287 }, clientWidth = 2489, 
       return ran;
     },
     frame() { const fn = frames.shift(); if (fn) fn(); },
+    listenerCount(type) { return (listeners[type] || []).length; },
     fire(type, event = {}) { for (const fn of [...(listeners[type] || [])]) fn({ type, ...event }); },
     resizeWindow(w, h, cssW) { window.innerWidth = w; window.innerHeight = h; view.cssW = cssW; view.h = h; },
     stack(fn) { stackAt = fn; },

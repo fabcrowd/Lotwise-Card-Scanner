@@ -5,17 +5,7 @@ Run this pass as the main Claude Code session on Claude Fable 5.2:
     claude --model claude-fable-5-2
 
 ## How to run it on Fable 5.2
-- **Effort:** use `high` for the session. Use `xhigh` only for one hard, long piece of work where it measurably helps. Don't use `max`.
-- **Your role:** you take the "Opus" role in CLAUDE.md's working model. You plan, brief, review, verify and commit when the owner asks. Code and file changes go to `builder` subagents with `model: sonnet`. Every change gets a cold `adversary` review before you call it done.
-- **Delegation:** subagents cost tokens. Start one for a bounded edit, a test run or a parallel labelling job, not for reading a file you can read yourself.
-- **Ownership:** the owner owns this code and wants surgical changes. Fix what is in scope. Report nearby problems rather than refactoring them. Review the diff, not only the builder's summary.
-- **Finish the work:** don't stop at ordinary obstacles such as a timeout, a flaky Playwright port (EADDRINUSE: run the specs one at a time) or a busy file. Diagnose them and carry on. Stop only for the deliberate blockers listed below or for an owner decision.
-
-## Steps that need no approval
-- Running `npm test`, `npm run lint`, `node --test tests/store-build.test.js`, the dist rebuild (`scripts/build-wasm-extension.ps1`, and `-Store` / `-Sealed`) and Playwright specs.
-- Running offline Python scripts in card-scanner-data at below-normal priority with ≤8 threads.
-- Running the realworld harness with an explicit dev pages file.
-- Retrying reads, builds and tests.
+The effort level, the main session's role, when to delegate, code ownership, the steps that need no approval and the report style are in CLAUDE.md under "Working model". They moved there on 2026-11-14 so that one copy stays current. Stop only for the deliberate blockers listed below or for an owner decision.
 
 ## Hard rules (deliberate blockers: leave them alone and report)
 - Never read, list or search `data/sealed-test`. Run `node scripts/sealed-score.mjs` only when the owner asks.
@@ -39,7 +29,7 @@ Run this pass as the main Claude Code session on Claude Fable 5.2:
 5. `data/reports/check-20261112/README.md` (in card-scanner-data).
 
 ## Current state (branch `feat/price-follows-pick`, pushed 2026-11-13 up to `ce4d39e`)
-The branch is now pushed up to `ce4d39e` ("feat: share drawn, removed and put-back boxes from opted-in users", 26 files). The branch `feat/price-follows-pick` was merged into `main` by pull request #2 (https://github.com/fabcrowd/pokemon-auto-lister/pull/2, merge commit `1efb2f3`) on 2026-11-14.
+The branch is now pushed up to `ce4d39e` ("feat: share drawn, removed and put-back boxes from opted-in users", 26 files). The branch `feat/price-follows-pick` was merged into `main` by pull request #2 (https://github.com/fabcrowd/pokemon-auto-lister/pull/2, merge commit `1efb2f3`) on 2026-11-14. Pull request #3 (https://github.com/fabcrowd/pokemon-auto-lister/pull/3) then merged the two follow-up commits, `4f73cbb` and `3d70e5f`, into `main` on 2026-11-14 (merge commit `d539969`), and `main` and the feature branch now have the same content.
 
 Recent commits:
 - ce4d39e: feat: share drawn, removed and put-back boxes from opted-in users.
@@ -107,8 +97,80 @@ Decision 2026-11-13 (the owner delegated it to the session): keep the live adapt
 - Real-scan screenshots (1280x800) are in `.tmp/store-screenshots/real/` (`01-page-overlay-and-popup.png`, `02-choose-printing.png`, `03-settings-shared-learning.png`) with the scripts that made them. They come from the developer build scanning the repo's demo page (`public/scan-test.html`), because the store build has no permission for a local address; the popup and overlay look the same. Things to check before using them: all card art is third-party; every card landed in "pick printing", so prices show as wide ranges; the lower rows of the popup are cut off at the bottom; the site-access prompt is not shown. The earlier mocked candidates are still in `.tmp/store-screenshots/`.
 - Owner-only steps: the developer account and the $5 fee; the dashboard forms; the privacy policy URL now serves the redrafted text; the policy URL is now chosen (see `docs/store/listing.md`), and the policy text was reviewed for accuracy against the code and is committed, but the owner can still change it; a manual test of the zip; adding the store-assigned extension id to the relay's allow-list; the relay moderation decision; the price snapshot 404; the pins.json v3.0 bundle rebuild; and revoking the Cloudflare setup token and the GitHub fine-grained token that were pasted into a chat on 2026-10-17.
 
+## Extension UI redesign (2026-11-14, built, uncommitted)
+- The popup, setup wizard and options page were redesigned to `docs/plans/extension-ui-redesign.md` ("Slab and viewfinder": light and dark themes, one lot-value card, picture-first rows, state colors that match the page overlay). Styles moved out of the HTML into `tools/extension-wasm/ui/` (`tokens.css`, `popup.css`, `options.css`, two bundled OFL fonts). `content.js`, `background.js`, `manifest.json` and `lib/` are unchanged.
+- Script changes are limited to `popup.js`: a thumbnail button and `data-state` on confirmed rows, look-only classes on the price cell, "Wrong card?" moved after "Why this card?", `putBackAt` focus order (new Playwright test), and no smooth scroll under reduced motion.
+- Evidence on 2026-11-14: `npm test` 1712 pass, 0 fail, 1 skipped; `npm run lint` clean; dev and `-Store` builds succeed; `npx playwright test extension-wasm-popup --project=extension` 75 of 75; overlay-remove 3 of 3; draw-box 3 of 3. Screenshots: `node tests/e2e/ui-states.mjs <label>` (47 states into `.tmp/ui-shots/<label>/`); a live run with the real models is in `.tmp/ui-shots/live/`.
+- Open: the owner has not looked at it in Chrome yet; no live marketplace smoke was run; the screenshots in `.tmp/store-screenshots/real/` and `docs/store/promo-small-440x280.png` show the old popup. Follow-ups are listed in `tasks/todo.md` under "Extension UI redesign".
+- Round 2 (2026-11-14 to 15, owner asked for bigger cards, scaling with the window, and less text; spec section 7):
+  - Hover preview: `lib/loupe.js` opens a large preview of a hovered or keyboard-focused card beside the page crop. It follows the card through price re-renders and scrolls, and closes on Escape or when the pointer leaves.
+  - Card-size slider in the header (`cardSize` in `chrome.storage.local`). It is forced back to 1 under 440 px, where the slider is hidden.
+  - Layout: two panes from 720 px; candidate grids fill the row up to 1920 px.
+  - Less text: header icon buttons, icon-only row actions with tooltips, and a toast that fades after 5 s.
+  - Three cold reviews found re-render bugs in the preview (stuck open, closing on every price arrival, closing a keyboard-opened preview). All three are fixed, each with a test that failed before its fix.
+  - Evidence on 2026-11-15: `npm test` 1740 pass, 0 fail, 1 skipped; lint clean; dev and `-Store` builds; popup spec 79 of 79; overlay-remove 3 of 3; draw-box 3 of 3; `node tests/e2e/ui-states.mjs final2` wrote 66 PNGs with 0 failed. The final cold review said ship.
+  - The page overlay (`content.js`) has no hover enlarge; that was out of scope.
+- Round 3 (2026-11-15, from the owner's screenshots of a real binder page; spec sections 8 and 9):
+  - Page overlay: corner brackets and a bottom-right price chip at rest (`$3.49`, `$0.60–2.01`, `? ~$0.74`, `! $120.00`, `?`), or a dot on small cards. The name card shows on hover just outside the card. The card's name and art are never covered.
+  - Popup: every card now carries its page crop (`background.js` attached it only to unsure cards before). Every row has the same structure at every width. "Pick printing (n)" and "Priced (n)" groups, and "All cards priced" on the lot card. A visible "Change" on each priced row reopens the image-first choice, with Cancel. A compare dock in the left panel keeps the page picture still, with the candidate preview always in the same spot.
+  - The owner's favorite look is the narrow popup in `.tmp/reference/owner-favorite-2026-11-15.png` (spec 9.7).
+  - Two cold reviews: the overlay was cleared to ship, and the popup had five fixes, all done test-first. Evidence: `npm test` 1759 pass, 0 fail, 1 skipped; lint clean; both builds; popup spec 96; overlay-remove 3; draw-box 3; screenshots in `.tmp/ui-shots/round3/` and `.tmp/overlay-shots/final/`.
+  - `tests/e2e/scan-smoke.spec.js` failed for an older reason: it waited for `window.updateResults`, which the committed extension never defined. The owner retired it on 2026-11-15 (see below).
+- Round 3, continued (2026-11-15; spec sections 8.5, 9.8, 10 and 11):
+  - **Click a card on the page.** Clicking a card opens the scanner at that card, or focuses the scanner if it is already open (`lib/scanner-window.js`, `lib/pending-show.js`). Site menus over a card keep their clicks: the `photoOnTop` rule. A click from another tab's page is ignored (`acceptPickSender`).
+  - **High-value row (9.8).** It shows the page crop beside the match, with Confirm and Change.
+  - **Interaction model (10).**
+    - Hover previews and click acts.
+    - The page shows a pointer cursor.
+    - Page hover rings the matching row in the popup (`overlayHover`).
+    - The full-size pill uses the popup's path. With access, it runs directly. Without access, it focuses the popup button, because the page click is not a user gesture for `permissions.request`.
+    - Draw mode: a click without a drag stays in draw mode, with a Cancel button and a crosshair toggle.
+    - Candidate tiles show a check badge.
+    - Toasts carry Change, Put back or Undo, for 8 s.
+  - **Journey fixes (11).**
+    - Wizard: wording, Optional/Skip/Retry, and "about 147 MB" (computed and pinned).
+    - A reason line when Scan Page cannot run, and a status line under the Scan button while scanning.
+    - "Found 9 cards · 4 need you."
+    - One notice at a time, and "Scan again".
+    - A first-scan legend placed outside the photo.
+    - The "Pick" chip.
+    - One count function, `lotCounts`, feeds the lot card, the group headings, the review button and the toast.
+    - "Versions to pick", "Pick a version (n)" and "Skip this card".
+    - The no-match row opens with search.
+    - "Which version is it?" and "Picked: <set>" (user picks only).
+    - "High value · check the match".
+    - "Copy list (n)" and "Download CSV (n)".
+    - Clear gives "Cleared n cards" with Undo, which re-requests in-flight prices and refuses when the page changed.
+    - Groups "Not read", "Not a card" and "Left out".
+    - "Add card" at 560 px and up.
+    - The options page is grouped Prices / Photos / Help improve Card Scanner / Advanced (collapsed).
+    - Visible "printing", "variant" and "finish" now read "version". CSV headers are unchanged.
+  - **Reviews.** Every slice had a cold review, and every finding was fixed test-first. A whole-diff review found no blocker: the `via` values are identical to HEAD, and the store tests pass 24 of 24.
+  - **Evidence (2026-11-15).**
+    - `npm test`: 1881 pass, 0 fail, 1 skipped. Lint clean.
+    - Both builds succeed.
+    - Store and options tests: 37 of 37.
+    - Popup spec 147, overlay-remove 7, draw-box 4.
+    - Screenshots: `.tmp/ui-shots/final/` (94) and `.tmp/overlay-shots/final/`.
+  - **Owner decisions, applied the same day (spec 12.5).**
+    - A version swap to a definite card saves a correction like a set pick, via "candidates". `saveSetCorrection` now carries `drawnFields`, so a drawn row saves its own crop.
+    - The `rescanResult`, `drawnCard`/`drawnFailed` and `scanProgress` listeners accept only the background (`acceptFromBackground`).
+    - "Tick all" is removed.
+    - `tests/e2e/scan-smoke.spec.js` and `public/scan-test.html` are deleted.
+  - **Collapsed confirmed rows (spec 12, owner 2026-11-15).**
+    - A settled priced row is one line: the stock image (`thumbUrl`, falling back to the page crop), name, set `#number`, price and a chevron. Click to expand.
+    - A row that still asks the user stays open: a high-value check, a range, a `?` version or set, `repeatedName`, or an open change or search.
+    - Confirming collapses the row. A page click expands its row. Which rows are open (`_expanded`) is never saved.
+  - **Review and evidence.** The cold review said accept with fixes. `repeatedName` and two whitespace slips were fixed.
+    - `npm test`: 1888 pass, 0 fail, 1 skipped. Lint clean. Both rerun by the main session.
+    - Popup spec: 159.
+    - Screenshots: `.tmp/ui-shots/final2/` (102) and `.tmp/ui-shots/collapse/`.
+  - **Owner questions still open.**
+    - Is the full-size pill's extra click without site access acceptable?
+    - The copy toast's "unconfirmed left out" can differ from the lot card's unconfirmed count while prices load.
+
 ## Still owner decisions
 The pins.json v3.0 bundle rebuild; committing the card-scanner-data check files; the `card_corners.onnx` upload; the set-stamp `finishSure`; the privacy policy; relay moderation; the price snapshot 404; store submission.
 
 ## Reporting
-Write final reports for a reader who hasn't seen your tool calls. Put the result first, in plain full sentences. Give the commands you ran and their results as evidence.
+See "Reports" under "Working model" in CLAUDE.md.

@@ -176,6 +176,18 @@ export function physicalHits(hits, meta) {
   return hits.filter((h) => !DIGITAL_ONLY.test(String(meta[h.index]?.id || "")));
 }
 
+/**
+ * The normal (adapted, when a photo adapter is live) hits, and the raw ones the gate also scores (the same array when no
+ * adapter is live). `rawTop` is the highest raw cosine of the catalog: with the look-alike penalty on, hits are ordered
+ * by rank (cosine minus penalty), so the first one can have a lower raw score than a penalised row behind it.
+ */
+export function searchPair(query, meta, { penalty = false, topK = 20 } = {}) {
+  const hits = physicalHits(searchCatalog(query, topK, { penalty }), meta);
+  const rawHits = _adapter ? physicalHits(searchCatalog(query, topK, { penalty, raw: true }), meta) : hits;
+  const unpenalised = penalty ? physicalHits(searchCatalog(query, topK, { raw: true }), meta) : rawHits;
+  return { hits, rawHits, rawTop: unpenalised[0]?.score ?? 0 };
+}
+
 function topKIndices(arr, k) {
   const heap = []; // min-heap of {score, idx}
 

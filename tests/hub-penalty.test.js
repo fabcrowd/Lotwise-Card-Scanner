@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import zlib from 'node:zlib';
 
-import { loadCatalog, loadHubPenalty, searchCatalog } from '../tools/extension-wasm/lib/search.js';
+import { loadCatalog, loadHubPenalty, searchCatalog, searchPair } from '../tools/extension-wasm/lib/search.js';
 
 const DIM = 512;
 
@@ -81,4 +81,25 @@ test('asking for the penalty when none was loaded searches by cosine without a w
   const hits = searchCatalog(query(), 2, { penalty: true });
   assert.deepEqual(hits.map((h) => h.index), [0, 1]);
   assert.equal(warnings.length, 0);
+});
+
+// The saved-example margin is checked against the RAW catalog top score (lib/references.js): with the penalty on, the
+// first hit is the best by rank, which can be a lower raw cosine than a penalised row behind it.
+const meta = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+
+test('with the penalty on, rawTop is the highest raw cosine, not the first ranked hit', async () => {
+  await catalogWithDots([0.9, 0.85, 0.5]);
+  loadHubPenalty(int8(100, 0, 0)); // row 0 ranks below row 1 but has the higher cosine
+  const penalised = searchPair(query(), meta, { penalty: true });
+  assert.equal(penalised.hits[0].index, 1);
+  assert.ok(Math.abs(penalised.rawTop - 0.9) < 1e-6, `rawTop was ${penalised.rawTop}`);
+});
+
+test('rawTop is the first hit when no penalty is on, and with a live penalty file that is not asked for', async () => {
+  await catalogWithDots([0.9, 0.85, 0.5]);
+  loadHubPenalty(int8(100, 0, 0));
+  const plain = searchPair(query(), meta, { penalty: false });
+  assert.deepEqual(plain.hits.map((h) => h.index), [0, 1, 2]);
+  assert.ok(Math.abs(plain.rawTop - 0.9) < 1e-6);
+  assert.equal(plain.rawHits, plain.hits);
 });

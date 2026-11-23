@@ -51,8 +51,8 @@ const promo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 280" wid
   <rect width="440" height="280" fill="url(#glow)"/>
   <svg x="22" y="68" width="144" height="144" viewBox="0 0 128 128">${inner}</svg>
   <g font-family="'Segoe UI', Arial, Helvetica, sans-serif" fill="#dde1ee">
-    <text x="182" y="108" font-size="30" font-weight="700">Card Scanner</text>
-    <text x="182" y="144" font-size="30" font-weight="700">&amp; Price Checker</text>
+    <text x="182" y="108" font-size="30" font-weight="700">Lotwise</text>
+    <text x="182" y="144" font-size="30" font-weight="700">Card Scanner</text>
     <text x="182" y="176" font-size="19" font-weight="600" fill="#a5a8f7">for Pokémon TCG</text>
   </g>
   <rect x="182" y="194" width="64" height="4" rx="2" fill="url(#bar)"/>

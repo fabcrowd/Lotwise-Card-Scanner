@@ -318,3 +318,75 @@ test('titleConfirmsPrinting does not read the card number 151 as the set 151', (
   assert.equal(titleConfirmsPrinting(parseListingTitle('Mew ex 151/165'), mew), false);
   assert.equal(titleConfirmsPrinting(parseListingTitle('Pokemon 151 Mew ex 151/165'), mew), true);
 });
+
+test('parseListingTitle: a set code beside a slash number is not a second card number', () => {
+  const a = parseListingTitle('Pikachu ex 057/191 SV08 Surging Sparks Holo');
+  assert.equal(a.number, '57');
+  assert.equal(a.total, '191');
+  assert.equal(a.lot, false);
+});
+
+test('parseListingTitle: a set code beside a # number is not a second card number', () => {
+  const a = parseListingTitle('Pikachu #025 SV08');
+  assert.equal(a.number, '25');
+  assert.equal(a.lot, false);
+});
+
+test('parseListingTitle: a slash number alone and a set-code number alone are unchanged', () => {
+  const a = parseListingTitle('Charizard ex 125/197 Obsidian Flames');
+  assert.deepEqual([a.number, a.total, a.lot], ['125', '197', false]);
+  const b = parseListingTitle('Umbreon VMAX SWSH215 Promo');
+  assert.deepEqual([b.number, b.total, b.lot], ['swsh215', null, false]);
+});
+
+test('parseListingTitle: two slash numbers, two # numbers or a lot word still make a lot', () => {
+  assert.equal(parseListingTitle('Pikachu 057/191 and Eevee 012/191').lot, true);
+  assert.equal(parseListingTitle('Pikachu #025 #026 SV08').lot, true);
+  const l = parseListingTitle('Lot of cards Pikachu 057/191 SV08');
+  // The set code no longer hides the one real number; the lot flag is what callers check.
+  assert.deepEqual([l.number, l.lot], ['57', true]);
+});
+
+test('parseListingTitle: two set-code tokens with no other number behave as before', () => {
+  const a = parseListingTitle('Pikachu SV08 SWSH215');
+  assert.deepEqual([a.number, a.total, a.lot], [null, null, true]);
+});
+
+test('parseListingTitle: set code case and position do not matter', () => {
+  const lower = parseListingTitle('pikachu ex 057/191 sv08');
+  assert.deepEqual([lower.number, lower.total, lower.lot], ['57', '191', false]);
+  const before = parseListingTitle('SV08 Pikachu ex 057/191');
+  assert.deepEqual([before.number, before.total, before.lot], ['57', '191', false]);
+});
+
+test('parseListingTitle: a junk small number does not replace a set-code promo number', () => {
+  for (const title of [
+    'Umbreon VMAX SWSH215 #1 Seller',
+    'Umbreon VMAX SWSH215 Alt Art 1/1 Rare',
+    'Umbreon SWSH215 Promo 9/10 condition',
+  ]) {
+    const a = parseListingTitle(title);
+    assert.deepEqual([a.number, a.total, a.lot], [null, null, true], title);
+  }
+});
+
+test('parseListingTitle: a slash total of 20 or more switches the set code off, 19 does not', () => {
+  const small = parseListingTitle('Pikachu 5/19 SV08');
+  assert.deepEqual([small.number, small.total, small.lot], [null, null, true]);
+  const real = parseListingTitle('Pikachu 5/20 SV08');
+  assert.deepEqual([real.number, real.total, real.lot], ['5', '20', false]);
+});
+
+test('parseListingTitle: a # number needs two digits to switch the set code off', () => {
+  const one = parseListingTitle('Pikachu #5 SV08');
+  assert.deepEqual([one.number, one.total, one.lot], [null, null, true]);
+  const two = parseListingTitle('Pikachu #05 SV08');
+  assert.deepEqual([two.number, two.total, two.lot], ['5', null, false]);
+});
+
+test('parseListingTitle: a real slash number plus a second card set code reads as the one number', () => {
+  const a = parseListingTitle('Charizard 4/102 Umbreon SWSH215');
+  const b = parseListingTitle('Charizard 4/102 Umbreon');
+  assert.deepEqual([a.number, a.total, a.lot], ['4', '102', false]);
+  assert.deepEqual([a.number, a.total, a.lot], [b.number, b.total, b.lot]);
+});

@@ -55,13 +55,13 @@ test.describe('Chrome extension (loaded in real browser)', () => {
     await context.close();
   });
 
-  test('popup opens and shows Card Scanner header', async () => {
+  test('popup opens and shows Lotwise header', async () => {
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/popup.html`);
 
     // Header logo text
     const logo = page.locator('.logo');
-    await expect(logo).toContainText('Card Scanner');
+    await expect(logo).toContainText('Lotwise');
 
     // Server pill is present (connecting…, server ok, or offline)
     const pill = page.locator('#server-pill');

@@ -45,6 +45,24 @@ test('reserved IPv4 ranges beyond the private blocks are blocked', () => {
   }
 });
 
+test('the whole IPv6 link-local, site-local and multicast ranges and embedded private IPv4 forms are blocked', () => {
+  for (const host of [
+    'fe90::1', 'febf::1', 'fed0::1', 'feff::1', 'ff02::1', 'ff00::1',
+    '[::127.0.0.1]', '[::7f00:1]', '[64:ff9b::127.0.0.1]', '[64:ff9b::7f00:1]', '[64:ff9b::c0a8:101]', '[64:ff9b::a00:1]',
+  ]) {
+    assert.equal(isPrivateHost(host), true, host);
+  }
+  for (const host of ['fe90::1', 'ff02::1', '64:ff9b::7f00:1']) {
+    assert.equal(publicHttpsUrl(`https://[${host}]/a.jpg`), null, host);
+  }
+});
+
+test('IPv6 addresses next to those ranges stay public', () => {
+  for (const host of ['2aff::1', '64:ff9b::808:808', '2606:4700:4700::1111', 'fe7f::1']) {
+    assert.equal(isPrivateHost(host), false, host);
+  }
+});
+
 test('addresses next to the reserved ranges stay public', () => {
   for (const host of ['192.0.1.1', '192.0.2.1', '198.17.255.255', '198.20.0.1', '223.255.255.255']) {
     assert.equal(isPrivateHost(host), false, host);

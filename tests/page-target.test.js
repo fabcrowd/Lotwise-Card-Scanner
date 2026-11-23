@@ -36,3 +36,12 @@ test('only the extension pages pass, whether or not they are in a tab', () => {
   assert.equal(isOwnPage({ id: 'other', url: BASE + 'popup.html' }, 'abc', BASE), false);
   assert.equal(isOwnPage({ id: 'abc' }, 'abc', BASE), false);
 });
+
+test('a new-cards message counts only from the top frame of the target tab', async () => {
+  const { isTargetTopFrame } = await import('../tools/extension-wasm/lib/page-target.js');
+  assert.equal(isTargetTopFrame({ tab: { id: 5 }, frameId: 0 }, 5), true);
+  assert.equal(isTargetTopFrame({ tab: { id: 5 } }, 5), true, 'no frame id means the top frame');
+  assert.equal(isTargetTopFrame({ tab: { id: 4 }, frameId: 0 }, 5), false, 'a background tab is not the target');
+  assert.equal(isTargetTopFrame({ tab: { id: 5 }, frameId: 3 }, 5), false, 'a subframe is not the page');
+  assert.equal(isTargetTopFrame({ frameId: 0 }, 5), false, 'no tab, no scan');
+});

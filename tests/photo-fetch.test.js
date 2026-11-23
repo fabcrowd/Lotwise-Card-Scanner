@@ -151,3 +151,50 @@ test('acceptance rule: octet-stream or no type is taken only when the bytes are 
   assert.equal(accept('application/octet-stream', html), false);
   assert.equal(accept('text/html', jpeg), false);
 });
+
+function avifWith(...sizes) {
+  const parts = [Uint8Array.from([0, 0, 0, 24, ...'ftypavif'].map((c) => (typeof c === 'string' ? c.charCodeAt(0) : c)).concat([0, 0, 0, 0], [...'avifmif1'].slice(0, 4).map((c) => c.charCodeAt(0))))];
+  for (const [w, h] of sizes) {
+    const box = new Uint8Array(20);
+    const view = new DataView(box.buffer);
+    view.setUint32(0, 20);
+    box.set([...'ispe'].map((c) => c.charCodeAt(0)), 4);
+    view.setUint32(12, w);
+    view.setUint32(16, h);
+    parts.push(box);
+  }
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+
+test('finding 30: an AVIF gives the size of its largest ispe box', () => {
+  assert.deepEqual(imageSize(avifWith([160, 90], [20000, 12000], [400, 300])), { width: 20000, height: 12000 });
+  assert.equal(imageSize(avifWith()), null);
+});
+
+test('an AVIF whose major brand is mif1 still gives its size from the ispe box', () => {
+  const bytes = avifWith([4000, 3000]);
+  bytes.set([...'mif1'].map((c) => c.charCodeAt(0)), 8);
+  assert.notEqual(sniffImageType(bytes), 'image/avif');
+  assert.deepEqual(imageSize(bytes), { width: 4000, height: 3000 });
+});
+
+test('finding 30: a JPEG whose frame header comes after 256 KB has its size when given the whole file', () => {
+  const head = new Uint8Array(327697);
+  head.set([0xff, 0xd8], 0);
+  for (let seg = 0; seg < 5; seg++) head.set([0xff, 0xe1, 0xff, 0xff], 2 + seg * 65537);
+  head.set([0xff, 0xc0, 0x00, 0x11, 0x08, 0xea, 0x60, 0xea, 0x60, 0x03], 327687);
+  assert.equal(imageSize(head.subarray(0, 262144)), null);
+  assert.deepEqual(imageSize(head), { width: 60000, height: 60000 });
+});
+
+test('finding 30: loadPhotoSource reads the whole file for the size and never decodes a photo whose size is unknown', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../tools/extension-wasm/background.js', import.meta.url), 'utf8');
+  const start = source.indexOf('async function loadPhotoSource(');
+  const body = source.slice(start, source.indexOf('\n}\n', start));
+  assert.match(body, /imageSize\(new Uint8Array\(await blob\.arrayBuffer\(\)\)\)/);
+  assert.ok(body.indexOf('!plan.known') > 0 && body.indexOf('!plan.known') < body.indexOf('createImageBitmap(blob'), 'unknown size is refused before any decode');
+});

@@ -244,13 +244,26 @@ export function checkKeepsBox(embedding, check, extras) {
 
 const text = (x) => typeof x === "string" && x.length > 0 && x.length <= 200;
 
+// The hosts a new-card picture may come from: the same list as the nightly build and the signer
+// (tools/shared-data/pipeline/image_hosts.py; tests/bundle.test.js keeps the two equal).
+export const PICTURE_HOSTS = Object.freeze(["assets.tcgdex.net", "images.pokemontcg.io"]);
+
+function pictureAllowed(address) {
+  try {
+    const url = new URL(address);
+    return url.protocol === "https:" && PICTURE_HOSTS.includes(url.host) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 /** { rows: Float32Array(n * dim) unit rows, meta: [n catalog entries] } of a catalogExtra file. */
 export function parseCatalogExtra(bytes) {
   const { file, header, bodyAt } = rowFile(bytes, "catalogExtra");
   const { cardIds, cards } = header;
   if (!Array.isArray(cards) || cards.length !== cardIds.length) throw new Error("catalogExtra cards do not match its card ids");
   const meta = cards.map((card, i) => {
-    if (!card || card.id !== cardIds[i] || !text(card.name) || !text(card.set) || !text(card.setName) || !text(card.number) || typeof card.image !== "string") {
+    if (!card || card.id !== cardIds[i] || !text(card.name) || !text(card.set) || !text(card.setName) || !text(card.number) || !pictureAllowed(card.image)) {
       throw new Error("catalogExtra cards are malformed");
     }
     return { id: card.id, name: card.name, set: card.setName, setCode: card.set, number: card.number, game: "pokemon", imageUrl: card.image };

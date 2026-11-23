@@ -306,7 +306,8 @@ export function acceptWholePhoto(read, { strict = false, croppedView = false } =
   // A view cropped by its slot (object-fit: cover, screenshot) cuts card edges, so a look-alike
   // without a name is still a fair suggestion for the picker.
   if (strict && !croppedView) return false;
-  return Number(read.catalogTop) >= WHOLE_PHOTO_MIN_SIMILARITY;
+  // A read treated as Japanese is judged by its Japanese similarity: its English catalogTop is low by definition.
+  return Number(read.japanese ? read.bestJa : read.catalogTop) >= WHOLE_PHOTO_MIN_SIMILARITY;
 }
 
 /**

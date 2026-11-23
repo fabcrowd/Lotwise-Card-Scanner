@@ -1,6 +1,9 @@
 import { pptCardUrl } from "./lib/condition-pricing.js";
 import { clearPptKey, getPptKey, savePptKey } from "./lib/ppt-key.js";
+import { clearPriceCache } from "./lib/batch-price.js";
 import { DEFAULT_FILTERS, mergeFilters, primaryCondition, withCondition, withGrader } from "./lib/price-prefs.js";
+import { referencesCountText } from "./lib/journey.js";
+import { japaneseStateText } from "./lib/japanese.js";
 import { hasAllSites, releaseAllSites, requestAllSites, watchAllSites } from "./lib/site-access.js";
 // dev-only:start
 import { LIMITS, describeSize } from "./lib/test-photos.js";
@@ -84,6 +87,7 @@ btnSave.addEventListener("click", async () => {
   btnSave.disabled = false;
   if (!result.ok) { showTest("Test failed: " + result.reason, "err"); return; }
   await savePptKey(key);
+  await clearPriceCache(chrome.storage.local);
   showTest("Key verified and saved.", "ok");
   setPptConnected();
 });
@@ -96,6 +100,7 @@ btnChange.addEventListener("click", () => {
 
 btnClear.addEventListener("click", async () => {
   await clearPptKey();
+  await clearPriceCache(chrome.storage.local);
   setPptDisconnected();
   pptKeyEl.value = "";
   showTest("", "info");
@@ -181,10 +186,10 @@ function showCorrectionsStatus(text, kind = "info") {
 async function refreshCorrectionCount() {
   const resp = await chrome.runtime.sendMessage({ action: "countCorrections" }).catch(() => null);
   const known = typeof resp?.count === "number";
-  correctionsCount.textContent = known ? `Corrections: ${resp.count} saved` : "Corrections: unavailable";
+  correctionsCount.textContent = known ? `Fixes: ${resp.count} saved` : "Fixes: unavailable";
   btnExportCorrections.disabled = !known || resp.count === 0;
   btnClearCorrections.disabled = !known || resp.count === 0;
-  if (!known) showCorrectionsStatus("Couldn't read the saved corrections. Reload this page to try again.", "err");
+  if (!known) showCorrectionsStatus("Couldn't read the saved fixes. Reload this page to try again.", "err");
 }
 
 // The first export of corrections that have no fingerprint yet loads the models and embeds them, which takes a while.
@@ -215,18 +220,18 @@ btnExportCorrections.addEventListener("click", async () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
   showCorrectionsStatus(
-    `Exported ${resp.corrections.length} corrections.` + (resp.failed ? ` ${resp.failed} had no usable picture and were exported without a fingerprint.` : ""),
+    `Exported ${resp.corrections.length} fixes.` + (resp.failed ? ` ${resp.failed} had no usable picture and were exported without a fingerprint.` : ""),
     resp.failed ? "err" : "ok",
   );
 });
 
 btnClearCorrections.addEventListener("click", async () => {
-  if (!window.confirm("Delete every saved correction? Export first if you want to keep them.")) return;
+  if (!window.confirm("Delete every saved fix? Export first if you want to keep them.")) return;
   const resp = await chrome.runtime.sendMessage({ action: "clearCorrections" }).catch(() => null);
-  if (!resp?.ok) { showCorrectionsStatus("Couldn't clear the corrections. Try again.", "err"); return; }
+  if (!resp?.ok) { showCorrectionsStatus("Couldn't clear the fixes. Try again.", "err"); return; }
   await refreshCorrectionCount();
   await refreshReferenceCount();
-  showCorrectionsStatus("Cleared. 0 corrections saved.", "ok");
+  showCorrectionsStatus("Cleared. 0 fixes saved.", "ok");
 });
 
 const referencesToggle = document.getElementById("use-references");
@@ -234,7 +239,7 @@ const referencesCount  = document.getElementById("references-count");
 
 async function refreshReferenceCount() {
   const resp = await chrome.runtime.sendMessage({ action: "countReferences" }).catch(() => null);
-  referencesCount.textContent = typeof resp?.count === "number" ? `${resp.count} references` : "References: unavailable";
+  referencesCount.textContent = typeof resp?.count === "number" ? referencesCountText(resp.count) : "Cards remembered: unavailable";
 }
 
 async function loadReferencesToggle() {
@@ -248,7 +253,7 @@ referencesToggle.addEventListener("change", async () => {
     await chrome.runtime.sendMessage({ action: "startReferences" }).catch(() => null);
     setTimeout(refreshReferenceCount, 3000);
   }
-  showCorrectionsStatus(referencesToggle.checked ? "Scans will now look for cards you corrected before." : "Scans use the catalog only.", "ok");
+  showCorrectionsStatus(referencesToggle.checked ? "Scans will now look for cards you fixed before." : "Scans use the catalog only.", "ok");
 });
 
 /* ─── Shared learning (opt-in) ─── */
@@ -373,6 +378,32 @@ straightenToggle.addEventListener("change", async () => {
   await chrome.storage.local.set({ straightenCards: straightenToggle.checked }).catch(() => {});
   straightenNote.textContent = straightenToggle.checked ? "Scans will straighten each card before reading it." : "Scans read each card as boxed.";
   straightenNote.className = "test-result ok";
+});
+
+/* ─── Japanese cards ─── */
+
+const japaneseToggle = document.getElementById("japanese-cards");
+const japaneseNote   = document.getElementById("japanese-note");
+const japaneseState  = document.getElementById("japanese-state");
+
+// On unless switched off: unset means on.
+async function loadJapaneseToggle() {
+  const { japaneseCards } = await chrome.storage.local.get("japaneseCards").catch(() => ({}));
+  japaneseToggle.checked = japaneseCards !== false;
+  showJapaneseState();
+}
+
+// The state of the card list, asked of the background: off, ready with the count, or not available yet.
+async function showJapaneseState() {
+  const info = await chrome.runtime.sendMessage({ action: "japaneseState" }).catch(() => null);
+  japaneseState.textContent = japaneseStateText(info);
+}
+
+japaneseToggle.addEventListener("change", async () => {
+  await chrome.storage.local.set({ japaneseCards: japaneseToggle.checked }).catch(() => {});
+  showJapaneseState();
+  japaneseNote.textContent = japaneseToggle.checked ? "Scans will ask about Japanese cards with Japanese matches." : "Japanese cards are read as English cards.";
+  japaneseNote.className = "test-result ok";
 });
 
 // dev-only:start
@@ -505,6 +536,7 @@ refreshReferenceCount();
 loadReferencesToggle();
 loadLookalikeToggle();
 loadStraightenToggle();
+loadJapaneseToggle();
 loadPrices();
 loadShareToggle();
 // dev-only:start
@@ -513,3 +545,40 @@ loadCollectionToggle();
 refreshDrawnCount();
 // dev-only:end
 loadKey();
+
+/* ─── Updates (the installer's copy only: the background says whether this is it) ─── */
+
+const updatesSection = document.getElementById("updates-section");
+const updatesVersion = document.getElementById("updates-version");
+const updatesStatus  = document.getElementById("updates-status");
+const updatesGet     = document.getElementById("updates-get");
+const updatesCheck   = document.getElementById("updates-check");
+const UPDATE_CHECK_FAILED = "Couldn't check for a new version. Try again later.";
+
+function showUpdates({ latestVersion, lastCheckedAt, failed }) {
+  updatesGet.hidden = !latestVersion;
+  if (failed) updatesStatus.textContent = UPDATE_CHECK_FAILED;
+  else if (latestVersion) updatesStatus.textContent = `Version ${latestVersion} is available.`;
+  else updatesStatus.textContent = "You have the latest version." + (Number.isFinite(lastCheckedAt) ? ` Last checked ${new Date(lastCheckedAt).toLocaleString()}.` : "");
+}
+
+async function loadUpdates() {
+  const info = await chrome.runtime.sendMessage({ action: "selfUpdateSettings" }).catch(() => null);
+  if (!info?.installer) return;
+  updatesVersion.textContent = `Lotwise ${info.runningVersion}.`;
+  updatesSection.hidden = false;
+  showUpdates({ latestVersion: info.latestVersion, lastCheckedAt: info.lastCheckedAt, failed: info.lastCheckOk === false && !info.latestVersion });
+}
+
+updatesCheck.addEventListener("click", async () => {
+  updatesCheck.disabled = true;
+  updatesStatus.textContent = "Checking for a new version…";
+  try {
+    const reply = await chrome.runtime.sendMessage({ action: "selfUpdateCheckNow" }).catch(() => null);
+    showUpdates({ latestVersion: reply?.latestVersion ?? null, lastCheckedAt: reply?.checkedAt ?? null, failed: reply?.ok !== true });
+  } finally {
+    updatesCheck.disabled = false;
+  }
+});
+updatesGet.addEventListener("click", () => { chrome.runtime.sendMessage({ action: "selfUpdateOpenRelease" }).catch(() => {}); });
+loadUpdates();

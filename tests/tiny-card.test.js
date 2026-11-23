@@ -59,11 +59,11 @@ test('the label for a too-small card is short', () => {
   assert.equal(TOO_SMALL_ROW_TEXT, 'Too small to read. Open the full-size photo.');
 });
 
-test('overlay tag for a too-small card says Too small, not Turn it over', () => {
+test('overlay chip for a too-small card is a bare "?", and its label says Too small, not Turn it over', () => {
   const page = loadPage();
   const pure = page.window.__cardScanner.pure;
   const card = tooSmallCard({ box: [1, 2, 30, 50], readHeight: 50 });
   assert.equal(pure.cardState(card), 'none');
-  assert.deepEqual([...pure.tagText(card, 0).lines], ['Too small']);
+  assert.deepEqual(JSON.parse(JSON.stringify(pure.chipSpec(card))), { state: 'none', marks: [], text: '?' });
   assert.equal(pure.labelText(card).name, 'Too small');
 });

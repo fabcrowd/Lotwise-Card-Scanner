@@ -39,7 +39,8 @@ export const GUESS_CONFIDENCE_CAP = 0.49;
  * @param lookup id => catalog row
  */
 export function asLowCertaintyGuess(read, lookup, floor = GUESS_FLOOR) {
-  if (!read || !read.abstain || read.cardBack) return read;
+  // A card treated as Japanese is asked about with Japanese candidates, never named as the closest English card.
+  if (!read || !read.abstain || read.cardBack || read.japanese) return read;
   const card = read.nearest?.length ? lookup(read.nearest[0]) : null;
   if (!card?.id || !(read.catalogTop >= floor)) return read;
   return {
@@ -55,12 +56,47 @@ export function asLowCertaintyGuess(read, lookup, floor = GUESS_FLOOR) {
   };
 }
 
+// Three printings of a title-named card are kept on the scan row.
+export const TITLE_CHOICE_LIMIT = 3;
+// Two of the five offered places may go to the title's card; the picture's own candidates keep the rest.
+export const TITLE_CANDIDATE_SLOTS = 2;
+
+/** Catalog ids of the first `limit` distinct rows of a search's hits (best first), inside the era when one is given. */
+export function titleChoiceIds(hits, meta, { era = null, limit = TITLE_CHOICE_LIMIT } = {}) {
+  if (!Array.isArray(hits) || !Array.isArray(meta)) return [];
+  const ids = [];
+  for (const hit of hits) {
+    const row = meta[hit?.index];
+    if (!row?.id || ids.includes(row.id) || (era && !inEra(row, era))) continue;
+    ids.push(row.id);
+    if (ids.length >= limit) break;
+  }
+  return ids;
+}
+
+/** The title's cards go right after the first candidate; `out` is returned as it is when none is new. */
+function withTitleCards(out, card, rows, limit, era) {
+  const wanted = Array.isArray(card.titleChoices) ? card.titleChoices : [];
+  if (!wanted.length) return out;
+  const have = new Set(out.map((row) => row.id));
+  const titled = [];
+  for (const id of wanted) {
+    const row = rows.get(id);
+    if (!row?.id || have.has(row.id) || (era && !inEra(row, era))) continue;
+    have.add(row.id);
+    titled.push(row);
+    if (titled.length >= TITLE_CANDIDATE_SLOTS) break;
+  }
+  if (!titled.length) return out;
+  return [...out.slice(0, 1), ...titled, ...out.slice(1)].slice(0, limit);
+}
+
 /** The card the user corrected before first, then set choices, then the scanner's guess, then other printings of the name. */
 export function candidatesFor(card, meta, limit = 5, era = null) {
   if (!card) return [];
   const catalog = Array.isArray(meta) ? meta : [];
   const choices = card.setChoices || [];
-  const byId = choices.length || card.identity?.id ? new Map(catalog.map((row) => [row.id, row])) : null;
+  const byId = new Map(catalog.map((row) => [row.id, row]));
   const out = [];
   const seen = new Set();
   const add = (row) => {
@@ -72,9 +108,8 @@ export function candidatesFor(card, meta, limit = 5, era = null) {
   if (card.lowCertainty && card.identity?.id) {
     // A best guess among the closest cards: the picture's own ranking, best first, before other printings of a name.
     add(card.identity);
-    const rows = new Map(catalog.map((row) => [row.id, row]));
-    for (const id of card.nearest || []) add(rows.get(id));
-    return out;
+    for (const id of card.nearest || []) add(byId.get(id));
+    return withTitleCards(out, card, byId, limit, era);
   }
   for (const choice of choices) add(byId.get(choice.id) ?? choice);
   if (card.identity?.id) add(byId.get(card.identity.id) ?? card.identity);
@@ -86,10 +121,9 @@ export function candidatesFor(card, meta, limit = 5, era = null) {
     }
   }
   if (!card.cardBack && card.nearest?.length) {
-    const rows = new Map(catalog.map((row) => [row.id, row]));
-    for (const id of card.nearest) add(rows.get(id));
+    for (const id of card.nearest) add(byId.get(id));
   }
-  return out;
+  return withTitleCards(out, card, byId, limit, era);
 }
 
 function normalize(text) {
@@ -188,6 +222,8 @@ export function guessOf(card) {
     abstain: Boolean(card?.abstain),
     choiceIds: (card?.setChoices || []).map((choice) => choice.id),
     catalogTop: Number.isFinite(card?.catalogTop) ? card.catalogTop : null,
+    // A row treated as Japanese: whatever the user picks for it, its picture is never kept as a reference (lib/correction-save.js).
+    ...(card?.japanese ? { japanese: true } : {}),
   };
 }
 
@@ -298,8 +334,9 @@ export function renderPickList(cards, idx, guessId = null) {
   }).join("");
 }
 
-export function unrecognisedLabel(count, expanded) {
-  return `${count} ${count === 1 ? "card" : "cards"} not recognised — ${expanded ? "Hide" : "Show"}`;
+/** The "Not read (n)" group heading; the chevron shows whether it is open. */
+export function unrecognisedLabel(count) {
+  return `Not read (${count})`;
 }
 
 /** The crop picture a scan may carry for a card; anything but a JPEG data URL is ignored. */
@@ -312,7 +349,7 @@ export function cropThumb(card) {
 export function renderUnrecognisedGroup(rowsHtml, count, expanded) {
   if (!count) return "";
   return `<div class="unrec">
-    <button type="button" class="unrec-toggle" data-unrec-toggle aria-expanded="${expanded}" aria-controls="unrec-list">${escHtml(unrecognisedLabel(count, expanded))}</button>
+    <button type="button" class="unrec-toggle" data-unrec-toggle aria-expanded="${expanded}" aria-controls="unrec-list">${escHtml(unrecognisedLabel(count))}</button>
     <div id="unrec-list" class="unrec-list"${expanded ? "" : " hidden"}>${rowsHtml}</div>
   </div>`;
 }
