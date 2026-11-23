@@ -61,7 +61,7 @@ export function stripDevBlocks(text, name) {
 }
 
 const CONFIG_FILE = 'lib/shared-config.js';
-const ORIGIN_SETTINGS = ['RELAY_URL', 'PACK_MANIFEST_URL', 'PRICE_SNAPSHOT_URL'];
+const ORIGIN_SETTINGS = ['RELAY_URL', 'PACK_MANIFEST_URL', 'PRICE_SNAPSHOT_URL', 'LICENSE_URL'];
 
 // github.com hosts everyone's files, so its pattern is cut down to one repository's release downloads.
 function hostPattern(name, url) {

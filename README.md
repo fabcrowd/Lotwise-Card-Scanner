@@ -11,6 +11,7 @@ Chrome extension that finds Pokémon TCG cards on a web page and shows prices. R
    - Turn **Developer mode** on (leave it on)
    - **Load unpacked** → paste the folder from the guide → Select Folder
 4. Pin Lotwise from Chrome’s puzzle-piece menu. Open it and click **Download models** (~147 MB, once).
+5. **Newest sets (optional):** Settings → License → paste the preview trial key `LOTWISE-TRIAL` → Activate. Core scanning stays free without a key; the key unlocks new sets as they ship. The developer can revoke keys later.
 
 That is the whole install. More detail (update, remove, troubleshooting): [`docs/store/install.md`](docs/store/install.md).
 
@@ -32,6 +33,7 @@ Full evidence and owner next steps: [`HANDOFF.md`](HANDOFF.md) (2026-11-19).
 
 - Version **3.2.0**. Windows installer is on the [`installer`](https://github.com/fabcrowd/pokemon-auto-lister/releases/tag/installer) release. Store listing not submitted yet ([`docs/store/`](docs/store/)).
 - Self-update (installer builds), new-card-data note, Japanese cards, newest-sets nightly gate, and the scanner UI redesign are in this tree (`CHANGELOG.md`).
+- Soft gate: core scanning is free; newest sets need a license key (preview trial key `LOTWISE-TRIAL`). Worker: `tools/license/` (deploy before Activate works in production).
 - Sharing is opt-in and off by default.
 - Open work: [`HANDOFF.md`](HANDOFF.md), [`docs/handoff-fable-5.2-hardening.md`](docs/handoff-fable-5.2-hardening.md).
 

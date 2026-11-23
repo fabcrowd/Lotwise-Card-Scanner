@@ -2718,6 +2718,27 @@ async function showCardDataNote() {
 
 showCardDataNote().catch(() => {});
 
+/* ─── License soft gate: newest sets need a key ─── */
+
+const licenseNotice = document.getElementById("license-notice");
+const licenseText = document.getElementById("license-text");
+const licenseOpenSettings = document.getElementById("license-open-settings");
+const licenseDismiss = document.getElementById("license-dismiss");
+
+async function showLicenseGateNote() {
+  const reply = await chrome.runtime.sendMessage({ action: "licenseGateNote" }).catch(() => null);
+  if (!reply?.text) return;
+  licenseText.textContent = reply.text;
+  licenseOpenSettings.onclick = () => { chrome.runtime.openOptionsPage(); };
+  licenseDismiss.onclick = () => {
+    licenseNotice.hidden = true;
+    chrome.runtime.sendMessage({ action: "licenseGateNoteDismiss" }).catch(() => {});
+  };
+  licenseNotice.hidden = false;
+}
+
+showLicenseGateNote().catch(() => {});
+
 (async () => {
   // A click on a page card may have opened this window. The record is taken now, so its 10 s age check runs at start-up
   // and not after a restore that waited for a scan; it is shown once the lot is back (a record for another page is dropped).

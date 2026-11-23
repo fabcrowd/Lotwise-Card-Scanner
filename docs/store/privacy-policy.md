@@ -47,6 +47,10 @@ The extension does not send your browsing history anywhere.
 
 A copy installed with the Windows installer (not the version in the Chrome Web Store) also asks github.com at most once a day, and when you click "Check now" in Settings, whether a newer version of the extension exists. It is a normal file request for a small version file. It carries no data about you and no cookies. The extension never downloads or runs an update by itself: it shows a notice with a button that opens the download page.
 
+## License (newest sets)
+
+Core card scanning and the catalog shipped with the extension stay free and work without a license. To unlock **new card sets** that arrive in the daily data update, you may enter a license key in Settings. When you activate or check a key, the extension sends only: the key you entered, a random install id made for licensing (separate from the optional sharing id), and the usual request metadata any HTTPS call carries (such as your IP address). It does not send card photos, page addresses, or scan results. The developer can revoke a key; after the next check (at most about a day later, or sooner if you click Check now), new-set data stops applying on that install. You can clear the key by removing the extension or clearing its site data.
+
 ## Shared learning (optional, off by default)
 
 The options page has a setting called "Help improve recognition for everyone". It is off. You turn it on by clicking it, next to a one-line explanation of what it sends. When it is on:

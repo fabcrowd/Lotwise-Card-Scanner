@@ -11,6 +11,7 @@ About three minutes. No account. Chrome only (not Edge/Firefox).
    2. Turn **Developer mode** on (top right). Leave it on.
    3. Click **Load unpacked**, copy the folder path from the guide, paste it into the folder window’s address bar, press Enter, then **Select Folder**.
 4. Pin Lotwise (puzzle-piece menu in the toolbar). Click the Lotwise icon → **Download models** (~147 MB, one time).
+5. Optional — newest sets: open Settings → License, paste `LOTWISE-TRIAL`, click Activate. Core scanning works without a key; the trial key unlocks new sets while Lotwise is in preview (keys can be revoked).
 
 Done. Open a page with card photos and click **Scan Page**.
 

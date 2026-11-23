@@ -52,7 +52,16 @@ import { canReadHidden, keepHidden, keptRealCount, notCardEntry, overlayCards, r
 import { photoIdFromRgba } from "./lib/photo-id.js";
 import { createShareStore } from "./lib/share-store.js";
 import { createSharing } from "./lib/sharing.js";
-import { PACK_MANIFEST_URL, PACK_PUBLIC_KEY, RELAY_URL } from "./lib/shared-config.js";
+import { LICENSE_URL, PACK_MANIFEST_URL, PACK_PUBLIC_KEY, RELAY_URL } from "./lib/shared-config.js";
+import {
+  LICENSE_GATE_NOTE_KEY,
+  LICENSE_STORAGE_KEY,
+  activateLicense,
+  checkLicense,
+  isLicenseActive,
+  licenseGateNoteText,
+  licenseStatusLabel,
+} from "./lib/license.js";
 import { contributeSignal, examGroups, examRows, shareFor, signalRow, teachRow, wantsExamPrompt } from "./lib/share-rows.js";
 import { createUploader } from "./lib/upload-queue.js";
 // dev-only:start
@@ -441,6 +450,7 @@ const OWN_PAGE_ONLY = new Set([
   "clearPageOverlay", "overlayWithGrid", "relayOverlay", "relayClear", "highlightCard", "setOverlayShown", "drawBox", "cancelDraw",
   "selfUpdateState", "selfUpdateRestart", "selfUpdateSettings", "selfUpdateCheckNow", "selfUpdateDismiss", "selfUpdateOpenRelease",
   "cardDataNote", "cardDataNoteDismiss",
+  "licenseStatus", "licenseActivate", "licenseCheckNow", "licenseGateNote", "licenseGateNoteDismiss",
 ]);
 
 // Messages that read or change what the worker keeps in session storage wait until a restarted worker has read it back.
@@ -499,6 +509,43 @@ function handleMessage(msg, sender, sendResponse) {
           sendResponse({ ok: false });
         }
       });
+      return true;
+
+    case "licenseStatus":
+      local.get(LICENSE_STORAGE_KEY).then((cache) => {
+        sendResponse({ ok: true, cache: cache ?? null, label: licenseStatusLabel(cache ?? null), configured: Boolean(LICENSE_URL) });
+      }, () => sendResponse({ ok: true, cache: null, label: licenseStatusLabel(null), configured: Boolean(LICENSE_URL) }));
+      return true;
+
+    case "licenseActivate":
+      activateLicense({ licenseUrl: LICENSE_URL, storage: local, key: msg.key })
+        .then(async (result) => {
+          await applyBundle();
+          sendResponse({ ...result, label: licenseStatusLabel(result.cache) });
+        })
+        .catch((err) => sendResponse({ ok: false, error: String(err?.message || err), label: licenseStatusLabel(null) }));
+      return true;
+
+    case "licenseCheckNow":
+      checkLicense({ licenseUrl: LICENSE_URL, storage: local, force: true })
+        .then(async (result) => {
+          await applyBundle();
+          sendResponse({ ...result, label: licenseStatusLabel(result.cache) });
+        })
+        .catch((err) => sendResponse({ ok: false, error: String(err?.message || err), label: licenseStatusLabel(null) }));
+      return true;
+
+    case "licenseGateNote":
+      local.get(LICENSE_GATE_NOTE_KEY).then((note) => {
+        sendResponse({ ok: true, text: licenseGateNoteText(note || {}), note: note ?? null });
+      }, () => sendResponse({ ok: true, text: null, note: null }));
+      return true;
+
+    case "licenseGateNoteDismiss":
+      local.get(LICENSE_GATE_NOTE_KEY).then(async (note) => {
+        if (note && typeof note === "object") await local.set(LICENSE_GATE_NOTE_KEY, { ...note, dismissed: true });
+        sendResponse({ ok: true });
+      }, () => sendResponse({ ok: false }));
       return true;
 
     case "checkReady":
@@ -2285,13 +2332,18 @@ async function applyBundleOnce() {
   if (!_metaBase) return;
   if (_packagedCheck === undefined) _packagedCheck = await loadPackagedCheck();
   const stored = await loadStoredBundle(_shareStore, packBuild());
-  const merged = stored?.extra ? mergeExtra(_metaBase, stored.extra) : null;
+  // Soft gate: catalogExtra (newest sets) only when the license cache is active and fresh.
+  const licenseCache = await local.get(LICENSE_STORAGE_KEY);
+  const allowExtra = isLicenseActive(licenseCache);
+  const paidExtra = allowExtra ? stored?.extra : null;
+  const merged = paidExtra ? mergeExtra(_metaBase, paidExtra) : null;
   let adapter = null;
   let adapted = null;
   if (stored?.adapter) {
     try {
       const rows = catalogRowsWith(merged?.rows);
-      const key = [stored.manifest.assets.adapter.sha256, stored.manifest.assets.catalogExtra?.sha256 ?? "-", rows.length, modelTags().catalog].join(":");
+      // Adapter key still names the stored catalogExtra sha so a license flip recomputes rows correctly.
+      const key = [stored.manifest.assets.adapter.sha256, allowExtra ? (stored.manifest.assets.catalogExtra?.sha256 ?? "-") : "license-locked", rows.length, modelTags().catalog].join(":");
       adapted = await adaptedRows({ store: _shareStore, key, rows, adapter: stored.adapter });
       adapter = stored.adapter;
     } catch (err) {
@@ -2303,10 +2355,20 @@ async function applyBundleOnce() {
   _catalogNames = _indicesByName = _setSizes = _metaById = _catalogSets = _metaRank = null;
   _packRows = stored?.memory ?? [];
   _photoCheck = pickCheck(stored, _packagedCheck, packBuild());
-  console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }), "| card check:", _photoCheck ? (stored?.check ? "bundle" : "packaged") : "off");
+  console.log("[BG] bundle live:", liveParts(stored, { adapter, extra: merged }), "| card check:", _photoCheck ? (stored?.check ? "bundle" : "packaged") : "off", allowExtra ? "" : "| newest sets locked (license)");
   if (adapter) console.log("[BG] photo adapter in use: rank", adapter.rank, "sha", stored.manifest.assets.adapter.sha256.slice(0, 8), "seq", stored.manifest.seq);
   else console.log("[BG] photo adapter not in use:", stored ? "the bundle has none" : "no bundle stored yet");
-  if (stored) {
+  try {
+    const prevGate = await local.get(LICENSE_GATE_NOTE_KEY);
+    await local.set(LICENSE_GATE_NOTE_KEY, {
+      hasExtra: Boolean(stored?.extra),
+      licenseActive: allowExtra,
+      dismissed: allowExtra ? false : prevGate?.dismissed === true,
+    });
+  } catch (err) {
+    console.error("[BG] license gate note not stored:", err?.message || err);
+  }
+  if (stored && allowExtra) {
     try {
       const prev = await local.get(CARD_DATA_NOTE_KEY);
       const note = nextCardDataNote(prev, { seq: stored?.manifest?.seq, cards: merged?.meta, now: Date.now() });
@@ -2317,16 +2379,27 @@ async function applyBundleOnce() {
   }
 }
 
+// Soft-gate license: refresh at most once a day (or when cache is stale). Failures leave core scanning alone.
+const _licenseCheck = checkLicense({ licenseUrl: LICENSE_URL, storage: local })
+  .then((result) => {
+    if (result.offline) console.log("[BG] license check offline; using cached entitlement");
+    else if (!result.ok && result.cache?.status && result.cache.status !== "none") {
+      console.log("[BG] license status:", result.cache.status);
+    }
+  })
+  .catch((err) => console.error("[BG] license check failed:", err?.message || err));
+
 // At most one check a day (lib/bundle.js); nothing about the user is sent.
-const _bundleCheck = checkBundle({
+const _bundleCheck = Promise.all([_licenseCheck]).then(() => checkBundle({
   manifestUrl: PACK_MANIFEST_URL,
   publicKey: PACK_PUBLIC_KEY,
   expected: packBuild(),
   store: _shareStore,
   state: { get: () => local.get("packCheck"), set: (value) => local.set("packCheck", value) },
-}).then((result) => {
+})).then((result) => {
   if (result.status === "ok") applyBundle();
   else if (result.status !== "inert" && result.status !== "skipped") console.log("[BG] bundle not used:", result.status);
+  else applyBundle(); // still re-apply so a revoke/lock drops catalogExtra from the live catalog
 }).catch((err) => console.error("[BG] bundle check failed:", err?.message || err));
 
 const FIRST_BUNDLE_WAIT_MS = 8000;

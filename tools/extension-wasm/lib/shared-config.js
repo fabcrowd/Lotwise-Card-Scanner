@@ -2,6 +2,7 @@
 //   RELAY_URL          the relay that receives contributions (POST), https only. Empty: sharing is "Not available in this build".
 //   PACK_MANIFEST_URL  the signed community pack's manifest.json (https). Empty: no pack is fetched.
 //   PACK_PUBLIC_KEY    the pack signing key, ECDSA P-256 public key as base64 SPKI. Empty: no pack is trusted.
+//   LICENSE_URL        license Worker origin (https, no path). Empty: newest-set extras stay off (soft gate).
 // The store build adds the origin of each non-empty URL to host_permissions (scripts/lib/store-package.mjs).
 
 export const RELAY_URL = "https://card-scanner-relay.fabcrowd.workers.dev/v1/contributions";
@@ -9,3 +10,5 @@ export const PACK_MANIFEST_URL = "https://github.com/fabcrowd/card-scanner-data/
 // One file for every install. A pre-release tag, so it never becomes the "latest" learning bundle.
 export const PRICE_SNAPSHOT_URL = "https://github.com/fabcrowd/card-scanner-data/releases/download/prices/prices.json";
 export const PACK_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYB9mRPR+1EEbhhjN0J/jW7O1dC5u0zFAKJ8K/BldEQdexjtksgxQK+xIA/C4JDZgHxleMomi8BBgWHjHKvL7yw==";
+// Soft-gate license Worker (tools/license). Deploy that Worker, then keep this origin in sync.
+export const LICENSE_URL = "https://lotwise-license.fabcrowd.workers.dev";

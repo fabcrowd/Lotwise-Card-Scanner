@@ -546,6 +546,51 @@ refreshDrawnCount();
 // dev-only:end
 loadKey();
 
+/* ─── License (soft gate for newest sets) ─── */
+
+const licenseStatus = document.getElementById("license-status");
+const licensePill = document.getElementById("license-status-pill");
+const licenseKeyEl = document.getElementById("license-key");
+const licenseActivate = document.getElementById("license-activate");
+const licenseCheck = document.getElementById("license-check");
+
+function showLicense(cache, label) {
+  const active = cache?.status === "active";
+  licensePill.textContent = active ? (cache.plan === "trial" ? "Trial" : "Active") : cache?.status === "revoked" ? "Revoked" : "Locked";
+  licensePill.className = "source-status " + (active ? "connected" : "off");
+  licenseStatus.textContent = label || "";
+  if (cache?.key && !licenseKeyEl.value) licenseKeyEl.value = cache.key;
+}
+
+async function loadLicense() {
+  const reply = await chrome.runtime.sendMessage({ action: "licenseStatus" }).catch(() => null);
+  showLicense(reply?.cache ?? null, reply?.label ?? "");
+}
+
+licenseActivate.addEventListener("click", async () => {
+  licenseActivate.disabled = true;
+  licenseStatus.textContent = "Activating…";
+  try {
+    const reply = await chrome.runtime.sendMessage({ action: "licenseActivate", key: licenseKeyEl.value }).catch(() => null);
+    showLicense(reply?.cache ?? null, reply?.label || reply?.error || "");
+  } finally {
+    licenseActivate.disabled = false;
+  }
+});
+
+licenseCheck.addEventListener("click", async () => {
+  licenseCheck.disabled = true;
+  licenseStatus.textContent = "Checking license…";
+  try {
+    const reply = await chrome.runtime.sendMessage({ action: "licenseCheckNow" }).catch(() => null);
+    showLicense(reply?.cache ?? null, reply?.label || reply?.error || "");
+  } finally {
+    licenseCheck.disabled = false;
+  }
+});
+
+loadLicense();
+
 /* ─── Updates (the installer's copy only: the background says whether this is it) ─── */
 
 const updatesSection = document.getElementById("updates-section");

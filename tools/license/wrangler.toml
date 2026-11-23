@@ -1,0 +1,23 @@
+# Cloudflare Worker for Lotwise license keys. Deploy from this folder: `npx wrangler deploy`.
+# Soft gate: newest-set catalog extras need an active key; core scanning stays free.
+
+name = "lotwise-license"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# Same three extension ids as the relay (dev, store-dev, installer).
+ALLOWED_EXTENSION_IDS = "pjihnfaeeeikhdjkpochhdaoiklhpiag,glpgpefjjkfbjjahibcegokmbomghonc,gppkiedgglhgagfmcnfebiccpkifbncm"
+# SHA-256 (hex) of UTF-8 "LOTWISE-TRIAL". First use creates the trial key record in KV.
+TRIAL_KEY_HASH = "92ad020cf6030af1d76a90cfe3e9ed3041fd766488127d30f5aa1b4b9b109494"
+TRIAL_MAX_ACTIVATIONS = "10000"
+# Default cap when admin creates a paid key without maxActivations.
+DEFAULT_MAX_ACTIVATIONS = "5"
+
+# Secrets (not vars):
+#   `npx wrangler secret put LICENSE_ADMIN_SECRET`  long random string for /v1/admin/*
+
+# OWNER: paste the id from `npx wrangler kv namespace create LOTWISE_LICENSE`.
+[[kv_namespaces]]
+binding = "KEYS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

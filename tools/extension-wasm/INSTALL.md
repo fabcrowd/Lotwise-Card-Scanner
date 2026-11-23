@@ -15,6 +15,8 @@ clicks, update, remove): [`docs/store/install.md`](../../docs/store/install.md).
 
 In short: run Setup → when the guide opens, turn on Developer mode → Load
 unpacked → paste the folder from the guide → pin Lotwise → **Download models**.
+Optional: Settings → License → activate `LOTWISE-TRIAL` for newest sets while
+Lotwise is in preview (core scanning stays free without a key).
 
 ---
 
