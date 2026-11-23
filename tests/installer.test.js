@@ -640,6 +640,9 @@ test('guide.html tells the user about the SmartScreen notice and the developer m
   assert.ok(guide.includes('Run anyway'));
   assert.match(guide, /release page/i);
   assert.ok(guide.includes('Disable developer mode extensions'));
+  assert.ok(guide.includes('Keep Developer mode on'));
+  assert.ok(guide.includes('reloads itself'));
+  assert.ok(guide.includes('Restart now'));
   assert.ok(!/https?:\/\//i.test(guide));
 });
 

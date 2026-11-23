@@ -1,35 +1,41 @@
 # Lotwise
 
-Personal Windows toolkit that finds Pokémon TCG cards in photos, names them and shows prices.
+Chrome extension that finds Pokémon TCG cards on a web page and shows prices. Runs in the browser after a one-time model download. No account.
 
-The product is a **Chrome extension** in [`tools/extension-wasm/`](tools/extension-wasm/). It scans the photos on a web page, names each card, and overlays the set and a price. The recognition models run in the browser (CLIP and YOLO through onnxruntime-web), so nothing needs to be running on this PC.
+## Install (Windows, about 3 minutes)
 
-The repo also holds the older local toolkit that came first and still works:
+1. Download **[Lotwise-Setup-3.2.0.exe](https://github.com/fabcrowd/pokemon-auto-lister/releases/download/installer/Lotwise-Setup-3.2.0.exe)** from the [installer release](https://github.com/fabcrowd/pokemon-auto-lister/releases/tag/installer).
+2. Run it. If Windows says **Windows protected your PC**, click **More info** → **Run anyway**.
+3. A guide page opens. Do its three Chrome steps:
+   - Open `chrome://extensions`
+   - Turn **Developer mode** on (leave it on)
+   - **Load unpacked** → paste the folder from the guide → Select Folder
+4. Pin Lotwise from Chrome’s puzzle-piece menu. Open it and click **Download models** (~147 MB, once).
 
-- **Node dashboard and API** (`src/`, `public/`): upload a photo and get identity plus a price grid per card. It binds to the LAN, so a phone on the same Wi-Fi can use it. The extension's developer build can call it for per-condition JustTCG prices.
-- **VellumAI** ([`tools/vellum-ai/`](tools/vellum-ai/README.md)): Python detect and identify sidecars (YOLO detector, CLIP and FAISS catalog retrieval, OCR), plus the catalog and detector training scripts.
+That is the whole install. More detail (update, remove, troubleshooting): [`docs/store/install.md`](docs/store/install.md).
 
-Shared learning is an opt-in loop. The extension can send crops and corrections from photos you teach it, a Cloudflare Worker relay ([`tools/relay/`](tools/relay/)) stores them, and a nightly job ([`tools/shared-data/`](tools/shared-data/)) builds a signed bundle that the extension downloads. See [Shared learning](#shared-learning).
+> Not in the Chrome Web Store yet. Chrome always needs those three Developer mode clicks for an unpacked extension.
+
+## What this repo is
+
+The product is the **Chrome extension** in [`tools/extension-wasm/`](tools/extension-wasm/). Recognition models run in the browser (CLIP and YOLO through onnxruntime-web).
+
+Also in the tree (optional / older toolkit):
+
+- **Node dashboard and API** (`src/`, `public/`): upload a photo and get identity plus a price grid. LAN-bind so a phone on the same Wi-Fi can use it.
+- **VellumAI** ([`tools/vellum-ai/`](tools/vellum-ai/README.md)): Python detect/identify sidecars.
+- **Shared learning** (opt-in): relay [`tools/relay/`](tools/relay/) + nightly job [`tools/shared-data/`](tools/shared-data/). See [Shared learning](#shared-learning).
 
 ## Current status
 
-This section follows `HANDOFF.md` ("Current state", 2026-11-14) and the UI redesign of 2026-11-15.
+Full evidence and owner next steps: [`HANDOFF.md`](HANDOFF.md) (2026-11-19).
 
-- The extension is at manifest version 3.2.0. Pull requests #2 and #3 were merged into `main` on 2026-11-14.
-- The extension scans a page, names cards, lets you confirm a card or choose it and its version, draw a box around a missed card and remove a card with an X. The price follows the card you pick, and an unconfirmed price is always marked as unconfirmed.
-- **UI redesign (2026-11-15), built but not committed.** It is on branch `feat/price-follows-pick` as uncommitted changes, and it is described in [Using the scanner](#using-the-scanner). The spec is [`docs/plans/extension-ui-redesign.md`](docs/plans/extension-ui-redesign.md). The evidence on 2026-11-15:
-  - `npm test`: 1888 pass, 0 fail, 1 skipped. Lint clean.
-  - Popup Playwright spec: 159 passed.
-  - Every slice had a cold review.
-  - It is committed only when the owner asks. The new `ui/` folder and four new `lib/` modules are untracked until then.
-- **Japanese cards, newest sets and a Windows installer (2026-11-17).** Committed on branch `feat/mobile-app`. The Japanese card list is published (release `v3.2`), and the nightly job runs for the current recognizer but ships no new cards until its regression file is rebuilt. What is done, the evidence and the steps left for the owner are in `HANDOFF.md` ("Current state (2026-11-17)").
-- Sharing is opt-in and off by default. With it on, the extension also sends the boxes you drew, removed and put back, on photos you teach it.
-- The relay and the nightly job are deployed. The nightly job counts the box signals and strips them before consensus, the exam and training, so nothing trains on them yet.
-- No real box signal row has been sent yet; that is the remaining end-to-end check.
-- The extension is not released. Only the owner's unpacked developer build exists, and the Chrome Web Store listing has not been submitted. The listing text and privacy policy are ready in [`docs/store/`](docs/store/).
-- Open work and decisions are in [`HANDOFF.md`](HANDOFF.md) and [`docs/handoff-fable-5.2-hardening.md`](docs/handoff-fable-5.2-hardening.md).
+- Version **3.2.0**. Windows installer is on the [`installer`](https://github.com/fabcrowd/pokemon-auto-lister/releases/tag/installer) release. Store listing not submitted yet ([`docs/store/`](docs/store/)).
+- Self-update (installer builds), new-card-data note, Japanese cards, newest-sets nightly gate, and the scanner UI redesign are in this tree (`CHANGELOG.md`).
+- Sharing is opt-in and off by default.
+- Open work: [`HANDOFF.md`](HANDOFF.md), [`docs/handoff-fable-5.2-hardening.md`](docs/handoff-fable-5.2-hardening.md).
 
-## Browser extension
+## Browser extension (developers)
 
 Source is `tools/extension-wasm/` (manifest version 3.2.0). `dist/` is generated: rebuild after changing source and never edit it by hand. Shell is PowerShell.
 
@@ -49,6 +55,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-wasm-extension
 ```
 
 ### Windows installer
+
+Shareable install steps for a recipient: [`docs/store/install.md`](docs/store/install.md).
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1               # after the -Store build -> dist/Lotwise-Setup-<version>.exe
@@ -261,6 +269,7 @@ Playwright and the real-world harness (`node scripts/realworld-run.mjs <pages.js
 - [`docs/handoff-fable-5.2-hardening.md`](docs/handoff-fable-5.2-hardening.md): the current hardening handoff.
 - [`tasks/lessons.md`](tasks/lessons.md): corrections and non-obvious decisions.
 - [`docs/plans/extension-ui-redesign.md`](docs/plans/extension-ui-redesign.md): the popup, overlay and options redesign spec (sections 1 to 12).
+- [`docs/store/install.md`](docs/store/install.md): Windows installer steps for a recipient.
 - [`docs/store/`](docs/store/): store listing and privacy policy.
 - [`docs/known-limits.md`](docs/known-limits.md): what the extension cannot do yet.
 - [`CHANGELOG.md`](CHANGELOG.md): notable changes.
